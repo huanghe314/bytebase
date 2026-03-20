@@ -1,0 +1,26 @@
+diff --git a/dist/vue-router.cjs b/dist/vue-router.cjs
+index a04dffc9e13674f52a9478a67b58cc7ce0a8e5d4..49a656cb271c504263d8893e630f25e806f22d98 100644
+--- a/dist/vue-router.cjs
++++ b/dist/vue-router.cjs
+@@ -1964,7 +1964,7 @@ const RouterViewImpl = /* @__PURE__ */ (0, vue.defineComponent)({
+ 					meta: matchedRoute.meta
+ 				};
+ 				(isArray(component.ref) ? component.ref.map((r) => r.i) : [component.ref.i]).forEach((instance) => {
+-					instance.__vrv_devtools = info;
++					if (instance) instance.__vrv_devtools = info;
+ 				});
+ 			}
+ 			return normalizeSlot(slots.default, {
+diff --git a/dist/vue-router.mjs b/dist/vue-router.mjs
+index 51101d6dd1cac25eb9d15726a21e06fff56139e8..2308ca0b850e789910ff2a2b9a3687265d18b3b2 100644
+--- a/dist/vue-router.mjs
++++ b/dist/vue-router.mjs
+@@ -1115,7 +1115,7 @@ const RouterViewImpl = /* @__PURE__ */ defineComponent({
+ 					meta: matchedRoute.meta
+ 				};
+ 				(isArray(component.ref) ? component.ref.map((r) => r.i) : [component.ref.i]).forEach((instance) => {
+-					instance.__vrv_devtools = info;
++					if (instance) instance.__vrv_devtools = info;
+ 				});
+ 			}
+ 			return normalizeSlot(slots.default, {

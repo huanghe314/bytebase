@@ -190,7 +190,7 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 		return nil, errors.Wrapf(err, "failed to create message bus")
 	}
 
-	s.licenseService, err = enterprise.NewLicenseService(profile.Mode, stores, profile.SaaS)
+	s.licenseService, err = enterprise.NewLicenseService(profile.Mode, stores)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create license service")
 	}

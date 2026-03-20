@@ -42,7 +42,7 @@ func (s *AuditLogService) SearchAuditLogs(ctx context.Context, request *connect.
 	}
 
 	// Apply retention-based filtering based on the plan
-	retentionCutoff := s.licenseService.GetAuditLogRetentionCutoff(ctx, workspaceID)
+	retentionCutoff := s.licenseService.GetAuditLogRetentionCutoff()
 	if retentionCutoff != nil {
 		filterQ = store.ApplyRetentionFilter(filterQ, retentionCutoff)
 	}
