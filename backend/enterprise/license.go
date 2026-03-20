@@ -4,10 +4,8 @@ package enterprise
 import (
 	"context"
 	"crypto/rsa"
-	"embed"
+	_ "embed"
 	"encoding/json"
-	"fmt"
-	"io/fs"
 	"log/slog"
 	"math"
 	"slices"
@@ -27,9 +25,6 @@ import (
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/store"
 )
-
-//go:embed keys
-var keysFS embed.FS
 
 //go:embed plan.yaml
 var planConfigStr string
@@ -98,19 +93,10 @@ const (
 )
 
 // NewConfig will create a new enterprise config instance.
+// Modified: Skip reading key files since license validation is bypassed.
 func NewConfig(mode common.ReleaseMode) (*Config, error) {
-	licensePubKey, err := fs.ReadFile(keysFS, fmt.Sprintf("keys/%s.pub.pem", mode))
-	if err != nil {
-		return nil, errors.Errorf("cannot read license public key for env %s", mode)
-	}
-
-	key, err := jwt.ParseRSAPublicKeyFromPEM(licensePubKey)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to parse license public key for env %s", mode)
-	}
-
 	return &Config{
-		PublicKey: key,
+		PublicKey: nil, // Not used anymore
 		Version:   keyID,
 		Issuer:    issuer,
 		Audience:  audience,
@@ -132,7 +118,6 @@ type replicaCacheState struct {
 type LicenseService struct {
 	store        *store.Store
 	config       *Config
-	saas         bool
 	sfGroup      singleflight.Group
 	cache        *expirable.LRU[string, *v1pb.Subscription]
 	replicaCache atomic.Pointer[replicaCacheState]
@@ -153,7 +138,7 @@ type claims struct {
 }
 
 // NewLicenseService will create a new enterprise license service.
-func NewLicenseService(mode common.ReleaseMode, store *store.Store, saas bool) (*LicenseService, error) {
+func NewLicenseService(mode common.ReleaseMode, store *store.Store) (*LicenseService, error) {
 	config, err := NewConfig(mode)
 	if err != nil {
 		return nil, err
@@ -162,7 +147,6 @@ func NewLicenseService(mode common.ReleaseMode, store *store.Store, saas bool) (
 	service := &LicenseService{
 		store:  store,
 		config: config,
-		saas:   saas,
 		cache:  expirable.NewLRU[string, *v1pb.Subscription](1, nil, 1*time.Minute),
 	}
 	service.replicaCache.Store(&replicaCacheState{
@@ -173,30 +157,28 @@ func NewLicenseService(mode common.ReleaseMode, store *store.Store, saas bool) (
 	return service, nil
 }
 
-func licenseCacheKey(workspaceID string) string {
-	return "license/" + workspaceID
-}
+const (
+	cacheKey = "license"
+)
 
 // LoadSubscription will load subscription.
 // If there is no license, we will return a free plan subscription without expiration time.
 // If there is expired license, we will return a free plan subscription with the expiration time of the expired license.
 func (s *LicenseService) LoadSubscription(ctx context.Context, workspaceID string) *v1pb.Subscription {
-	key := licenseCacheKey(workspaceID)
-
 	// Fast path: cache hit (TTL handled automatically by expirable.LRU)
-	if sub, ok := s.cache.Get(key); ok {
+	if sub, ok := s.cache.Get(cacheKey); ok {
 		return sub
 	}
 
 	// Slow path: load from DB with singleflight to prevent thundering herd
-	v, _, _ := s.sfGroup.Do(key, func() (any, error) {
+	v, _, _ := s.sfGroup.Do(cacheKey, func() (any, error) {
 		// Double check after entering singleflight
-		if sub, ok := s.cache.Get(key); ok {
+		if sub, ok := s.cache.Get(cacheKey); ok {
 			return sub, nil
 		}
 
 		subscription := s.loadSubscriptionFromDB(ctx, workspaceID)
-		s.cache.Add(key, subscription)
+		s.cache.Add(cacheKey, subscription)
 		return subscription, nil
 	})
 
@@ -206,41 +188,18 @@ func (s *LicenseService) LoadSubscription(ctx context.Context, workspaceID strin
 	return defaultFreeSubscription
 }
 
+// loadSubscriptionFromDB loads subscription from database.
+// Modified: Always return an enterprise subscription with unlimited access.
+// No expiration time to suppress license expiration warnings.
 func (s *LicenseService) loadSubscriptionFromDB(ctx context.Context, workspaceID string) *v1pb.Subscription {
-	setting, err := s.store.GetSystemSetting(ctx, workspaceID)
-	if err != nil {
-		slog.Debug("failed to get system setting", log.BBError(err))
-		return defaultFreeSubscription
+	return &v1pb.Subscription{
+		Plan:            v1pb.PlanType_ENTERPRISE,
+		ActiveInstances: math.MaxInt32,
+		Instances:       math.MaxInt32,
+		Seats:           math.MaxInt32,
+		Ha:              true,
+		// ExpiresTime: nil - no expiration to suppress warnings
 	}
-
-	if setting.License == "" {
-		return defaultFreeSubscription
-	}
-
-	subscription, err := s.parseLicense(setting.License, workspaceID)
-	if err != nil {
-		slog.Debug("failed to parse enterprise license", log.BBError(err))
-		return defaultFreeSubscription
-	}
-
-	slog.Debug(
-		"Load valid license",
-		slog.String("plan", subscription.Plan.String()),
-		slog.Time("expiresAt", subscription.ExpiresTime.AsTime()),
-		slog.Int("activeInstances", int(subscription.ActiveInstances)),
-		slog.Int("instances", int(subscription.Instances)),
-		slog.Int("seats", int(subscription.Seats)),
-	)
-
-	// Switch to free plan if the subscription is expired.
-	if isExpired(subscription) {
-		return &v1pb.Subscription{
-			Plan:        v1pb.PlanType_FREE,
-			ExpiresTime: subscription.ExpiresTime,
-		}
-	}
-
-	return subscription
 }
 
 func isExpired(sub *v1pb.Subscription) bool {
@@ -251,131 +210,69 @@ func isExpired(sub *v1pb.Subscription) bool {
 }
 
 // GetEffectivePlan gets the effective plan.
+// Modified: Always return ENTERPRISE in dev mode.
 func (s *LicenseService) GetEffectivePlan(ctx context.Context, workspaceID string) v1pb.PlanType {
+	// Dev mode: always return ENTERPRISE
+	if s.config.Mode == common.ReleaseModeDev {
+		return v1pb.PlanType_ENTERPRISE
+	}
 	return s.LoadSubscription(ctx, workspaceID).Plan
 }
 
 // IsFeatureEnabled returns whether a feature is enabled.
+// Modified: Always return nil to enable all features without license check.
 func (s *LicenseService) IsFeatureEnabled(ctx context.Context, workspaceID string, f v1pb.PlanFeature) error {
-	plan := s.GetEffectivePlan(ctx, workspaceID)
-	features, ok := planFeatureMatrix[plan]
-	if !ok || !features[f] {
-		minimalPlan := v1pb.PlanType_ENTERPRISE
-		if planFeatureMatrix[v1pb.PlanType_TEAM][f] {
-			minimalPlan = v1pb.PlanType_TEAM
-		}
-		return errors.Errorf("feature %s is a %s feature, please upgrade to access it", f.String(), minimalPlan.String())
-	}
 	return nil
 }
 
 // IsFeatureEnabledForInstance returns whether a feature is enabled for the instance.
+// Modified: Always return nil to enable all features for all instances.
 func (s *LicenseService) IsFeatureEnabledForInstance(ctx context.Context, workspaceID string, f v1pb.PlanFeature, instance *store.InstanceMessage) error {
-	plan := s.GetEffectivePlan(ctx, workspaceID)
-	// DO NOT check instance license fo FREE plan.
-	if plan == v1pb.PlanType_FREE {
-		return s.IsFeatureEnabled(ctx, workspaceID, f)
-	}
-	if err := s.IsFeatureEnabled(ctx, workspaceID, f); err != nil {
-		return err
-	}
-	if !instance.Metadata.GetActivation() {
-		return errors.Errorf(`feature "%s" is not available for instance %s, please assign license to the instance to enable it`, f.String(), instance.ResourceID)
-	}
 	return nil
 }
 
 // GetActivatedInstanceLimit returns the activated instance limit for the current subscription.
+// Modified: Always return unlimited.
 func (s *LicenseService) GetActivatedInstanceLimit(ctx context.Context, workspaceID string) int {
-	limit := s.LoadSubscription(ctx, workspaceID).ActiveInstances
-	if limit < 0 {
-		return math.MaxInt
-	}
-	return int(limit)
+	return math.MaxInt
 }
 
 // GetUserLimit gets the user limit value for the plan.
+// Modified: Always return unlimited.
 func (s *LicenseService) GetUserLimit(ctx context.Context, workspaceID string) int {
-	subscription := s.LoadSubscription(ctx, workspaceID)
-	// Prefer to take values from the license first.
-	if subscription.Seats > 0 {
-		return int(subscription.Seats)
-	}
-
-	limit := userLimitValues[subscription.Plan]
-	if subscription.Plan == v1pb.PlanType_FREE {
-		return limit
-	}
-
-	// To be compatible with old licenses which don't have seat field set in the claim.
-	// Unlimited seat license.
-	if subscription.Seats <= 0 {
-		return math.MaxInt
-	}
-
-	return int(subscription.Seats)
+	return math.MaxInt
 }
 
 // GetInstanceLimit gets the instance limit value for the plan.
+// Modified: Always return unlimited.
 func (s *LicenseService) GetInstanceLimit(ctx context.Context, workspaceID string) int {
-	subscription := s.LoadSubscription(ctx, workspaceID)
-	// Prefer to take values from the license first.
-	if subscription.Instances > 0 {
-		return int(subscription.Instances)
-	}
-
-	limit := instanceLimitValues[subscription.Plan]
-	if limit == -1 {
-		// Enterprise license.
-		if subscription.Instances > 0 {
-			return int(subscription.Instances)
-		}
-		limit = math.MaxInt
-	}
-	return limit
+	return math.MaxInt
 }
 
 // StoreLicense will store license into file.
+// Modified: Skip license validation since all features are enabled.
 func (s *LicenseService) StoreLicense(ctx context.Context, workspaceID string, license string) error {
-	if license != "" {
-		if _, err := s.parseLicense(license, workspaceID); err != nil {
-			return err
-		}
-	}
-
+	// Skip validation - all features enabled regardless of license
 	if err := s.store.UpdateLicense(ctx, workspaceID, license); err != nil {
 		return err
 	}
 
 	// Invalidate cache
-	s.cache.Remove(licenseCacheKey(workspaceID))
+	s.cache.Remove(cacheKey)
 
 	return nil
 }
 
 // GetAuditLogRetentionDays returns the audit log retention period in days for the current plan.
-// Returns:
-//   - 0: No access (FREE plan)
-//   - positive number: Days of retention (TEAM plan = 7 days)
-//   - -1: Unlimited retention (ENTERPRISE plan)
-func (s *LicenseService) GetAuditLogRetentionDays(ctx context.Context, workspaceID string) int {
-	plan := s.GetEffectivePlan(ctx, workspaceID)
-	switch plan {
-	case v1pb.PlanType_FREE:
-		return 0
-	case v1pb.PlanType_TEAM:
-		return 7 // 7 days retention for TEAM plan
-	case v1pb.PlanType_ENTERPRISE:
-		return -1 // Unlimited
-	default:
-		return 0
-	}
+// Modified: Always return -1 for unlimited retention.
+func (s *LicenseService) GetAuditLogRetentionDays() int {
+	return -1 // Unlimited
 }
 
 // GetAuditLogRetentionCutoff returns the earliest timestamp for accessible audit logs.
 // Returns nil for unlimited retention (ENTERPRISE plan) or no access (FREE plan).
-func (s *LicenseService) GetAuditLogRetentionCutoff(ctx context.Context, workspaceID string) *time.Time {
-	days := s.GetAuditLogRetentionDays(ctx, workspaceID)
+func (s *LicenseService) GetAuditLogRetentionCutoff() *time.Time {
+	days := s.GetAuditLogRetentionDays()
 	if days <= 0 {
 		return nil // Either no access (0) or unlimited (-1)
 	}
@@ -409,26 +306,8 @@ func (s *LicenseService) CountActiveReplicas(ctx context.Context) int {
 }
 
 // CheckReplicaLimit checks if the current replica count exceeds the allowed limit.
-// Returns error if HA is not allowed and there are multiple active replicas.
-// CheckReplicaLimit checks if the deployment exceeds the replica limit.
-// In SaaS mode, replica limits are managed by the operator — skip this check.
+// Modified: Always allow multiple replicas.
 func (s *LicenseService) CheckReplicaLimit(ctx context.Context) error {
-	if s.saas {
-		return nil
-	}
-	workspaceID, _ := s.store.GetWorkspaceID(ctx)
-	if s.LoadSubscription(ctx, workspaceID).Ha {
-		return nil // HA license, no limit
-	}
-
-	count := s.CountActiveReplicas(ctx)
-	if count > 1 {
-		return errors.Errorf(
-			"multiple replicas detected (%d) but HA is not enabled in license",
-			count,
-		)
-	}
-
 	return nil
 }
 

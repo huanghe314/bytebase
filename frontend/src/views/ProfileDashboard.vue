@@ -76,15 +76,7 @@
                   {{ displayRoleTitle(role) }}
                 </NTag>
               </div>
-              <router-link
-                v-if="!hasFeature(PlanFeature.FEATURE_IAM)"
-                :to="{
-                  name: SETTING_ROUTE_WORKSPACE_SUBSCRIPTION,
-                }"
-                class="normal-link"
-              >
-                {{ $t("settings.profile.subscription") }}
-              </router-link>
+              <!-- Modified: Subscription link hidden for local dev -->
             </dd>
           </div>
 

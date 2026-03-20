@@ -1,12 +1,5 @@
 <template>
-  <div
-    v-if="actionText != ''"
-    class="flex items-center justify-end mt-2 md:mt-0 md:ml-2"
-  >
-    <NButton type="primary" class="whitespace-nowrap" @click.prevent="onClick">
-      {{ $t(actionText) }}
-    </NButton>
-  </div>
+  <!-- Modified: Upgrade button disabled for local dev -->
 
   <WeChatQRModal
     v-if="state.showQRCodeModal"

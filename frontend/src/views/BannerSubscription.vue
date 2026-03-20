@@ -1,27 +1,5 @@
 <template>
-  <div class="bg-info">
-    <div class="mx-auto py-1 px-3">
-      <div class="flex items-center justify-center flex-wrap gap-x-2">
-        <p class="ml-3 text-base font-medium text-white truncate">
-          {{ content }}
-        </p>
-        <router-link
-          :to="{ name: SETTING_ROUTE_WORKSPACE_SUBSCRIPTION }"
-          class="flex items-center justify-center py-1 text-base font-medium cursor-pointer text-white underline hover:opacity-80"
-          exact-active-class=""
-        >
-          {{
-            $t(
-              isTrialing
-                ? "subscription.purchase-license"
-                : "subscription.update-license"
-            )
-          }}
-          <heroicons-outline:shopping-cart class="ml-1 h-6 w-6 text-white" />
-        </router-link>
-      </div>
-    </div>
-  </div>
+  <!-- Modified: License banner disabled for local dev -->
 </template>
 
 <script lang="ts" setup>
@@ -48,27 +26,7 @@ const currentPlanText = computed((): string => {
 });
 
 const content = computed(() => {
-  if (currentPlan.value !== PlanType.FREE) {
-    if (isTrialing.value) {
-      return t("banner.trial-expires", {
-        plan: currentPlanText.value,
-        days: daysBeforeExpire.value,
-        expireAt: expireAt.value,
-      });
-    }
-    if (isExpired.value) {
-      return t("banner.license-expired", {
-        plan: currentPlanText.value,
-        expireAt: expireAt.value,
-      });
-    } else if (daysBeforeExpire.value <= LICENSE_EXPIRATION_THRESHOLD) {
-      return t("banner.license-expires", {
-        plan: currentPlanText.value,
-        days: daysBeforeExpire.value,
-        expireAt: expireAt.value,
-      });
-    }
-  }
+  // Modified: Suppress all license expiration warnings for local dev
   return "";
 });
 
