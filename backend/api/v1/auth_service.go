@@ -22,7 +22,6 @@ import (
 	"github.com/bytebase/bytebase/backend/common/qb"
 	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/iam"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -65,21 +64,19 @@ var (
 // AuthService implements the auth service.
 type AuthService struct {
 	v1connect.UnimplementedAuthServiceHandler
-	store          *store.Store
-	secret         string
-	licenseService *enterprise.LicenseService
-	profile        *config.Profile
-	iamManager     *iam.Manager
+	store      *store.Store
+	secret     string
+	profile    *config.Profile
+	iamManager *iam.Manager
 }
 
 // NewAuthService creates a new AuthService.
-func NewAuthService(store *store.Store, secret string, licenseService *enterprise.LicenseService, profile *config.Profile, iamManager *iam.Manager) *AuthService {
+func NewAuthService(store *store.Store, secret string, profile *config.Profile, iamManager *iam.Manager) *AuthService {
 	return &AuthService{
-		store:          store,
-		secret:         secret,
-		licenseService: licenseService,
-		profile:        profile,
-		iamManager:     iamManager,
+		store:      store,
+		secret:     secret,
+		profile:    profile,
+		iamManager: iamManager,
 	}
 }
 
@@ -127,9 +124,6 @@ func (s *AuthService) Login(ctx context.Context, req *connect.Request[v1pb.Login
 func (s *AuthService) needResetPassword(ctx context.Context, user *store.UserMessage, workspaceID string) bool {
 	// Reset password restriction only works for end user with email & password login.
 	if user.Type != storepb.PrincipalType_END_USER {
-		return false
-	}
-	if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_PASSWORD_RESTRICTIONS); err != nil {
 		return false
 	}
 
@@ -218,14 +212,12 @@ func (s *AuthService) Signup(ctx context.Context, req *connect.Request[v1pb.Sign
 
 	if workspaceID != "" {
 		if !s.profile.SaaS {
-			if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_DISALLOW_SELF_SERVICE_SIGNUP); err == nil {
-				setting, err := s.store.GetWorkspaceProfileSetting(ctx, workspaceID)
-				if err != nil {
-					return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get workspace setting"))
-				}
-				if setting.DisallowSignup {
-					return nil, connect.NewError(connect.CodePermissionDenied, errors.Errorf("sign up is disallowed for this workspace"))
-				}
+			setting, err := s.store.GetWorkspaceProfileSetting(ctx, workspaceID)
+			if err != nil {
+				return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get workspace setting"))
+			}
+			if setting.DisallowSignup {
+				return nil, connect.NewError(connect.CodePermissionDenied, errors.Errorf("sign up is disallowed for this workspace"))
 			}
 		}
 
@@ -280,7 +272,7 @@ func (s *AuthService) Signup(ctx context.Context, req *connect.Request[v1pb.Sign
 	}
 
 	// Step 4: Generate token and finalize login.
-	tokenDuration := auth.GetAccessTokenDuration(ctx, s.store, s.licenseService, workspaceID)
+	tokenDuration := auth.GetAccessTokenDuration(ctx, s.store, workspaceID)
 	token, err := auth.GenerateAccessToken(user.Email, workspaceID, s.secret, tokenDuration)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to generate access token"))
@@ -291,14 +283,14 @@ func (s *AuthService) Signup(ctx context.Context, req *connect.Request[v1pb.Sign
 
 	// Signup is always web-based — set tokens as HTTP-only cookies.
 	origin := req.Header().Get("Origin")
-	cookie := auth.GetTokenCookie(ctx, s.store, s.licenseService, workspaceID, origin, token)
+	cookie := auth.GetTokenCookie(ctx, s.store, workspaceID, origin, token)
 	resp.Header().Add("Set-Cookie", cookie.String())
 
 	refreshToken, err := auth.GenerateOpaqueToken()
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to generate refresh token"))
 	}
-	refreshTokenDuration := auth.GetRefreshTokenDuration(ctx, s.store, s.licenseService, workspaceID)
+	refreshTokenDuration := auth.GetRefreshTokenDuration(ctx, s.store, workspaceID)
 	if err := s.store.CreateWebRefreshToken(ctx, &store.WebRefreshTokenMessage{
 		TokenHash: auth.HashToken(refreshToken),
 		UserEmail: user.Email,
@@ -341,7 +333,7 @@ func (s *AuthService) Logout(ctx context.Context, req *connect.Request[v1pb.Logo
 
 	origin := req.Header().Get("Origin")
 	// Clear access token cookie
-	resp.Header().Add("Set-Cookie", auth.GetTokenCookie(ctx, s.store, s.licenseService, common.GetWorkspaceIDFromContext(ctx), origin, "").String())
+	resp.Header().Add("Set-Cookie", auth.GetTokenCookie(ctx, s.store, common.GetWorkspaceIDFromContext(ctx), origin, "").String())
 	// Clear refresh token cookie
 	resp.Header().Add("Set-Cookie", auth.GetRefreshTokenCookie(origin, "", 0).String())
 	return resp, nil
@@ -384,7 +376,7 @@ func (s *AuthService) Refresh(ctx context.Context, req *connect.Request[v1pb.Ref
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to get workspace"))
 	}
-	accessTokenDuration := auth.GetAccessTokenDuration(ctx, s.store, s.licenseService, workspaceID)
+	accessTokenDuration := auth.GetAccessTokenDuration(ctx, s.store, workspaceID)
 	accessToken, err := auth.GenerateAccessToken(user.Email, workspaceID, s.secret, accessTokenDuration)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to generate access token"))
@@ -407,7 +399,7 @@ func (s *AuthService) Refresh(ctx context.Context, req *connect.Request[v1pb.Ref
 	// 6. Set cookies and return
 	resp := connect.NewResponse(&v1pb.RefreshResponse{})
 	origin := req.Header().Get("Origin")
-	resp.Header().Add("Set-Cookie", auth.GetTokenCookie(ctx, s.store, s.licenseService, workspaceID, origin, accessToken).String())
+	resp.Header().Add("Set-Cookie", auth.GetTokenCookie(ctx, s.store, workspaceID, origin, accessToken).String())
 	resp.Header().Add("Set-Cookie", auth.GetRefreshTokenCookie(origin, newRefreshToken, time.Until(stored.ExpiresAt)).String())
 
 	return resp, nil
@@ -548,7 +540,7 @@ func (s *AuthService) getOrCreateUserWithIDP(ctx context.Context, request *v1pb.
 		}
 	}
 	// If the email is still invalid, we will return an error.
-	if err := validateEmailWithDomains(ctx, s.licenseService, s.store, workspaceID, email, false); err != nil {
+	if err := validateEmailWithDomains(ctx, s.store, workspaceID, email, false); err != nil {
 		return nil, err
 	}
 
@@ -558,9 +550,6 @@ func (s *AuthService) getOrCreateUserWithIDP(ctx context.Context, request *v1pb.
 	}
 	if user != nil {
 		if user.MemberDeleted {
-			if err := userCountGuard(ctx, s.store, s.licenseService, workspaceID); err != nil {
-				return nil, err
-			}
 			// Undelete the user when login via SSO.
 			user, err = s.store.UpdateUser(ctx, user, &store.UpdateUserMessage{Delete: &undeletePatch})
 			if err != nil {
@@ -578,13 +567,6 @@ func (s *AuthService) getOrCreateUserWithIDP(ctx context.Context, request *v1pb.
 	}
 
 	// For expired license, we will only block new create creation and still allow SSO login from existing users.
-	featurePlan := v1pb.PlanFeature_FEATURE_ENTERPRISE_SSO
-	if idp.Type == storepb.IdentityProviderType_OAUTH2 && googleGitHubDomains[idp.Domain] {
-		featurePlan = v1pb.PlanFeature_FEATURE_GOOGLE_AND_GITHUB_SSO
-	}
-	if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, featurePlan); err != nil {
-		return nil, connect.NewError(connect.CodePermissionDenied, err)
-	}
 	// Create new user from identity provider.
 	password, err := common.RandomString(20)
 	if err != nil {
@@ -593,9 +575,6 @@ func (s *AuthService) getOrCreateUserWithIDP(ctx context.Context, request *v1pb.
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to generate password hash"))
-	}
-	if err := userCountGuard(ctx, s.store, s.licenseService, workspaceID); err != nil {
-		return nil, err
 	}
 	newUser, err := s.store.CreateUser(ctx, &store.UserMessage{
 		Name:         userInfo.DisplayName,
@@ -860,18 +839,16 @@ func (s *AuthService) validateLoginPermissions(ctx context.Context, user *store.
 	loginViaIDP := request.GetIdpName() != ""
 
 	// Check disallow password signin
-	if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_DISALLOW_PASSWORD_SIGNIN); err == nil {
-		setting, err := s.store.GetWorkspaceProfileSetting(ctx, workspaceID)
-		if err != nil {
-			return connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to find workspace setting"))
-		}
-		if setting.DisallowPasswordSignin && !loginViaIDP {
-			return connect.NewError(connect.CodePermissionDenied, errors.Errorf("password signin is disallowed"))
-		}
+	setting, err := s.store.GetWorkspaceProfileSetting(ctx, workspaceID)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to find workspace setting"))
+	}
+	if setting.DisallowPasswordSignin && !loginViaIDP {
+		return connect.NewError(connect.CodePermissionDenied, errors.Errorf("password signin is disallowed"))
 	}
 
 	// Check domain restriction
-	return validateEmailWithDomains(ctx, s.licenseService, s.store, workspaceID, user.Email, false)
+	return validateEmailWithDomains(ctx, s.store, workspaceID, user.Email, false)
 }
 
 // checkMFARequired checks if MFA is required and returns a response with temp token if so.
@@ -882,8 +859,7 @@ func (s *AuthService) checkMFARequired(ctx context.Context, user *store.UserMess
 	}
 
 	userMFAEnabled := user.MFAConfig != nil && user.MFAConfig.OtpSecret != ""
-	mfaFeatureEnabled := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_TWO_FA) == nil
-	if !mfaFeatureEnabled || !userMFAEnabled {
+	if !userMFAEnabled {
 		return nil, nil
 	}
 
@@ -899,7 +875,7 @@ func (s *AuthService) checkMFARequired(ctx context.Context, user *store.UserMess
 
 // generateLoginToken generates the appropriate token based on user type.
 func (s *AuthService) generateLoginToken(ctx context.Context, user *store.UserMessage, workspaceID string) (string, error) {
-	tokenDuration := auth.GetAccessTokenDuration(ctx, s.store, s.licenseService, workspaceID)
+	tokenDuration := auth.GetAccessTokenDuration(ctx, s.store, workspaceID)
 
 	var token string
 	var err error
@@ -959,7 +935,7 @@ func (s *AuthService) finalizeLogin(ctx context.Context, req *connect.Request[v1
 			return nil, connect.NewError(connect.CodePermissionDenied, errors.Errorf("only users can use web login"))
 		}
 		origin := req.Header().Get("Origin")
-		cookie := auth.GetTokenCookie(ctx, s.store, s.licenseService, workspaceID, origin, token)
+		cookie := auth.GetTokenCookie(ctx, s.store, workspaceID, origin, token)
 		resp.Header().Add("Set-Cookie", cookie.String())
 
 		// Issue refresh token for web login
@@ -967,7 +943,7 @@ func (s *AuthService) finalizeLogin(ctx context.Context, req *connect.Request[v1
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to generate refresh token"))
 		}
-		refreshTokenDuration := auth.GetRefreshTokenDuration(ctx, s.store, s.licenseService, workspaceID)
+		refreshTokenDuration := auth.GetRefreshTokenDuration(ctx, s.store, workspaceID)
 		if err := s.store.CreateWebRefreshToken(ctx, &store.WebRefreshTokenMessage{
 			TokenHash: auth.HashToken(refreshToken),
 			UserEmail: user.Email,

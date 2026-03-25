@@ -236,13 +236,9 @@ import {
   WORKSPACE_ROUTE_404,
   WORKSPACE_ROUTE_USER_PROFILE,
 } from "@/router/dashboard/workspaceRoutes";
-import {
-  SETTING_ROUTE_PROFILE_TWO_FACTOR,
-  SETTING_ROUTE_WORKSPACE_SUBSCRIPTION,
-} from "@/router/dashboard/workspaceSetting";
+import { SETTING_ROUTE_PROFILE_TWO_FACTOR } from "@/router/dashboard/workspaceSetting";
 import {
   featureToRef,
-  hasFeature,
   pushNotification,
   useAuthStore,
   useCurrentUserV1,

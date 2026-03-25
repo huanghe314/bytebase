@@ -409,9 +409,6 @@
     }
   },
   "banner": {
-    "license-expired": "Giấy phép {plan} của bạn đã hết hạn vào {expireAt}.",
-    "license-expires": "Giấy phép {plan} của bạn sẽ hết hạn sau {days} ngày vào {expireAt}.",
-    "trial-expires": "Bản dùng thử miễn phí {plan} của bạn sẽ hết hạn trong {days} ngày nữa vào {expireAt}.",
     "deploy": "Tự lưu trữ",
     "cloud": "Đám mây",
     "request-demo": "Đặt lịch giới thiệu sản phẩm 30 phút.",
@@ -458,8 +455,7 @@
       "password-hint": "Mật khẩu phải theo quy định hạn chế",
       "password-confirm": "Xác nhận mật khẩu",
       "password-confirm-placeholder": "Xác nhận mật khẩu mới",
-      "password-mismatch": "Mật khẩu mới không khớp",
-      "subscription": "(Nâng cấp để kích hoạt quản lý vai trò)"
+      "password-mismatch": "Mật khẩu mới không khớp"
     },
     "members": {
       "service-accounts": "Tài khoản dịch vụ",

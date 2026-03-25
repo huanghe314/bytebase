@@ -20,7 +20,6 @@ import (
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/component/dbfactory"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/db"
 	"github.com/bytebase/bytebase/backend/store"
@@ -37,11 +36,10 @@ const (
 )
 
 // NewSyncer creates a schema syncer.
-func NewSyncer(stores *store.Store, dbFactory *dbfactory.DBFactory, licenseService *enterprise.LicenseService) *Syncer {
+func NewSyncer(stores *store.Store, dbFactory *dbfactory.DBFactory) *Syncer {
 	return &Syncer{
-		store:          stores,
-		dbFactory:      dbFactory,
-		licenseService: licenseService,
+		store:     stores,
+		dbFactory: dbFactory,
 	}
 }
 
@@ -51,7 +49,6 @@ type Syncer struct {
 
 	store           *store.Store
 	dbFactory       *dbfactory.DBFactory
-	licenseService  *enterprise.LicenseService
 	databaseSyncMap sync.Map // map[string]*store.DatabaseMessage
 }
 
@@ -68,10 +65,7 @@ func (s *Syncer) Run(ctx context.Context, wg *sync.WaitGroup) {
 		for {
 			select {
 			case <-ticker.C:
-				if err := s.licenseService.CheckReplicaLimit(ctx); err != nil {
-					slog.Warn("Schema syncer skipped due to HA license restriction", log.BBError(err))
-					continue
-				}
+
 				s.trySyncAll(ctx)
 			case <-ctx.Done(): // if cancel() execute
 				return
@@ -85,10 +79,6 @@ func (s *Syncer) Run(ctx context.Context, wg *sync.WaitGroup) {
 		for {
 			select {
 			case <-ticker.C:
-				if err := s.licenseService.CheckReplicaLimit(ctx); err != nil {
-					slog.Warn("Database sync checker skipped due to HA license restriction", log.BBError(err))
-					continue
-				}
 				instances, err := s.store.ListAllInstances(ctx, false)
 				if err != nil {
 					slog.Error("Failed to list instance", log.BBError(err))

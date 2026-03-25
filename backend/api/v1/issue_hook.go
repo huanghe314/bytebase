@@ -10,7 +10,6 @@ import (
 	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/component/bus"
 	"github.com/bytebase/bytebase/backend/component/webhook"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/runner/approval"
 	"github.com/bytebase/bytebase/backend/store"
@@ -22,7 +21,6 @@ func postCreateIssue(
 	ctx context.Context,
 	stores *store.Store,
 	webhookManager *webhook.Manager,
-	licenseService *enterprise.LicenseService,
 	b *bus.Bus,
 	project *store.ProjectMessage,
 	creatorName string,
@@ -49,7 +47,7 @@ func postCreateIssue(
 		storepb.Issue_ROLE_GRANT,
 		storepb.Issue_DATABASE_EXPORT:
 
-		if err := approval.FindAndApplyApprovalTemplate(ctx, stores, webhookManager, licenseService, issue); err != nil {
+		if err := approval.FindAndApplyApprovalTemplate(ctx, stores, webhookManager, issue); err != nil {
 			slog.Error("failed to find approval template",
 				slog.String("project", issue.ProjectID), slog.Int64("issue_uid", issue.UID),
 				slog.String("issue_title", issue.Title),

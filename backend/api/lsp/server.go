@@ -7,7 +7,6 @@ import (
 	"github.com/bytebase/bytebase/backend/component/bus"
 	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/iam"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	"github.com/bytebase/bytebase/backend/store"
 )
 
@@ -20,7 +19,6 @@ type Server struct {
 	secret          string
 	bus             *bus.Bus
 	iamManager      *iam.Manager
-	licenseService  *enterprise.LicenseService
 	authInterceptor *auth.APIAuthInterceptor
 }
 
@@ -31,7 +29,6 @@ func NewServer(
 	secret string,
 	bus *bus.Bus,
 	iamManager *iam.Manager,
-	licenseService *enterprise.LicenseService,
 ) *Server {
 	return &Server{
 		store:           store,
@@ -39,7 +36,6 @@ func NewServer(
 		secret:          secret,
 		bus:             bus,
 		iamManager:      iamManager,
-		licenseService:  licenseService,
-		authInterceptor: auth.New(store, secret, licenseService, bus, profile),
+		authInterceptor: auth.New(store, secret, nil, bus, profile),
 	}
 }

@@ -9,7 +9,7 @@
 #   cd /home/huanghe314/workspace/go/src/github.com/huanghe314/bytebase
 #   go build -o bytebase-build/bytebase ./backend/bin/server/main.go
 
-export PG_URL="postgresql://bytebase:bytebase@localhost:5432/bytebase?sslmode=disable"
+export PG_URL="postgresql://bbdev:bbdev@localhost:5432/bbdev?sslmode=disable"
 
 ./bytebase-build/bytebase \
   --data /home/huanghe314/workspace/go/src/github.com/huanghe314/bytebase/bytebase-data \

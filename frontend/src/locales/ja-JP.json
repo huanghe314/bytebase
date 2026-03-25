@@ -409,9 +409,6 @@
     }
   },
   "banner": {
-    "license-expired": "{plan} のライセンスは {expireAt} に期限切れになりました。",
-    "license-expires": "{plan} ライセンスは {expireAt} に期限切れになりました",
-    "trial-expires": "{plan} トライアルは {days} 日後に期限切れになります",
     "deploy": "ローカル展開",
     "cloud": "クラウドサービス",
     "request-demo": "30 分間の製品デモを予約してください。",
@@ -458,8 +455,7 @@
       "password-hint": "パスワードは制限設定に従う必要があります",
       "password-confirm": "パスワードの確認",
       "password-confirm-placeholder": "新しいパスワードを確認します",
-      "password-mismatch": "新しいパスワードが一致しません",
-      "subscription": "(有料プランにアップグレードするとキャラクター管理が可能になります)"
+      "password-mismatch": "新しいパスワードが一致しません"
     },
     "members": {
       "service-accounts": "サービスアカウント",

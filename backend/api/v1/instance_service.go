@@ -16,7 +16,6 @@ import (
 	"github.com/bytebase/bytebase/backend/component/dbfactory"
 
 	"github.com/bytebase/bytebase/backend/component/sampleinstance"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -30,18 +29,16 @@ type InstanceService struct {
 	v1connect.UnimplementedInstanceServiceHandler
 	store                 *store.Store
 	profile               *config.Profile
-	licenseService        *enterprise.LicenseService
 	dbFactory             *dbfactory.DBFactory
 	schemaSyncer          *schemasync.Syncer
 	sampleInstanceManager *sampleinstance.Manager
 }
 
 // NewInstanceService creates a new InstanceService.
-func NewInstanceService(store *store.Store, profile *config.Profile, licenseService *enterprise.LicenseService, dbFactory *dbfactory.DBFactory, schemaSyncer *schemasync.Syncer, sampleInstanceManager *sampleinstance.Manager) *InstanceService {
+func NewInstanceService(store *store.Store, profile *config.Profile, dbFactory *dbfactory.DBFactory, schemaSyncer *schemasync.Syncer, sampleInstanceManager *sampleinstance.Manager) *InstanceService {
 	return &InstanceService{
 		store:                 store,
 		profile:               profile,
-		licenseService:        licenseService,
 		dbFactory:             dbFactory,
 		schemaSyncer:          schemaSyncer,
 		sampleInstanceManager: sampleInstanceManager,
@@ -153,10 +150,6 @@ func (s *InstanceService) CreateInstance(ctx context.Context, req *connect.Reque
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("invalid instance ID %v", req.Msg.InstanceId))
 	}
 
-	if err := s.instanceCountGuard(ctx); err != nil {
-		return nil, err
-	}
-
 	if err := validateLabels(req.Msg.Instance.Labels); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
@@ -195,17 +188,6 @@ func (s *InstanceService) CreateInstance(ctx context.Context, req *connect.Reque
 	}
 
 	workspaceID := common.GetWorkspaceIDFromContext(ctx)
-	activatedInstanceLimit := s.licenseService.GetActivatedInstanceLimit(ctx, workspaceID)
-	if instanceMessage.Metadata.GetActivation() {
-		count, err := s.store.GetActivatedInstanceCount(ctx, workspaceID)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
-		}
-		if count >= activatedInstanceLimit {
-			return nil, connect.NewError(connect.CodeResourceExhausted, errors.Errorf(instanceExceededError, activatedInstanceLimit))
-		}
-	}
-
 	if err := s.checkInstanceDataSources(ctx, instanceMessage, instanceMessage.Metadata.GetDataSources()); err != nil {
 		return nil, err
 	}
@@ -260,14 +242,6 @@ func (s *InstanceService) checkDataSource(ctx context.Context, instance *store.I
 	// Validate IAM credential restrictions in SaaS mode
 	if err := s.validateIAMCredentialForSaaS(dataSource); err != nil {
 		return err
-	}
-
-	if err := s.licenseService.IsFeatureEnabledForInstance(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_EXTERNAL_SECRET_MANAGER, instance); err != nil {
-		missingFeatureError := connect.NewError(connect.CodePermissionDenied, err)
-		if dataSource.GetExternalSecret() != nil {
-			return missingFeatureError
-		}
-		return nil
 	}
 
 	// Validate extra connection parameters for MySQL-based engines
@@ -340,8 +314,6 @@ func (s *InstanceService) UpdateInstance(ctx context.Context, req *connect.Reque
 		Workspace:  instance.Workspace,
 		Metadata:   metadata,
 	}
-	updateActivation := false
-	updateSyncInterval := false
 	for _, path := range req.Msg.UpdateMask.Paths {
 		switch path {
 		case "title":
@@ -377,12 +349,8 @@ func (s *InstanceService) UpdateInstance(ctx context.Context, req *connect.Reque
 			}
 			patch.Metadata.DataSources = dataSources
 		case "activation":
-			if !instance.Metadata.GetActivation() && req.Msg.Instance.Activation {
-				updateActivation = true
-			}
 			patch.Metadata.Activation = req.Msg.Instance.Activation
 		case "sync_interval":
-			updateSyncInterval = true
 			patch.Metadata.SyncInterval = req.Msg.Instance.SyncInterval
 		case "sync_databases":
 			patch.Metadata.SyncDatabases = req.Msg.Instance.SyncDatabases
@@ -393,28 +361,6 @@ func (s *InstanceService) UpdateInstance(ctx context.Context, req *connect.Reque
 			patch.Metadata.Labels = req.Msg.Instance.Labels
 		default:
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf(`unsupported update_mask "%s"`, path))
-		}
-	}
-
-	// Check feature gates after all fields are processed so that activation
-	// changes in the same request are visible to the license check.
-	if updateSyncInterval {
-		patchedInstance := *instance
-		patchedInstance.Metadata = patch.Metadata
-		if err := s.licenseService.IsFeatureEnabledForInstance(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_CUSTOM_INSTANCE_SYNC_TIME, &patchedInstance); err != nil {
-			return nil, connect.NewError(connect.CodePermissionDenied, err)
-		}
-	}
-
-	workspaceID := common.GetWorkspaceIDFromContext(ctx)
-	activatedInstanceLimit := s.licenseService.GetActivatedInstanceLimit(ctx, workspaceID)
-	if updateActivation {
-		count, err := s.store.GetActivatedInstanceCount(ctx, workspaceID)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
-		}
-		if count >= activatedInstanceLimit {
-			return nil, connect.NewError(connect.CodeResourceExhausted, errors.Errorf(instanceExceededError, activatedInstanceLimit))
 		}
 	}
 
@@ -512,10 +458,6 @@ func (s *InstanceService) UndeleteInstance(ctx context.Context, req *connect.Req
 		result := convertToV1Instance(instance)
 		return connect.NewResponse(result), nil
 	}
-	if err := s.instanceCountGuard(ctx); err != nil {
-		return nil, err
-	}
-
 	ins, err := s.store.UpdateInstance(ctx, &store.UpdateInstanceMessage{
 		ResourceID: &instance.ResourceID,
 		Workspace:  instance.Workspace,
@@ -662,9 +604,6 @@ func (s *InstanceService) AddDataSource(ctx context.Context, req *connect.Reques
 	if dataSource.GetType() != storepb.DataSourceType_READ_ONLY {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("only read-only data source can be added"))
 	}
-	if err := s.licenseService.IsFeatureEnabledForInstance(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_INSTANCE_READ_ONLY_CONNECTION, instance); err != nil {
-		return nil, connect.NewError(connect.CodePermissionDenied, err)
-	}
 
 	metadata := proto.CloneOf(instance.Metadata)
 	metadata.DataSources = append(metadata.DataSources, dataSource)
@@ -713,12 +652,6 @@ func (s *InstanceService) UpdateDataSource(ctx context.Context, req *connect.Req
 			}))
 		}
 		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf(`cannot found data source "%s"`, req.Msg.DataSource.Id))
-	}
-
-	if dataSource.GetType() == storepb.DataSourceType_READ_ONLY {
-		if err := s.licenseService.IsFeatureEnabledForInstance(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_INSTANCE_READ_ONLY_CONNECTION, instance); err != nil {
-			return nil, connect.NewError(connect.CodePermissionDenied, err)
-		}
 	}
 
 	for _, path := range req.Msg.UpdateMask.Paths {
@@ -974,22 +907,6 @@ func buildEnvironmentName(environmentID *string) *string {
 	return &result
 }
 
-func (s *InstanceService) instanceCountGuard(ctx context.Context) error {
-	workspaceID := common.GetWorkspaceIDFromContext(ctx)
-	instanceLimit := s.licenseService.GetInstanceLimit(ctx, workspaceID)
-
-	count, err := s.store.CountActiveInstances(ctx, workspaceID)
-	if err != nil {
-		return connect.NewError(connect.CodeInternal, err)
-	}
-	if count >= instanceLimit {
-		return connect.NewError(connect.CodeResourceExhausted, errors.Errorf("reached the maximum instance count %d", instanceLimit))
-	}
-
-	return nil
-}
-
-// validateExtraConnectionParameters validates extra connection parameters for security risks.
 func validateExtraConnectionParameters(engine storepb.Engine, params map[string]string) error {
 	// Validate MySQL-based engines
 	switch engine {

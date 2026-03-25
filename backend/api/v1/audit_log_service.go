@@ -11,7 +11,6 @@ import (
 
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/component/export"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -20,31 +19,19 @@ import (
 
 type AuditLogService struct {
 	v1connect.UnimplementedAuditLogServiceHandler
-	store          *store.Store
-	licenseService *enterprise.LicenseService
+	store *store.Store
 }
 
-func NewAuditLogService(store *store.Store, licenseService *enterprise.LicenseService) *AuditLogService {
+func NewAuditLogService(store *store.Store) *AuditLogService {
 	return &AuditLogService{
-		store:          store,
-		licenseService: licenseService,
+		store: store,
 	}
 }
 
 func (s *AuditLogService) SearchAuditLogs(ctx context.Context, request *connect.Request[v1pb.SearchAuditLogsRequest]) (*connect.Response[v1pb.SearchAuditLogsResponse], error) {
-	workspaceID := common.GetWorkspaceIDFromContext(ctx)
-	if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_AUDIT_LOG); err != nil {
-		return nil, connect.NewError(connect.CodePermissionDenied, err)
-	}
 	filterQ, err := store.GetSearchAuditLogsFilter(request.Msg.Filter)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-
-	// Apply retention-based filtering based on the plan
-	retentionCutoff := s.licenseService.GetAuditLogRetentionCutoff()
-	if retentionCutoff != nil {
-		filterQ = store.ApplyRetentionFilter(filterQ, retentionCutoff)
 	}
 
 	orderByKeys, err := store.GetAuditLogOrders(request.Msg.OrderBy)
@@ -95,9 +82,6 @@ func (s *AuditLogService) SearchAuditLogs(ctx context.Context, request *connect.
 }
 
 func (s *AuditLogService) ExportAuditLogs(ctx context.Context, request *connect.Request[v1pb.ExportAuditLogsRequest]) (*connect.Response[v1pb.ExportAuditLogsResponse], error) {
-	if err := s.licenseService.IsFeatureEnabled(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_AUDIT_LOG); err != nil {
-		return nil, connect.NewError(connect.CodePermissionDenied, err)
-	}
 	if request.Msg.Filter == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("filter is required to export audit logs"))
 	}

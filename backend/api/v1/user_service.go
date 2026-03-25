@@ -22,7 +22,6 @@ import (
 	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/iam"
 
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -33,19 +32,17 @@ import (
 // UserService implements the user service.
 type UserService struct {
 	v1connect.UnimplementedUserServiceHandler
-	store          *store.Store
-	licenseService *enterprise.LicenseService
-	profile        *config.Profile
-	iamManager     *iam.Manager
+	store      *store.Store
+	profile    *config.Profile
+	iamManager *iam.Manager
 }
 
 // NewUserService creates a new UserService.
-func NewUserService(store *store.Store, licenseService *enterprise.LicenseService, profile *config.Profile, iamManager *iam.Manager) *UserService {
+func NewUserService(store *store.Store, profile *config.Profile, iamManager *iam.Manager) *UserService {
 	return &UserService{
-		store:          store,
-		licenseService: licenseService,
-		profile:        profile,
-		iamManager:     iamManager,
+		store:      store,
+		profile:    profile,
+		iamManager: iamManager,
 	}
 }
 
@@ -211,11 +208,7 @@ func (s *UserService) CreateUser(ctx context.Context, request *connect.Request[v
 	workspaceID := common.GetWorkspaceIDFromContext(ctx)
 	email := request.Msg.User.Email
 
-	if err := userCountGuard(ctx, s.store, s.licenseService, workspaceID); err != nil {
-		return nil, err
-	}
-
-	if err := validateEmailWithDomains(ctx, s.licenseService, s.store, workspaceID, email, false); err != nil {
+	if err := validateEmailWithDomains(ctx, s.store, workspaceID, email, false); err != nil {
 		return nil, err
 	}
 
@@ -608,12 +601,6 @@ func (s *UserService) UndeleteUser(ctx context.Context, request *connect.Request
 	if !user.MemberDeleted {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("user %q is already active", email))
 	}
-	if user.Type == storepb.PrincipalType_END_USER {
-		if err := userCountGuard(ctx, s.store, s.licenseService, workspaceID); err != nil {
-			return nil, err
-		}
-	}
-
 	user, err = s.store.UpdateUser(ctx, user, &store.UpdateUserMessage{Delete: &undeletePatch})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -665,7 +652,7 @@ func (s *UserService) UpdateEmail(ctx context.Context, request *connect.Request[
 	}
 
 	// Validate email format and domain restrictions
-	if err := validateEmailWithDomains(ctx, s.licenseService, s.store, common.GetWorkspaceIDFromContext(ctx), request.Msg.Email, false); err != nil {
+	if err := validateEmailWithDomains(ctx, s.store, common.GetWorkspaceIDFromContext(ctx), request.Msg.Email, false); err != nil {
 		return nil, err
 	}
 
@@ -735,17 +722,9 @@ func validateEndUserEmail(email string) error {
 	return nil
 }
 
-func validateEmailWithDomains(ctx context.Context, licenseService *enterprise.LicenseService, stores *store.Store, workspaceID, email string, checkDomainSetting bool) error {
+func validateEmailWithDomains(ctx context.Context, stores *store.Store, workspaceID, email string, checkDomainSetting bool) error {
 	if err := validateEndUserEmail(email); err != nil {
 		return err
-	}
-	if licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_USER_EMAIL_DOMAIN_RESTRICTION) != nil {
-		// nolint:nilerr
-		// feature not enabled, only validate email and skip domain restriction.
-		if err := common.ValidateEmail(email); err != nil {
-			return connect.NewError(connect.CodeInvalidArgument, errors.Errorf("invalid email: %v", err.Error()))
-		}
-		return nil
 	}
 	setting, err := stores.GetWorkspaceProfileSetting(ctx, workspaceID)
 	if err != nil {
@@ -834,19 +813,6 @@ func generateRecoveryCodes(n int) ([]string, error) {
 		recoveryCodes[i] = code
 	}
 	return recoveryCodes, nil
-}
-
-func userCountGuard(ctx context.Context, store *store.Store, licenseService *enterprise.LicenseService, workspaceID string) error {
-	userLimit := licenseService.GetUserLimit(ctx, workspaceID)
-
-	count, err := store.CountActiveEndUsersPerWorkspace(ctx, workspaceID)
-	if err != nil {
-		return connect.NewError(connect.CodeInternal, err)
-	}
-	if count >= userLimit {
-		return connect.NewError(connect.CodeResourceExhausted, errors.Errorf("reached the maximum user count %d", userLimit))
-	}
-	return nil
 }
 
 func isUserWorkspaceAdmin(ctx context.Context, stores *store.Store, user *store.UserMessage, workspaceID string) (bool, error) {

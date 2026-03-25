@@ -20,7 +20,6 @@ import (
 	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/component/dbfactory"
 	"github.com/bytebase/bytebase/backend/component/export"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/plugin/db"
@@ -29,11 +28,10 @@ import (
 )
 
 // NewDataExportExecutor creates a data export task executor.
-func NewDataExportExecutor(store *store.Store, dbFactory *dbfactory.DBFactory, license *enterprise.LicenseService) Executor {
+func NewDataExportExecutor(store *store.Store, dbFactory *dbfactory.DBFactory) Executor {
 	return &DataExportExecutor{
 		store:     store,
 		dbFactory: dbFactory,
-		license:   license,
 	}
 }
 
@@ -41,7 +39,6 @@ func NewDataExportExecutor(store *store.Store, dbFactory *dbfactory.DBFactory, l
 type DataExportExecutor struct {
 	store     *store.Store
 	dbFactory *dbfactory.DBFactory
-	license   *enterprise.LicenseService
 }
 
 // RunOnce will run the data export task executor once.

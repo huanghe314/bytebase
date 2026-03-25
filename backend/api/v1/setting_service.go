@@ -19,7 +19,6 @@ import (
 	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/iam"
 
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -35,24 +34,21 @@ import (
 // SettingService implements the setting service.
 type SettingService struct {
 	v1connect.UnimplementedSettingServiceHandler
-	store          *store.Store
-	profile        *config.Profile
-	licenseService *enterprise.LicenseService
-	iamManager     *iam.Manager
+	store      *store.Store
+	profile    *config.Profile
+	iamManager *iam.Manager
 }
 
 // NewSettingService creates a new setting service.
 func NewSettingService(
 	store *store.Store,
 	profile *config.Profile,
-	licenseService *enterprise.LicenseService,
 	iamManager *iam.Manager,
 ) *SettingService {
 	return &SettingService{
-		store:          store,
-		profile:        profile,
-		licenseService: licenseService,
-		iamManager:     iamManager,
+		store:      store,
+		profile:    profile,
+		iamManager: iamManager,
 	}
 }
 
@@ -210,11 +206,6 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 				if s.profile.SaaS {
 					return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("feature %s is unavailable in current mode", settingName))
 				}
-				if payload.DisallowSignup {
-					if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_DISALLOW_SELF_SERVICE_SIGNUP); err != nil {
-						return nil, connect.NewError(connect.CodePermissionDenied, err)
-					}
-				}
 				oldSetting.DisallowSignup = payload.DisallowSignup
 			case "value.workspace_profile.external_url":
 				if s.profile.SaaS {
@@ -233,35 +224,20 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 				}
 				oldSetting.ExternalUrl = payload.ExternalUrl
 			case "value.workspace_profile.require_2fa":
-				if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_TWO_FA); err != nil {
-					return nil, connect.NewError(connect.CodePermissionDenied, err)
-				}
 				oldSetting.Require_2Fa = payload.Require_2Fa
 			case "value.workspace_profile.access_token_duration":
-				if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_TOKEN_DURATION_CONTROL); err != nil {
-					return nil, connect.NewError(connect.CodePermissionDenied, err)
-				}
 				if payload.AccessTokenDuration != nil && payload.AccessTokenDuration.Seconds > 0 && payload.AccessTokenDuration.AsDuration() < time.Minute {
 					return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("access token duration should be at least one minute"))
 				}
 				oldSetting.AccessTokenDuration = payload.AccessTokenDuration
 			case "value.workspace_profile.refresh_token_duration":
-				if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_TOKEN_DURATION_CONTROL); err != nil {
-					return nil, connect.NewError(connect.CodePermissionDenied, err)
-				}
 				if payload.RefreshTokenDuration != nil && payload.RefreshTokenDuration.Seconds > 0 && payload.RefreshTokenDuration.AsDuration() < time.Hour {
 					return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("refresh token duration should be at least one hour"))
 				}
 				oldSetting.RefreshTokenDuration = payload.RefreshTokenDuration
 			case "value.workspace_profile.inactive_session_timeout":
-				if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_TOKEN_DURATION_CONTROL); err != nil {
-					return nil, connect.NewError(connect.CodePermissionDenied, err)
-				}
 				oldSetting.InactiveSessionTimeout = payload.InactiveSessionTimeout
 			case "value.workspace_profile.announcement":
-				if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_DASHBOARD_ANNOUNCEMENT); err != nil {
-					return nil, connect.NewError(connect.CodePermissionDenied, err)
-				}
 				oldSetting.Announcement = payload.Announcement
 			case "value.workspace_profile.maximum_role_expiration":
 				if payload.MaximumRoleExpiration != nil {
@@ -277,21 +253,11 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 				}
 				oldSetting.Domains = payload.Domains
 			case "value.workspace_profile.enforce_identity_domain":
-				if payload.EnforceIdentityDomain {
-					if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_USER_EMAIL_DOMAIN_RESTRICTION); err != nil {
-						return nil, connect.NewError(connect.CodePermissionDenied, err)
-					}
-				}
 				oldSetting.EnforceIdentityDomain = payload.EnforceIdentityDomain
 			case "value.workspace_profile.database_change_mode":
 				oldSetting.DatabaseChangeMode = payload.DatabaseChangeMode
 			case "value.workspace_profile.disallow_password_signin":
 				if payload.DisallowPasswordSignin {
-					// We should still allow users to turn it off.
-					if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_DISALLOW_PASSWORD_SIGNIN); err != nil {
-						return nil, connect.NewError(connect.CodePermissionDenied, err)
-					}
-
 					identityProviders, err := s.store.ListIdentityProviders(ctx, &store.FindIdentityProviderMessage{Workspace: common.GetWorkspaceIDFromContext(ctx)})
 					if err != nil {
 						return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to list identity providers: %v", err))
@@ -304,25 +270,11 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 			case "value.workspace_profile.enable_metric_collection":
 				oldSetting.EnableMetricCollection = payload.EnableMetricCollection
 			case "value.workspace_profile.enable_audit_log_stdout":
-				if payload.EnableAuditLogStdout {
-					// Require TEAM or ENTERPRISE license
-					if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_AUDIT_LOG); err != nil {
-						return nil, connect.NewError(connect.CodePermissionDenied, err)
-					}
-				}
 				resetAuditLogStdout = true
 				oldSetting.EnableAuditLogStdout = payload.EnableAuditLogStdout
 			case "value.workspace_profile.watermark":
-				if payload.Watermark {
-					if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_WATERMARK); err != nil {
-						return nil, connect.NewError(connect.CodePermissionDenied, err)
-					}
-				}
 				oldSetting.Watermark = payload.Watermark
 			case "value.workspace_profile.directory_sync_token":
-				if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_DIRECTORY_SYNC); err != nil {
-					return nil, connect.NewError(connect.CodePermissionDenied, err)
-				}
 				// Generate a new token if the payload is empty.
 				// This handles both initial setup and token reset (when user explicitly sends empty string).
 				if payload.DirectorySyncToken == "" {
@@ -330,14 +282,8 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 				}
 				oldSetting.DirectorySyncToken = payload.DirectorySyncToken
 			case "value.workspace_profile.branding_logo":
-				if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_CUSTOM_LOGO); err != nil {
-					return nil, connect.NewError(connect.CodePermissionDenied, err)
-				}
 				oldSetting.BrandingLogo = payload.BrandingLogo
 			case "value.workspace_profile.password_restriction":
-				if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_PASSWORD_RESTRICTIONS); err != nil {
-					return nil, connect.NewError(connect.CodePermissionDenied, err)
-				}
 				if payload.PasswordRestriction != nil && payload.PasswordRestriction.MinLength < 8 {
 					return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("invalid password minimum length, should no less than 8"))
 				}
@@ -356,10 +302,6 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 		}
 		storeSettingValue = oldSetting
 	case storepb.SettingName_WORKSPACE_APPROVAL:
-		if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_APPROVAL_WORKFLOW); err != nil {
-			return nil, connect.NewError(connect.CodePermissionDenied, err)
-		}
-
 		payload := &storepb.WorkspaceApprovalSetting{}
 		for _, rule := range request.Msg.Setting.Value.GetWorkspaceApproval().Rules {
 			// Validate the condition.
@@ -474,9 +416,6 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 		storeSettingValue = payload
 
 	case storepb.SettingName_DATA_CLASSIFICATION:
-		if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_DATA_CLASSIFICATION); err != nil {
-			return nil, connect.NewError(connect.CodePermissionDenied, err)
-		}
 		payload := convertDataClassificationSetting(request.Msg.Setting.Value.GetDataClassification())
 		// it's a temporary solution to limit only 1 classification config before we support manage it in the UX.
 		if len(payload.Configs) > 1 {
@@ -718,11 +657,6 @@ func (s *SettingService) validateEnvironments(ctx context.Context, workspaceID s
 		}
 		if used[env.Id] {
 			return connect.NewError(connect.CodeInvalidArgument, errors.Errorf("duplicate environment ID %v", env.Id))
-		}
-		if v, ok := env.Tags["protected"]; ok && v == "protected" {
-			if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_ENVIRONMENT_TIERS); err != nil {
-				return connect.NewError(connect.CodePermissionDenied, err)
-			}
 		}
 		used[env.Id] = true
 	}

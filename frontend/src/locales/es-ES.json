@@ -409,9 +409,6 @@
     }
   },
   "banner": {
-    "license-expired": "Su licencia para {plan} ha expirado el {expireAt}.",
-    "license-expires": "Su licencia para {plan} ha caducado el {expireAt}.",
-    "trial-expires": "Su prueba gratuita para {plan} caducará en {days} días el {expireAt}.",
     "deploy": "Auto Hospedaje",
     "cloud": "Cloud",
     "request-demo": "Reserva una demo de producto de 30 minutos.",
@@ -458,8 +455,7 @@
       "password-hint": "La contraseña debe seguir la configuración de restricción",
       "password-confirm": "Confirmar contraseña",
       "password-confirm-placeholder": "Confirmar nueva contraseña",
-      "password-mismatch": "Nueva contraseña no coincide",
-      "subscription": "(Actualice para habilitar la gestión de roles)"
+      "password-mismatch": "Nueva contraseña no coincide"
     },
     "members": {
       "service-accounts": "Cuentas de Servicio",

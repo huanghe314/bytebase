@@ -6,13 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bytebase/bytebase/backend/enterprise"
-	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/store"
 )
 
 // token="" => unset
-func GetTokenCookie(ctx context.Context, stores *store.Store, licenseService *enterprise.LicenseService, workspaceID string, origin, token string) *http.Cookie {
+func GetTokenCookie(ctx context.Context, stores *store.Store, workspaceID string, origin, token string) *http.Cookie {
 	if token == "" {
 		return &http.Cookie{
 			Name:    AccessTokenCookieName,
@@ -22,7 +20,7 @@ func GetTokenCookie(ctx context.Context, stores *store.Store, licenseService *en
 		}
 	}
 	isHTTPS := strings.HasPrefix(origin, "https")
-	tokenDuration := GetAccessTokenDuration(ctx, stores, licenseService, workspaceID)
+	tokenDuration := GetAccessTokenDuration(ctx, stores, workspaceID)
 	return &http.Cookie{
 		Name:  AccessTokenCookieName,
 		Value: token,
@@ -41,13 +39,8 @@ func GetTokenCookie(ctx context.Context, stores *store.Store, licenseService *en
 	}
 }
 
-func GetAccessTokenDuration(ctx context.Context, store *store.Store, licenseService *enterprise.LicenseService, workspaceID string) time.Duration {
+func GetAccessTokenDuration(ctx context.Context, store *store.Store, workspaceID string) time.Duration {
 	accessTokenDuration := DefaultAccessTokenDuration
-
-	// If the sign-in frequency control feature is not enabled, return default duration
-	if err := licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_TOKEN_DURATION_CONTROL); err != nil {
-		return accessTokenDuration
-	}
 
 	workspaceProfile, err := store.GetWorkspaceProfileSetting(ctx, workspaceID)
 	if err != nil {
@@ -61,13 +54,8 @@ func GetAccessTokenDuration(ctx context.Context, store *store.Store, licenseServ
 	return accessTokenDuration
 }
 
-func GetRefreshTokenDuration(ctx context.Context, store *store.Store, licenseService *enterprise.LicenseService, workspaceID string) time.Duration {
+func GetRefreshTokenDuration(ctx context.Context, store *store.Store, workspaceID string) time.Duration {
 	refreshTokenDuration := DefaultRefreshTokenDuration
-
-	// If the sign-in frequency control feature is not enabled, return default duration
-	if err := licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_TOKEN_DURATION_CONTROL); err != nil {
-		return refreshTokenDuration
-	}
 
 	workspaceProfile, err := store.GetWorkspaceProfileSetting(ctx, workspaceID)
 	if err != nil {

@@ -16,9 +16,7 @@ import (
 	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/component/bus"
 	"github.com/bytebase/bytebase/backend/component/webhook"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
-	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/store"
 	"github.com/bytebase/bytebase/backend/utils"
 )
@@ -28,16 +26,14 @@ type Runner struct {
 	store          *store.Store
 	bus            *bus.Bus
 	webhookManager *webhook.Manager
-	licenseService *enterprise.LicenseService
 }
 
 // NewRunner creates a new runner.
-func NewRunner(store *store.Store, bus *bus.Bus, webhookManager *webhook.Manager, licenseService *enterprise.LicenseService) *Runner {
+func NewRunner(store *store.Store, bus *bus.Bus, webhookManager *webhook.Manager) *Runner {
 	return &Runner{
 		store:          store,
 		bus:            bus,
 		webhookManager: webhookManager,
-		licenseService: licenseService,
 	}
 }
 
@@ -49,10 +45,6 @@ func (r *Runner) Run(ctx context.Context, wg *sync.WaitGroup) {
 	for {
 		select {
 		case ref := <-r.bus.ApprovalCheckChan:
-			if err := r.licenseService.CheckReplicaLimit(ctx); err != nil {
-				slog.Warn("Approval runner skipped due to HA license restriction", log.BBError(err))
-				continue
-			}
 			r.processIssue(ctx, ref)
 		case <-ctx.Done():
 			return
@@ -63,7 +55,7 @@ func (r *Runner) Run(ctx context.Context, wg *sync.WaitGroup) {
 // FindAndApplyApprovalTemplate finds and applies the approval template for an issue.
 // This is a utility function that can be called synchronously (from issue creation)
 // or asynchronously (from the event handler).
-func FindAndApplyApprovalTemplate(ctx context.Context, stores *store.Store, webhookManager *webhook.Manager, licenseService *enterprise.LicenseService, issue *store.IssueMessage) error {
+func FindAndApplyApprovalTemplate(ctx context.Context, stores *store.Store, webhookManager *webhook.Manager, issue *store.IssueMessage) error {
 	project, err := stores.GetProjectByResourceID(ctx, issue.ProjectID)
 	if err != nil {
 		return errors.Wrap(err, "failed to get project")
@@ -77,7 +69,7 @@ func FindAndApplyApprovalTemplate(ctx context.Context, stores *store.Store, webh
 	}
 
 	// Find approval template - errors are logged, not persisted
-	err = findApprovalTemplateForIssue(ctx, stores, webhookManager, licenseService, issue, approvalSetting)
+	err = findApprovalTemplateForIssue(ctx, stores, webhookManager, issue, approvalSetting)
 	if err != nil {
 		return errors.Wrap(err, "failed to find approval template")
 	}
@@ -112,7 +104,7 @@ func (r *Runner) processIssue(ctx context.Context, ref bus.IssueRef) {
 		return
 	}
 
-	if err := findApprovalTemplateForIssue(ctx, r.store, r.webhookManager, r.licenseService, issue, approvalSetting); err != nil {
+	if err := findApprovalTemplateForIssue(ctx, r.store, r.webhookManager, issue, approvalSetting); err != nil {
 		slog.Error("failed to find approval template",
 			slog.String("project", ref.ProjectID), slog.Int64("issue_uid", ref.UID),
 			slog.String("issue_title", issue.Title),
@@ -148,7 +140,7 @@ func (r *Runner) processIssue(ctx context.Context, ref bus.IssueRef) {
 	}
 }
 
-func findApprovalTemplateForIssue(ctx context.Context, stores *store.Store, webhookManager *webhook.Manager, licenseService *enterprise.LicenseService, issue *store.IssueMessage, approvalSetting *storepb.WorkspaceApprovalSetting) error {
+func findApprovalTemplateForIssue(ctx context.Context, stores *store.Store, webhookManager *webhook.Manager, issue *store.IssueMessage, approvalSetting *storepb.WorkspaceApprovalSetting) error {
 	payload := issue.Payload
 	if payload.Approval != nil && payload.Approval.ApprovalFindingDone {
 		return nil
@@ -163,12 +155,6 @@ func findApprovalTemplateForIssue(ctx context.Context, stores *store.Store, webh
 	}
 
 	approvalTemplate, celVarsList, done, err := func() (*storepb.ApprovalTemplate, []map[string]any, bool, error) {
-		// no need to find if feature is not enabled
-		if licenseService.IsFeatureEnabled(ctx, project.Workspace, v1pb.PlanFeature_FEATURE_APPROVAL_WORKFLOW) != nil {
-			// nolint:nilerr
-			return nil, nil, true, nil
-		}
-
 		// Step 1: Determine approval source from issue type
 		approvalSource, err := getApprovalSourceFromIssue(ctx, stores, issue)
 		if err != nil {

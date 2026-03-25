@@ -22,7 +22,6 @@ import (
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
-	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/store"
 	"github.com/bytebase/bytebase/backend/utils"
 )
@@ -49,10 +48,6 @@ func (s *Service) scimAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 		ctx := c.Request().Context()
 		if err := s.validRequestURL(ctx, c); err != nil {
 			return c.String(http.StatusUnauthorized, err.Error())
-		}
-		workspaceID := c.Param("workspaceID")
-		if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_DIRECTORY_SYNC); err != nil {
-			return c.String(http.StatusForbidden, err.Error())
 		}
 		return next(c)
 	}

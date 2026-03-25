@@ -9,7 +9,6 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/bytebase/bytebase/backend/common"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
 	"github.com/bytebase/bytebase/backend/store"
@@ -19,23 +18,18 @@ import (
 // DatabaseGroupService implements the database group service.
 type DatabaseGroupService struct {
 	v1connect.UnimplementedDatabaseGroupServiceHandler
-	store          *store.Store
-	licenseService *enterprise.LicenseService
+	store *store.Store
 }
 
 // NewDatabaseGroupService creates a new DatabaseGroupService.
-func NewDatabaseGroupService(store *store.Store, licenseService *enterprise.LicenseService) *DatabaseGroupService {
+func NewDatabaseGroupService(store *store.Store) *DatabaseGroupService {
 	return &DatabaseGroupService{
-		store:          store,
-		licenseService: licenseService,
+		store: store,
 	}
 }
 
 // CreateDatabaseGroup creates a database group.
 func (s *DatabaseGroupService) CreateDatabaseGroup(ctx context.Context, req *connect.Request[v1pb.CreateDatabaseGroupRequest]) (*connect.Response[v1pb.DatabaseGroup], error) {
-	if err := s.licenseService.IsFeatureEnabled(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_DATABASE_GROUPS); err != nil {
-		return nil, connect.NewError(connect.CodePermissionDenied, err)
-	}
 	projectResourceID, err := common.GetProjectID(req.Msg.Parent)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
@@ -94,9 +88,6 @@ func (s *DatabaseGroupService) CreateDatabaseGroup(ctx context.Context, req *con
 
 // UpdateDatabaseGroup updates a database group.
 func (s *DatabaseGroupService) UpdateDatabaseGroup(ctx context.Context, req *connect.Request[v1pb.UpdateDatabaseGroupRequest]) (*connect.Response[v1pb.DatabaseGroup], error) {
-	if err := s.licenseService.IsFeatureEnabled(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_DATABASE_GROUPS); err != nil {
-		return nil, connect.NewError(connect.CodePermissionDenied, err)
-	}
 	projectResourceID, databaseGroupResourceID, err := common.GetProjectIDDatabaseGroupID(req.Msg.DatabaseGroup.Name)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)

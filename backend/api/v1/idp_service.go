@@ -13,7 +13,6 @@ import (
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/component/config"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -27,17 +26,15 @@ import (
 // IdentityProviderService implements the identity provider service.
 type IdentityProviderService struct {
 	v1connect.UnimplementedIdentityProviderServiceHandler
-	store          *store.Store
-	licenseService *enterprise.LicenseService
-	profile        *config.Profile
+	store   *store.Store
+	profile *config.Profile
 }
 
 // NewIdentityProviderService creates a new IdentityProviderService.
-func NewIdentityProviderService(store *store.Store, licenseService *enterprise.LicenseService, profile *config.Profile) *IdentityProviderService {
+func NewIdentityProviderService(store *store.Store, profile *config.Profile) *IdentityProviderService {
 	return &IdentityProviderService{
-		store:          store,
-		licenseService: licenseService,
-		profile:        profile,
+		store:   store,
+		profile: profile,
 	}
 }
 
@@ -73,10 +70,6 @@ func (s *IdentityProviderService) ListIdentityProviders(ctx context.Context, _ *
 
 // CreateIdentityProvider creates an identity provider.
 func (s *IdentityProviderService) CreateIdentityProvider(ctx context.Context, req *connect.Request[v1pb.CreateIdentityProviderRequest]) (*connect.Response[v1pb.IdentityProvider], error) {
-	if err := s.checkFeatureAvailable(ctx, req.Msg.IdentityProvider); err != nil {
-		return nil, err
-	}
-
 	if _, err := utils.GetEffectiveExternalURL(ctx, s.store, s.profile, common.GetWorkspaceIDFromContext(ctx)); err != nil {
 		return nil, err
 	}
@@ -122,9 +115,6 @@ func (s *IdentityProviderService) UpdateIdentityProvider(ctx context.Context, re
 	}
 	if req.Msg.UpdateMask == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("update_mask must be set"))
-	}
-	if err := s.checkFeatureAvailable(ctx, req.Msg.IdentityProvider); err != nil {
-		return nil, err
 	}
 
 	identityProviderID, err := common.GetIdentityProviderID(req.Msg.IdentityProvider.Name)
@@ -208,22 +198,6 @@ func (s *IdentityProviderService) DeleteIdentityProvider(ctx context.Context, re
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&emptypb.Empty{}), nil
-}
-
-var googleGitHubDomains = map[string]bool{
-	"google.com": true,
-	"github.com": true,
-}
-
-func (s *IdentityProviderService) checkFeatureAvailable(ctx context.Context, idp *v1pb.IdentityProvider) error {
-	featurePlan := v1pb.PlanFeature_FEATURE_ENTERPRISE_SSO
-	if idp.Type == v1pb.IdentityProviderType_OAUTH2 && googleGitHubDomains[idp.Domain] {
-		featurePlan = v1pb.PlanFeature_FEATURE_GOOGLE_AND_GITHUB_SSO
-	}
-	if err := s.licenseService.IsFeatureEnabled(ctx, common.GetWorkspaceIDFromContext(ctx), featurePlan); err != nil {
-		return connect.NewError(connect.CodePermissionDenied, err)
-	}
-	return nil
 }
 
 // TestIdentityProvider tests an identity provider connection.

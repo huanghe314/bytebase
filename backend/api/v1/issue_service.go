@@ -19,7 +19,6 @@ import (
 	"github.com/bytebase/bytebase/backend/component/bus"
 	"github.com/bytebase/bytebase/backend/component/iam"
 	"github.com/bytebase/bytebase/backend/component/webhook"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -34,7 +33,6 @@ type IssueService struct {
 	store          *store.Store
 	webhookManager *webhook.Manager
 	bus            *bus.Bus
-	licenseService *enterprise.LicenseService
 	iamManager     *iam.Manager
 }
 
@@ -49,14 +47,12 @@ func NewIssueService(
 	store *store.Store,
 	webhookManager *webhook.Manager,
 	bus *bus.Bus,
-	licenseService *enterprise.LicenseService,
 	iamManager *iam.Manager,
 ) *IssueService {
 	return &IssueService{
 		store:          store,
 		webhookManager: webhookManager,
 		bus:            bus,
-		licenseService: licenseService,
 		iamManager:     iamManager,
 	}
 }
@@ -412,7 +408,7 @@ func (s *IssueService) CreateIssue(ctx context.Context, req *connect.Request[v1p
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to create issue"))
 	}
 
-	issue, err = postCreateIssue(ctx, s.store, s.webhookManager, s.licenseService, s.bus, project, user.Name, user.Email, issue)
+	issue, err = postCreateIssue(ctx, s.store, s.webhookManager, s.bus, project, user.Name, user.Email, issue)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -436,12 +432,6 @@ func (s *IssueService) buildIssueMessage(ctx context.Context, project *store.Pro
 		// Title is required for role grant requests.
 		if request.Issue.Title == "" {
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("issue title is required"))
-		}
-
-		// Check if role grant workflow feature is enabled.
-		if err := s.licenseService.IsFeatureEnabled(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_REQUEST_ROLE_WORKFLOW); err != nil {
-			return nil, connect.NewError(connect.CodePermissionDenied,
-				errors.Errorf("role request requires approval workflow feature (available in Enterprise plan)"))
 		}
 
 		// Validate role grant fields.

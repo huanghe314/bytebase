@@ -19,7 +19,6 @@ import (
 	"github.com/bytebase/bytebase/backend/component/bus"
 	"github.com/bytebase/bytebase/backend/component/iam"
 	"github.com/bytebase/bytebase/backend/component/webhook"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -33,17 +32,15 @@ type PlanService struct {
 	bus            *bus.Bus
 	iamManager     *iam.Manager
 	webhookManager *webhook.Manager
-	licenseService *enterprise.LicenseService
 }
 
 // NewPlanService returns a plan service instance.
-func NewPlanService(store *store.Store, bus *bus.Bus, iamManager *iam.Manager, webhookManager *webhook.Manager, licenseService *enterprise.LicenseService) *PlanService {
+func NewPlanService(store *store.Store, bus *bus.Bus, iamManager *iam.Manager, webhookManager *webhook.Manager) *PlanService {
 	return &PlanService{
 		store:          store,
 		bus:            bus,
 		iamManager:     iamManager,
 		webhookManager: webhookManager,
-		licenseService: licenseService,
 	}
 }
 
@@ -345,7 +342,7 @@ func (s *PlanService) UpdatePlan(ctx context.Context, request *connect.Request[v
 				// which will trigger approval finding on completion
 				// DATABASE_EXPORT: Re-run approval finding synchronously (no plan checks for export data)
 				if updatedIssue.Type == storepb.Issue_DATABASE_EXPORT {
-					if err := approval.FindAndApplyApprovalTemplate(ctx, s.store, s.webhookManager, s.licenseService, updatedIssue); err != nil {
+					if err := approval.FindAndApplyApprovalTemplate(ctx, s.store, s.webhookManager, updatedIssue); err != nil {
 						slog.Error("failed to find approval template after plan update",
 							slog.String("project", updatedIssue.ProjectID), slog.Int64("issue_uid", updatedIssue.UID),
 							slog.String("issue_title", updatedIssue.Title),

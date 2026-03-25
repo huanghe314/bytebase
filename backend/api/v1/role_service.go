@@ -12,7 +12,6 @@ import (
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/permission"
 	"github.com/bytebase/bytebase/backend/component/iam"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -22,17 +21,15 @@ import (
 // RoleService implements the role service.
 type RoleService struct {
 	v1connect.UnimplementedRoleServiceHandler
-	store          *store.Store
-	iamManager     *iam.Manager
-	licenseService *enterprise.LicenseService
+	store      *store.Store
+	iamManager *iam.Manager
 }
 
 // NewRoleService returns a new instance of the role service.
-func NewRoleService(store *store.Store, iamManager *iam.Manager, licenseService *enterprise.LicenseService) *RoleService {
+func NewRoleService(store *store.Store, iamManager *iam.Manager) *RoleService {
 	return &RoleService{
-		store:          store,
-		iamManager:     iamManager,
-		licenseService: licenseService,
+		store:      store,
+		iamManager: iamManager,
 	}
 }
 
@@ -74,9 +71,6 @@ func (*RoleService) getBuildinRole(roleID string) *store.RoleMessage {
 // CreateRole creates a new role.
 func (s *RoleService) CreateRole(ctx context.Context, req *connect.Request[v1pb.CreateRoleRequest]) (*connect.Response[v1pb.Role], error) {
 	workspaceID := common.GetWorkspaceIDFromContext(ctx)
-	if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_CUSTOM_ROLES); err != nil {
-		return nil, connect.NewError(connect.CodePermissionDenied, err)
-	}
 
 	if predefinedRole := s.getBuildinRole(req.Msg.RoleId); predefinedRole != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("role %s is a built-in role", req.Msg.RoleId))
@@ -119,9 +113,6 @@ func (s *RoleService) CreateRole(ctx context.Context, req *connect.Request[v1pb.
 // UpdateRole updates an existing role.
 func (s *RoleService) UpdateRole(ctx context.Context, req *connect.Request[v1pb.UpdateRoleRequest]) (*connect.Response[v1pb.Role], error) {
 	workspaceID := common.GetWorkspaceIDFromContext(ctx)
-	if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_CUSTOM_ROLES); err != nil {
-		return nil, connect.NewError(connect.CodePermissionDenied, err)
-	}
 	if req.Msg.UpdateMask == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("update_mask must be set"))
 	}

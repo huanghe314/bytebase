@@ -98,13 +98,6 @@ const state = reactive<LocalState>({
   showModal: false,
 });
 
-const showBanner = computed(() => {
-  return (
-    unlicensedFeatures.value.length > 0 &&
-    neededPlan.value > subscriptionStore.currentPlan
-  );
-});
-
 const unlicensedFeatures = computed(() => {
   return actuatorStore.serverInfo?.unlicensedFeatures ?? [];
 });

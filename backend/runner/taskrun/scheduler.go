@@ -12,7 +12,6 @@ import (
 	"github.com/bytebase/bytebase/backend/component/bus"
 	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/webhook"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/store"
 )
@@ -26,7 +25,6 @@ type Scheduler struct {
 	store          *store.Store
 	bus            *bus.Bus
 	webhookManager *webhook.Manager
-	licenseService *enterprise.LicenseService
 	executorMap    map[storepb.Task_Type]Executor
 	profile        *config.Profile
 }
@@ -36,14 +34,12 @@ func NewScheduler(
 	store *store.Store,
 	bus *bus.Bus,
 	webhookManager *webhook.Manager,
-	licenseService *enterprise.LicenseService,
 	profile *config.Profile,
 ) *Scheduler {
 	return &Scheduler{
 		store:          store,
 		bus:            bus,
 		webhookManager: webhookManager,
-		licenseService: licenseService,
 		profile:        profile,
 		executorMap:    map[storepb.Task_Type]Executor{},
 	}

@@ -9,23 +9,20 @@ import (
 
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/permission"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/store"
 	"github.com/bytebase/bytebase/backend/utils"
 )
 
 type Manager struct {
-	store          *store.Store
-	licenseService *enterprise.LicenseService
-	saas           bool
+	store *store.Store
+	saas  bool
 }
 
-func NewManager(store *store.Store, licenseService *enterprise.LicenseService, saas bool) (*Manager, error) {
+func NewManager(store *store.Store, saas bool) (*Manager, error) {
 	m := &Manager{
-		store:          store,
-		licenseService: licenseService,
-		saas:           saas,
+		store: store,
+		saas:  saas,
 	}
 	return m, nil
 }

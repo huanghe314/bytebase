@@ -12,7 +12,6 @@ import (
 	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/common/permission"
 	"github.com/bytebase/bytebase/backend/component/iam"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -23,17 +22,15 @@ import (
 // GroupService implements the group service.
 type GroupService struct {
 	v1connect.UnimplementedGroupServiceHandler
-	store          *store.Store
-	iamManager     *iam.Manager
-	licenseService *enterprise.LicenseService
+	store      *store.Store
+	iamManager *iam.Manager
 }
 
 // NewGroupService creates a new GroupService.
-func NewGroupService(store *store.Store, iamManager *iam.Manager, licenseService *enterprise.LicenseService) *GroupService {
+func NewGroupService(store *store.Store, iamManager *iam.Manager) *GroupService {
 	return &GroupService{
-		store:          store,
-		iamManager:     iamManager,
-		licenseService: licenseService,
+		store:      store,
+		iamManager: iamManager,
 	}
 }
 
@@ -123,15 +120,12 @@ func (s *GroupService) ListGroups(ctx context.Context, request *connect.Request[
 
 // CreateGroup creates a group.
 func (s *GroupService) CreateGroup(ctx context.Context, req *connect.Request[v1pb.CreateGroupRequest]) (*connect.Response[v1pb.Group], error) {
-	if err := s.licenseService.IsFeatureEnabled(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_USER_GROUPS); err != nil {
-		return nil, connect.NewError(connect.CodePermissionDenied, err)
-	}
 	groupMessage, err := s.convertToGroupMessage(ctx, req.Msg)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 
-	if err := validateEmailWithDomains(ctx, s.licenseService, s.store, common.GetWorkspaceIDFromContext(ctx), groupMessage.Email, true); err != nil {
+	if err := validateEmailWithDomains(ctx, s.store, common.GetWorkspaceIDFromContext(ctx), groupMessage.Email, true); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrapf(err, "invalid email %q", groupMessage.Email))
 	}
 
@@ -155,10 +149,6 @@ func (s *GroupService) CreateGroup(ctx context.Context, req *connect.Request[v1p
 
 // UpdateGroup updates a group.
 func (s *GroupService) UpdateGroup(ctx context.Context, req *connect.Request[v1pb.UpdateGroupRequest]) (*connect.Response[v1pb.Group], error) {
-	if err := s.licenseService.IsFeatureEnabled(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_USER_GROUPS); err != nil {
-		return nil, connect.NewError(connect.CodePermissionDenied, err)
-	}
-
 	group, err := utils.GetGroupByName(ctx, s.store, common.GetWorkspaceIDFromContext(ctx), req.Msg.Group.Name)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
