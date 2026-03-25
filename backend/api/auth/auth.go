@@ -61,11 +61,9 @@ type APIAuthInterceptor struct {
 func New(
 	store *store.Store,
 	secret string,
-	_deprecated any,
 	bus *bus.Bus,
 	profile *config.Profile,
 ) *APIAuthInterceptor {
-	_ = _deprecated
 	return &APIAuthInterceptor{
 		store:   store,
 		secret:  secret,

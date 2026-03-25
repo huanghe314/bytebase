@@ -148,10 +148,6 @@ func (s *OrgPolicyService) CreatePolicy(ctx context.Context, req *connect.Reques
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("policy must be set"))
 	}
 
-	if err := s.checkPolicyFeatureGuard(ctx, req.Msg.Policy.Type); err != nil {
-		return nil, err
-	}
-
 	// TODO(d): validate policy.
 	response, err := s.createPolicyMessage(ctx, req)
 	if err != nil {
@@ -164,10 +160,6 @@ func (s *OrgPolicyService) CreatePolicy(ctx context.Context, req *connect.Reques
 func (s *OrgPolicyService) UpdatePolicy(ctx context.Context, req *connect.Request[v1pb.UpdatePolicyRequest]) (*connect.Response[v1pb.Policy], error) {
 	if req.Msg.Policy == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("policy must be set"))
-	}
-
-	if err := s.checkPolicyFeatureGuard(ctx, req.Msg.Policy.Type); err != nil {
-		return nil, err
 	}
 
 	policy, parent, err := s.findPolicyMessage(ctx, req.Msg.Policy.Name)
@@ -492,10 +484,6 @@ func validatePolicyType(policyType storepb.Policy_Type, policyResourceType store
 		return nil
 	}
 	return connect.NewError(connect.CodeInvalidArgument, errors.Errorf("policy %v is not allowed in resource %v", policyType, policyResourceType))
-}
-
-func (s *OrgPolicyService) checkPolicyFeatureGuard(_ context.Context, _ v1pb.PolicyType) error {
-	return nil
 }
 
 func validatePolicyPayload(policyType storepb.Policy_Type, policy *v1pb.Policy) error {

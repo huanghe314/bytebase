@@ -130,7 +130,7 @@ func configureGrpcRouters(
 	handlerOpts := connect.WithHandlerOptions(
 		connect.WithInterceptors(
 			validateInterceptor,
-			auth.New(stores, secret, nil, bus, profile),
+			auth.New(stores, secret, bus, profile),
 			apiv1.NewACLInterceptor(stores, secret, iamManager, profile),
 			apiv1.NewAuditInterceptor(stores, secret, profile),
 		),

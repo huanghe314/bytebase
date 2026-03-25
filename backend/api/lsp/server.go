@@ -36,6 +36,6 @@ func NewServer(
 		secret:          secret,
 		bus:             bus,
 		iamManager:      iamManager,
-		authInterceptor: auth.New(store, secret, nil, bus, profile),
+		authInterceptor: auth.New(store, secret, bus, profile),
 	}
 }
