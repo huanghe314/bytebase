@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"slices"
+	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/pkg/errors"
@@ -55,6 +56,7 @@ func (s *PlanService) GetPlan(ctx context.Context, request *connect.Request[v1pb
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		UID:       &planID,
 		ProjectID: projectID,
 	})
@@ -90,6 +92,7 @@ func (s *PlanService) ListPlans(ctx context.Context, request *connect.Request[v1
 	limitPlusOne := offset.limit + 1
 
 	find := &store.FindPlanMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		Limit:     &limitPlusOne,
 		Offset:    &offset.offset,
 		ProjectID: projectID,
@@ -130,16 +133,21 @@ func (s *PlanService) ListPlans(ctx context.Context, request *connect.Request[v1
 
 func getProjectIDsSearchFilter(ctx context.Context, user *store.UserMessage, permission permission.Permission, iamManager *iam.Manager, stores *store.Store) (*[]string, error) {
 	workspaceID := common.GetWorkspaceIDFromContext(ctx)
+	projects, err := stores.ListProjects(ctx, &store.FindProjectMessage{Workspace: workspaceID})
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to list projects")
+	}
+
 	ok, err := iamManager.CheckPermission(ctx, permission, user, workspaceID)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to check permission %q", permission)
 	}
 	if ok {
-		return nil, nil
-	}
-	projects, err := stores.ListProjects(ctx, &store.FindProjectMessage{Workspace: workspaceID})
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list projects")
+		projectIDs := make([]string, 0, len(projects))
+		for _, project := range projects {
+			projectIDs = append(projectIDs, project.ResourceID)
+		}
+		return &projectIDs, nil
 	}
 
 	var projectIDs []string
@@ -177,6 +185,11 @@ func (s *PlanService) CreatePlan(ctx context.Context, request *connect.Request[v
 		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("project not found for id: %v", projectID))
 	}
 
+	trimmedTitle := strings.TrimSpace(req.Plan.Title)
+	if project.Setting.EnforceIssueTitle && trimmedTitle == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("project %q requires a manual plan title (enforce_issue_title is enabled)", req.Parent))
+	}
+
 	// Validate plan specs
 	databaseGroup, err := validateSpecs(ctx, s.store, projectID, req.Plan.Specs)
 	if err != nil {
@@ -185,7 +198,7 @@ func (s *PlanService) CreatePlan(ctx context.Context, request *connect.Request[v
 
 	planMessage := &store.PlanMessage{
 		ProjectID:   projectID,
-		Name:        req.Plan.Title,
+		Name:        trimmedTitle,
 		Description: req.Plan.Description,
 		Config:      convertPlan(req.Plan),
 	}
@@ -238,7 +251,7 @@ func (s *PlanService) UpdatePlan(ctx context.Context, request *connect.Request[v
 	if project == nil {
 		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("project %q not found", projectID))
 	}
-	oldPlan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{ProjectID: projectID, UID: &planID})
+	oldPlan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{Workspace: common.GetWorkspaceIDFromContext(ctx), ProjectID: projectID, UID: &planID})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to get plan %q: %v", req.Plan.Name, err))
 	}
@@ -288,21 +301,21 @@ func (s *PlanService) UpdatePlan(ctx context.Context, request *connect.Request[v
 
 	var planCheckRunsTrigger bool
 	var databaseGroup *v1pb.DatabaseGroup
+	var issueCommentCreates []*store.IssueCommentMessage
 
 	for _, path := range req.UpdateMask.Paths {
 		switch path {
 		case "title":
-			title := req.Plan.Title
-			planUpdate.Name = &title
+			trimmed := strings.TrimSpace(req.Plan.Title)
+			if project.Setting.EnforceIssueTitle && trimmed == "" {
+				return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("project %q requires a manual plan title (enforce_issue_title is enabled)", common.FormatProject(project.ResourceID)))
+			}
+			planUpdate.Name = &trimmed
 		case "description":
-			description := req.Plan.Description
-			planUpdate.Description = &description
+			planUpdate.Description = new(req.Plan.Description)
 		case "state":
-			deleted := req.Plan.State == v1pb.State_DELETED
-			planUpdate.Deleted = &deleted
+			planUpdate.Deleted = new(req.Plan.State == v1pb.State_DELETED)
 		case "specs":
-			// Block all spec changes if plan has a rollout (pipeline).
-			// Block all spec changes if plan has a rollout (pipeline).
 			if oldPlan.Config != nil && oldPlan.Config.GetHasRollout() {
 				return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("cannot update specs for plan that has a rollout"))
 			}
@@ -324,11 +337,25 @@ func (s *PlanService) UpdatePlan(ctx context.Context, request *connect.Request[v
 			planCheckRunsTrigger = true
 
 			// Evict approvals if issue exists to request re-approval.
-			issue, err := s.store.GetIssue(ctx, &store.FindIssueMessage{ProjectIDs: []string{projectID}, PlanUID: &oldPlan.UID})
+			issue, err := s.store.GetIssue(ctx, &store.FindIssueMessage{Workspace: common.GetWorkspaceIDFromContext(ctx), ProjectIDs: []string{projectID}, PlanUID: &oldPlan.UID})
 			if err != nil {
 				return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to get issue: %v", err))
 			}
 			if issue != nil {
+				if !planSpecsEqualSet(oldPlan.Config.GetSpecs(), allSpecs) {
+					issueCommentCreates = append(issueCommentCreates, &store.IssueCommentMessage{
+						ProjectID: issue.ProjectID,
+						IssueUID:  issue.UID,
+						Payload: &storepb.IssueCommentPayload{
+							Event: &storepb.IssueCommentPayload_PlanUpdate_{
+								PlanUpdate: &storepb.IssueCommentPayload_PlanUpdate{
+									FromSpecs: oldPlan.Config.GetSpecs(),
+									ToSpecs:   allSpecs,
+								},
+							},
+						},
+					})
+				}
 				// Reset approval finding status
 				updatedIssue, err := s.store.UpdateIssue(ctx, issue.ProjectID, issue.UID, &store.UpdateIssueMessage{
 					PayloadUpsert: &storepb.Issue{
@@ -345,7 +372,7 @@ func (s *PlanService) UpdatePlan(ctx context.Context, request *connect.Request[v
 				// which will trigger approval finding on completion
 				// DATABASE_EXPORT: Re-run approval finding synchronously (no plan checks for export data)
 				if updatedIssue.Type == storepb.Issue_DATABASE_EXPORT {
-					if err := approval.FindAndApplyApprovalTemplate(ctx, s.store, s.webhookManager, s.licenseService, updatedIssue); err != nil {
+					if err := approval.FindAndApplyApprovalTemplate(ctx, s.store, s.bus, s.webhookManager, s.licenseService, updatedIssue); err != nil {
 						slog.Error("failed to find approval template after plan update",
 							slog.String("project", updatedIssue.ProjectID), slog.Int64("issue_uid", updatedIssue.UID),
 							slog.String("issue_title", updatedIssue.Title),
@@ -362,6 +389,12 @@ func (s *PlanService) UpdatePlan(ctx context.Context, request *connect.Request[v
 	updatedPlan, err := s.store.UpdatePlan(ctx, planUpdate)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to update plan %q: %v", req.Plan.Name, err))
+	}
+
+	if len(issueCommentCreates) > 0 {
+		if _, err := s.store.CreateIssueComments(ctx, user.Email, issueCommentCreates...); err != nil {
+			slog.Warn("failed to create plan spec audit issue comments", log.BBError(err))
+		}
 	}
 
 	if planCheckRunsTrigger {
@@ -423,6 +456,7 @@ func (s *PlanService) RunPlanChecks(ctx context.Context, request *connect.Reques
 		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("project not found for id: %v", projectID))
 	}
 	plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		UID:       &planID,
 		ProjectID: projectID,
 	})
@@ -434,6 +468,12 @@ func (s *PlanService) RunPlanChecks(ctx context.Context, request *connect.Reques
 	}
 	if storePlanConfigHasRelease(plan.Config) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("cannot run plan checks because plan %q has release", plan.Name))
+	}
+	// Once a rollout exists the plan is frozen; re-running checks produces the
+	// same result and is misleading. Match the frontend gate in
+	// PlanCheckSection.vue / ChecksSection.vue / IssueDetailChecks.tsx.
+	if plan.Config.GetHasRollout() {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.Errorf("cannot run plan checks because plan %q already has a rollout", plan.Name))
 	}
 	var databaseGroup *v1pb.DatabaseGroup
 	for _, spec := range plan.Config.GetSpecs() {
@@ -530,6 +570,7 @@ func validateSpecs(ctx context.Context, s *store.Store, projectID string, specs 
 	var releaseString string
 	var instanceIDs []string
 	var databaseGroups []string
+	seenDatabaseGroups := map[string]bool{}
 	var databaseNames []string
 	var databaseGroup *v1pb.DatabaseGroup
 
@@ -562,7 +603,10 @@ func validateSpecs(ctx context.Context, s *store.Store, projectID string, specs 
 					databaseNames = append(databaseNames, target)
 				} else if _, _, err := common.GetProjectIDDatabaseGroupID(target); err == nil {
 					databaseGroupTarget++
-					databaseGroups = append(databaseGroups, target)
+					if !seenDatabaseGroups[target] {
+						databaseGroups = append(databaseGroups, target)
+						seenDatabaseGroups[target] = true
+					}
 				} else {
 					return nil, errors.Errorf("invalid target %v", target)
 				}
@@ -588,7 +632,10 @@ func validateSpecs(ctx context.Context, s *store.Store, projectID string, specs 
 				if _, _, err := common.GetInstanceDatabaseID(target); err == nil {
 					databaseNames = append(databaseNames, target)
 				} else if _, _, err := common.GetProjectIDDatabaseGroupID(target); err == nil {
-					databaseGroups = append(databaseGroups, target)
+					if !seenDatabaseGroups[target] {
+						databaseGroups = append(databaseGroups, target)
+						seenDatabaseGroups[target] = true
+					}
 				} else {
 					return nil, errors.Errorf("invalid target %v", target)
 				}
@@ -670,6 +717,7 @@ func validateSpecs(ctx context.Context, s *store.Store, projectID string, specs 
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("invalid database name %q", name))
 		}
 		db, err := s.GetDatabase(ctx, &store.FindDatabaseMessage{
+			Workspace:    common.GetWorkspaceIDFromContext(ctx),
 			InstanceID:   &instanceID,
 			DatabaseName: &dbName,
 		})
@@ -764,77 +812,203 @@ func convertToPlans(ctx context.Context, s *store.Store, plans []*store.PlanMess
 		return nil, nil
 	}
 
-	// Batch-fetch issues and plan check runs to avoid N+1 queries.
-	planUIDs := make([]int64, len(plans))
-	for i, p := range plans {
-		planUIDs[i] = int64(p.UID)
+	type planKey struct {
+		projectID string
+		planUID   int64
 	}
 
-	issues, err := s.ListIssues(ctx, &store.FindIssueMessage{ProjectIDs: []string{plans[0].ProjectID}, PlanUIDs: &planUIDs})
+	workspaceID := common.GetWorkspaceIDFromContext(ctx)
+	planUIDs := make([]int64, 0, len(plans))
+	rolloutPlanUIDs := make([]int64, 0, len(plans))
+	projectIDSet := make(map[string]struct{}, len(plans))
+	for _, plan := range plans {
+		planUIDs = append(planUIDs, plan.UID)
+		if plan.Config != nil && plan.Config.HasRollout {
+			rolloutPlanUIDs = append(rolloutPlanUIDs, plan.UID)
+		}
+		projectIDSet[plan.ProjectID] = struct{}{}
+	}
+	projectIDs := make([]string, 0, len(projectIDSet))
+	for projectID := range projectIDSet {
+		projectIDs = append(projectIDs, projectID)
+	}
+
+	issues, err := s.ListIssues(ctx, &store.FindIssueMessage{
+		Workspace:  workspaceID,
+		ProjectIDs: projectIDs,
+		PlanUIDs:   &planUIDs,
+	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to batch list issues")
 	}
-	issueByPlanUID := make(map[int64]*store.IssueMessage, len(issues))
+	issueByPlanKey := make(map[planKey]*store.IssueMessage, len(issues))
 	for _, issue := range issues {
 		if issue.PlanUID != nil {
-			issueByPlanUID[*issue.PlanUID] = issue
+			issueByPlanKey[planKey{projectID: issue.ProjectID, planUID: *issue.PlanUID}] = issue
 		}
 	}
 
-	planCheckRuns, err := s.ListPlanCheckRuns(ctx, &store.FindPlanCheckRunMessage{ProjectID: plans[0].ProjectID, PlanUIDs: &planUIDs})
+	planCheckRuns, err := s.ListPlanCheckRuns(ctx, &store.FindPlanCheckRunMessage{
+		ProjectIDs: &projectIDs,
+		PlanUIDs:   &planUIDs,
+	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to batch list plan check runs")
 	}
-	planCheckRunByPlanUID := make(map[int64]*store.PlanCheckRunMessage, len(planCheckRuns))
+	planCheckRunByPlanKey := make(map[planKey]*store.PlanCheckRunMessage, len(planCheckRuns))
 	for _, run := range planCheckRuns {
-		planCheckRunByPlanUID[run.PlanUID] = run
+		planCheckRunByPlanKey[planKey{projectID: run.ProjectID, planUID: run.PlanUID}] = run
+	}
+
+	taskStatusCountByPlanKey := make(map[planKey][]*store.TaskStatusCount)
+	environmentOrderMap := map[string]int{}
+	if len(rolloutPlanUIDs) > 0 {
+		environmentSetting, err := s.GetEnvironment(ctx, workspaceID)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get environments")
+		}
+		for i, env := range environmentSetting.GetEnvironments() {
+			environmentOrderMap[env.Id] = i
+		}
+
+		taskStatusCounts, err := s.ListTaskStatusCountByPlanIDs(ctx, projectIDs, rolloutPlanUIDs)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to batch list task status counts")
+		}
+		for _, count := range taskStatusCounts {
+			key := planKey{projectID: count.ProjectID, planUID: count.PlanID}
+			taskStatusCountByPlanKey[key] = append(taskStatusCountByPlanKey[key], count)
+		}
 	}
 
 	v1Plans := make([]*v1pb.Plan, len(plans))
 	for i, plan := range plans {
-		planUID := int64(plan.UID)
-		v1Plans[i] = buildV1Plan(plan, issueByPlanUID[planUID], planCheckRunByPlanUID[planUID])
+		key := planKey{projectID: plan.ProjectID, planUID: plan.UID}
+		v1Plan := buildV1PlanFields(plan)
+
+		if issue := issueByPlanKey[key]; issue != nil {
+			v1Plan.Issue = common.FormatIssue(issue.ProjectID, issue.UID)
+			v1Plan.ApprovalStatus = computeApprovalStatus(issue.Payload.GetApproval())
+		}
+
+		if planCheckRun := planCheckRunByPlanKey[key]; planCheckRun != nil {
+			v1Plan.PlanCheckRunStatusCount[string(planCheckRun.Status)]++
+			for _, result := range planCheckRun.Result.Results {
+				v1Plan.PlanCheckRunStatusCount[storepb.Advice_Status_name[int32(result.Status)]]++
+			}
+		}
+
+		if counts := taskStatusCountByPlanKey[key]; len(counts) > 0 {
+			v1Plan.RolloutStageSummaries = buildRolloutStageSummaries(plan.ProjectID, plan.UID, counts, environmentOrderMap)
+		}
+
+		v1Plans[i] = v1Plan
 	}
 	return v1Plans, nil
 }
 
 func convertToPlan(ctx context.Context, s *store.Store, plan *store.PlanMessage) (*v1pb.Plan, error) {
-	issue, err := s.GetIssue(ctx, &store.FindIssueMessage{ProjectIDs: []string{plan.ProjectID}, PlanUID: &plan.UID})
+	plans, err := convertToPlans(ctx, s, []*store.PlanMessage{plan})
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get issue by plan uid %d", plan.UID)
+		return nil, err
 	}
-	planCheckRun, err := s.GetPlanCheckRun(ctx, plan.ProjectID, int64(plan.UID))
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get plan check run for plan uid %d", plan.UID)
-	}
-	return buildV1Plan(plan, issue, planCheckRun), nil
+	return plans[0], nil
 }
 
-func buildV1Plan(plan *store.PlanMessage, issue *store.IssueMessage, planCheckRun *store.PlanCheckRunMessage) *v1pb.Plan {
+func buildV1PlanFields(plan *store.PlanMessage) *v1pb.Plan {
+	var specs []*v1pb.Plan_Spec
+	if plan.Config != nil {
+		specs = convertToPlanSpecs(plan.ProjectID, plan.Config.Specs)
+	}
+
 	p := &v1pb.Plan{
 		Name:                    common.FormatPlan(plan.ProjectID, plan.UID),
 		Title:                   plan.Name,
 		Description:             plan.Description,
 		Creator:                 common.FormatUserEmail(plan.Creator),
-		Specs:                   convertToPlanSpecs(plan.ProjectID, plan.Config.Specs),
+		Specs:                   specs,
 		CreateTime:              timestamppb.New(plan.CreatedAt),
 		UpdateTime:              timestamppb.New(plan.UpdatedAt),
 		State:                   convertDeletedToState(plan.Deleted),
 		PlanCheckRunStatusCount: map[string]int32{},
 	}
-	if issue != nil {
-		p.Issue = common.FormatIssue(issue.ProjectID, issue.UID)
-	}
 	if plan.Config != nil {
 		p.HasRollout = plan.Config.HasRollout
 	}
-	if planCheckRun != nil {
-		p.PlanCheckRunStatusCount[string(planCheckRun.Status)]++
-		for _, result := range planCheckRun.Result.Results {
-			p.PlanCheckRunStatusCount[storepb.Advice_Status_name[int32(result.Status)]]++
-		}
-	}
 	return p
+}
+
+func buildRolloutStageSummaries(projectID string, planUID int64, counts []*store.TaskStatusCount, environmentOrderMap map[string]int) []*v1pb.Plan_RolloutStageSummary {
+	summariesByEnvironment := make(map[string]map[v1pb.Task_Status]int32)
+	for _, count := range counts {
+		if _, exists := environmentOrderMap[count.Environment]; !exists {
+			continue
+		}
+		status, ok := convertTaskRunStatusStringToAPITaskStatus(count.Status)
+		if !ok {
+			continue
+		}
+		if _, exists := summariesByEnvironment[count.Environment]; !exists {
+			summariesByEnvironment[count.Environment] = make(map[v1pb.Task_Status]int32)
+		}
+		summariesByEnvironment[count.Environment][status] += count.Count
+	}
+
+	environments := make([]string, 0, len(summariesByEnvironment))
+	for environment := range summariesByEnvironment {
+		environments = append(environments, environment)
+	}
+	slices.SortFunc(environments, func(a, b string) int {
+		return environmentOrderMap[a] - environmentOrderMap[b]
+	})
+
+	summaries := make([]*v1pb.Plan_RolloutStageSummary, 0, len(environments))
+	for _, environment := range environments {
+		stageID := common.FormatStageID(environment)
+		statusCounts := make([]*v1pb.Plan_TaskStatusCount, 0, len(summariesByEnvironment[environment]))
+		for _, status := range []v1pb.Task_Status{
+			v1pb.Task_NOT_STARTED,
+			v1pb.Task_PENDING,
+			v1pb.Task_RUNNING,
+			v1pb.Task_DONE,
+			v1pb.Task_FAILED,
+			v1pb.Task_CANCELED,
+			v1pb.Task_SKIPPED,
+		} {
+			if count, exists := summariesByEnvironment[environment][status]; exists {
+				statusCounts = append(statusCounts, &v1pb.Plan_TaskStatusCount{
+					Status: status,
+					Count:  count,
+				})
+			}
+		}
+		summaries = append(summaries, &v1pb.Plan_RolloutStageSummary{
+			Stage:            common.FormatStage(projectID, planUID, stageID),
+			TaskStatusCounts: statusCounts,
+		})
+	}
+	return summaries
+}
+
+func convertTaskRunStatusStringToAPITaskStatus(status string) (v1pb.Task_Status, bool) {
+	switch status {
+	case storepb.TaskRun_NOT_STARTED.String():
+		return v1pb.Task_NOT_STARTED, true
+	case storepb.TaskRun_PENDING.String():
+		return v1pb.Task_PENDING, true
+	case storepb.TaskRun_RUNNING.String():
+		return v1pb.Task_RUNNING, true
+	case storepb.TaskRun_DONE.String():
+		return v1pb.Task_DONE, true
+	case storepb.TaskRun_FAILED.String():
+		return v1pb.Task_FAILED, true
+	case storepb.TaskRun_CANCELED.String():
+		return v1pb.Task_CANCELED, true
+	case storepb.TaskRun_SKIPPED.String():
+		return v1pb.Task_SKIPPED, true
+	default:
+		return v1pb.Task_STATUS_UNSPECIFIED, false
+	}
 }
 
 func convertPlan(plan *v1pb.Plan) *storepb.PlanConfig {
@@ -930,6 +1104,26 @@ func convertToPlanSpecExportDataConfig(projectID string, config *storepb.PlanCon
 			Password: c.Password,
 		},
 	}
+}
+
+// planSpecsEqualSet reports whether two spec slices have the same set of
+// specs keyed by id, with each pair byte-equal under proto.Equal. Order
+// is ignored — reorder-only diffs are not audited.
+func planSpecsEqualSet(a, b []*storepb.PlanConfig_Spec) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	byID := make(map[string]*storepb.PlanConfig_Spec, len(a))
+	for _, s := range a {
+		byID[s.GetId()] = s
+	}
+	for _, s := range b {
+		other, ok := byID[s.GetId()]
+		if !ok || !proto.Equal(s, other) {
+			return false
+		}
+	}
+	return true
 }
 
 func convertPlanSpecs(specs []*v1pb.Plan_Spec) []*storepb.PlanConfig_Spec {

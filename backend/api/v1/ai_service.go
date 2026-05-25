@@ -10,6 +10,7 @@ import (
 	"net/url"
 
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
@@ -91,6 +92,10 @@ type chatOpenAIFunctionCallRef struct {
 	Arguments string `json:"arguments"`
 }
 
+type chatOpenAIUsage struct {
+	TotalTokens int32 `json:"total_tokens"`
+}
+
 type chatOpenAIResponse struct {
 	Choices []struct {
 		Message struct {
@@ -99,6 +104,7 @@ type chatOpenAIResponse struct {
 			ToolCalls []json.RawMessage `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
+	Usage *chatOpenAIUsage `json:"usage,omitempty"`
 }
 
 // chatOpenAIToolCallParsed extracts the fields we need from a raw tool call JSON.
@@ -108,6 +114,91 @@ type chatOpenAIToolCallParsed struct {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
 	} `json:"function"`
+}
+
+type chatToolCallMetadata struct {
+	OpenAIToolCall         json.RawMessage `json:"openAIToolCall,omitempty"`
+	GeminiThoughtSignature string          `json:"geminiThoughtSignature,omitempty"`
+}
+
+type chatOpenAIToolCallProviderFields struct {
+	ExtraContent struct {
+		Google struct {
+			ThoughtSignature string `json:"thought_signature,omitempty"`
+		} `json:"google,omitempty"`
+	} `json:"extra_content,omitempty"`
+}
+
+func parseChatToolCallMetadata(raw string) (chatToolCallMetadata, bool) {
+	metadataBytes := bytes.TrimSpace([]byte(raw))
+	if len(metadataBytes) == 0 {
+		return chatToolCallMetadata{}, false
+	}
+	var metadata chatToolCallMetadata
+	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
+		return chatToolCallMetadata{}, false
+	}
+	if len(metadata.OpenAIToolCall) == 0 && metadata.GeminiThoughtSignature == "" {
+		return chatToolCallMetadata{}, false
+	}
+	return metadata, true
+}
+
+func buildChatToolCallMetadata(rawOpenAIToolCall json.RawMessage, geminiThoughtSignature string) (*string, error) {
+	metadata := chatToolCallMetadata{
+		OpenAIToolCall:         rawOpenAIToolCall,
+		GeminiThoughtSignature: geminiThoughtSignature,
+	}
+	if metadata.GeminiThoughtSignature == "" {
+		metadata.GeminiThoughtSignature = extractGeminiThoughtSignatureFromOpenAIToolCall(rawOpenAIToolCall)
+	}
+	if len(metadata.OpenAIToolCall) == 0 && metadata.GeminiThoughtSignature == "" {
+		return nil, nil
+	}
+	metadataBytes, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, err
+	}
+	return new(string(metadataBytes)), nil
+}
+
+func openAIToolCallFromMetadata(raw string) json.RawMessage {
+	if metadata, ok := parseChatToolCallMetadata(raw); ok {
+		return metadata.OpenAIToolCall
+	}
+	metadataBytes := bytes.TrimSpace([]byte(raw))
+	if len(metadataBytes) == 0 || !json.Valid(metadataBytes) {
+		return nil
+	}
+	return json.RawMessage(metadataBytes)
+}
+
+func geminiThoughtSignatureFromMetadata(raw string) string {
+	if metadata, ok := parseChatToolCallMetadata(raw); ok {
+		if metadata.GeminiThoughtSignature != "" {
+			return metadata.GeminiThoughtSignature
+		}
+		return extractGeminiThoughtSignatureFromOpenAIToolCall(metadata.OpenAIToolCall)
+	}
+	metadataBytes := bytes.TrimSpace([]byte(raw))
+	if len(metadataBytes) == 0 {
+		return ""
+	}
+	if json.Valid(metadataBytes) {
+		return extractGeminiThoughtSignatureFromOpenAIToolCall(json.RawMessage(metadataBytes))
+	}
+	return string(metadataBytes)
+}
+
+func extractGeminiThoughtSignatureFromOpenAIToolCall(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var providerFields chatOpenAIToolCallProviderFields
+	if err := json.Unmarshal(raw, &providerFields); err != nil {
+		return ""
+	}
+	return providerFields.ExtraContent.Google.ThoughtSignature
 }
 
 func (*AIService) chatOpenAI(ctx context.Context, aiSetting *storepb.AISetting, request *v1pb.AIChatRequest) (*connect.Response[v1pb.AIChatResponse], error) {
@@ -126,22 +217,24 @@ func (*AIService) chatOpenAI(ctx context.Context, aiSetting *storepb.AISetting, 
 			msg.ToolCallID = *m.ToolCallId
 		}
 		for _, tc := range m.ToolCalls {
-			if tc.Metadata != nil && *tc.Metadata != "" {
-				// Replay the raw tool call JSON exactly as received from the provider.
-				// This preserves provider-specific fields like Gemini's thought_signature.
-				msg.ToolCalls = append(msg.ToolCalls, json.RawMessage(*tc.Metadata))
-			} else {
-				// Construct a standard OpenAI tool call.
-				raw, _ := json.Marshal(chatOpenAIToolUse{
-					ID:   tc.Id,
-					Type: "function",
-					Function: chatOpenAIFunctionCallRef{
-						Name:      tc.Name,
-						Arguments: tc.Arguments,
-					},
-				})
-				msg.ToolCalls = append(msg.ToolCalls, json.RawMessage(raw))
+			if tc.Metadata != nil {
+				if rawToolCall := openAIToolCallFromMetadata(*tc.Metadata); len(rawToolCall) > 0 {
+					// Replay the raw tool call JSON exactly as received from the provider.
+					// This preserves provider-specific fields like Gemini's thought_signature.
+					msg.ToolCalls = append(msg.ToolCalls, rawToolCall)
+					continue
+				}
 			}
+			// Construct a standard OpenAI tool call.
+			raw, _ := json.Marshal(chatOpenAIToolUse{
+				ID:   tc.Id,
+				Type: "function",
+				Function: chatOpenAIFunctionCallRef{
+					Name:      tc.Name,
+					Arguments: tc.Arguments,
+				},
+			})
+			msg.ToolCalls = append(msg.ToolCalls, json.RawMessage(raw))
 		}
 		payload.Messages = append(payload.Messages, msg)
 	}
@@ -188,6 +281,9 @@ func (*AIService) chatOpenAI(ctx context.Context, aiSetting *storepb.AISetting, 
 	}
 
 	result := &v1pb.AIChatResponse{}
+	if resp.Usage != nil {
+		result.Usage = newAIChatUsage(resp.Usage.TotalTokens)
+	}
 	if len(resp.Choices) > 0 {
 		msg := resp.Choices[0].Message
 		result.Content = msg.Content
@@ -196,14 +292,17 @@ func (*AIService) chatOpenAI(ctx context.Context, aiSetting *storepb.AISetting, 
 			if err := json.Unmarshal(rawTC, &parsed); err != nil {
 				return nil, errors.Errorf("failed to parse tool call: %s", err)
 			}
-			// Store the entire raw JSON as metadata so we can replay it exactly,
-			// preserving any provider-specific fields (e.g., Gemini thought_signature).
-			rawStr := string(rawTC)
+			// Store provider-specific tool metadata in a structured envelope so each
+			// adapter can replay only the fields it understands.
+			metadata, err := buildChatToolCallMetadata(rawTC, "")
+			if err != nil {
+				return nil, errors.Errorf("failed to encode tool call metadata: %s", err)
+			}
 			toolCall := &v1pb.AIChatToolCall{
 				Id:        parsed.ID,
 				Name:      parsed.Function.Name,
 				Arguments: parsed.Function.Arguments,
-				Metadata:  &rawStr,
+				Metadata:  metadata,
 			}
 			result.ToolCalls = append(result.ToolCalls, toolCall)
 		}
@@ -242,8 +341,14 @@ type chatClaudeContentBlock struct {
 	Content   string `json:"content,omitempty"`
 }
 
+type chatClaudeUsage struct {
+	InputTokens  int32 `json:"input_tokens"`
+	OutputTokens int32 `json:"output_tokens"`
+}
+
 type chatClaudeResponse struct {
 	Content []chatClaudeContentBlock `json:"content"`
+	Usage   *chatClaudeUsage         `json:"usage,omitempty"`
 }
 
 func (*AIService) chatClaude(ctx context.Context, aiSetting *storepb.AISetting, request *v1pb.AIChatRequest) (*connect.Response[v1pb.AIChatResponse], error) {
@@ -343,6 +448,9 @@ func (*AIService) chatClaude(ctx context.Context, aiSetting *storepb.AISetting, 
 	}
 
 	result := &v1pb.AIChatResponse{}
+	if resp.Usage != nil {
+		result.Usage = newAIChatUsage(resp.Usage.InputTokens + resp.Usage.OutputTokens)
+	}
 	var textContent string
 	for _, block := range resp.Content {
 		switch block.Type {
@@ -383,12 +491,12 @@ type chatGeminiPart struct {
 	Text             string                    `json:"text,omitempty"`
 	FunctionCall     *chatGeminiFunctionCall   `json:"functionCall,omitempty"`
 	FunctionResponse *chatGeminiFunctionResult `json:"functionResponse,omitempty"`
+	ThoughtSignature string                    `json:"thoughtSignature,omitempty"`
 }
 
 type chatGeminiFunctionCall struct {
-	Name             string `json:"name"`
-	Args             any    `json:"args"`
-	ThoughtSignature string `json:"thoughtSignature,omitempty"`
+	Name string `json:"name"`
+	Args any    `json:"args"`
 }
 
 type chatGeminiFunctionResult struct {
@@ -406,17 +514,27 @@ type chatGeminiFunctionDecl struct {
 	Parameters  any    `json:"parameters"`
 }
 
+type chatGeminiUsage struct {
+	TotalTokenCount int32 `json:"totalTokenCount"`
+}
+
 type chatGeminiResponse struct {
 	Candidates []struct {
 		Content struct {
 			Parts []chatGeminiResponsePart `json:"parts"`
 		} `json:"content"`
 	} `json:"candidates"`
+	UsageMetadata *chatGeminiUsage `json:"usageMetadata,omitempty"`
 }
 
 type chatGeminiResponsePart struct {
-	Text         string                  `json:"text,omitempty"`
-	FunctionCall *chatGeminiFunctionCall `json:"functionCall,omitempty"`
+	Text             string                  `json:"text,omitempty"`
+	FunctionCall     *chatGeminiFunctionCall `json:"functionCall,omitempty"`
+	ThoughtSignature string                  `json:"thoughtSignature,omitempty"`
+}
+
+func newGeminiToolCallID(name string) string {
+	return fmt.Sprintf("call_%s_%s", name, uuid.NewString())
 }
 
 func (*AIService) chatGemini(ctx context.Context, aiSetting *storepb.AISetting, request *v1pb.AIChatRequest) (*connect.Response[v1pb.AIChatResponse], error) {
@@ -445,16 +563,16 @@ func (*AIService) chatGemini(ctx context.Context, aiSetting *storepb.AISetting, 
 				if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
 					args = tc.Arguments
 				}
-				fc := &chatGeminiFunctionCall{
-					Name: tc.Name,
-					Args: args,
+				part := chatGeminiPart{
+					FunctionCall: &chatGeminiFunctionCall{
+						Name: tc.Name,
+						Args: args,
+					},
 				}
 				if tc.Metadata != nil {
-					fc.ThoughtSignature = *tc.Metadata
+					part.ThoughtSignature = geminiThoughtSignatureFromMetadata(*tc.Metadata)
 				}
-				parts = append(parts, chatGeminiPart{
-					FunctionCall: fc,
-				})
+				parts = append(parts, part)
 			}
 			payload.Contents = append(payload.Contents, chatGeminiContent{
 				Role:  "model",
@@ -526,6 +644,9 @@ func (*AIService) chatGemini(ctx context.Context, aiSetting *storepb.AISetting, 
 	}
 
 	result := &v1pb.AIChatResponse{}
+	if resp.UsageMetadata != nil {
+		result.Usage = newAIChatUsage(resp.UsageMetadata.TotalTokenCount)
+	}
 	if len(resp.Candidates) > 0 {
 		var textContent string
 		for _, part := range resp.Candidates[0].Content.Parts {
@@ -538,12 +659,16 @@ func (*AIService) chatGemini(ctx context.Context, aiSetting *storepb.AISetting, 
 					return nil, errors.Errorf("failed to marshal function call args: %s", err)
 				}
 				tc := &v1pb.AIChatToolCall{
-					Id:        fmt.Sprintf("call_%s", part.FunctionCall.Name),
+					Id:        newGeminiToolCallID(part.FunctionCall.Name),
 					Name:      part.FunctionCall.Name,
 					Arguments: string(args),
 				}
-				if part.FunctionCall.ThoughtSignature != "" {
-					tc.Metadata = &part.FunctionCall.ThoughtSignature
+				if part.ThoughtSignature != "" {
+					metadata, err := buildChatToolCallMetadata(nil, part.ThoughtSignature)
+					if err != nil {
+						return nil, errors.Errorf("failed to encode Gemini tool metadata: %s", err)
+					}
+					tc.Metadata = metadata
 				}
 				result.ToolCalls = append(result.ToolCalls, tc)
 			}
@@ -553,6 +678,15 @@ func (*AIService) chatGemini(ctx context.Context, aiSetting *storepb.AISetting, 
 		}
 	}
 	return connect.NewResponse(result), nil
+}
+
+func newAIChatUsage(totalTokens int32) *v1pb.AIChatUsage {
+	if totalTokens <= 0 {
+		return nil
+	}
+	return &v1pb.AIChatUsage{
+		TotalTokens: totalTokens,
+	}
 }
 
 // doHTTPRequest executes an HTTP request and returns the response body.

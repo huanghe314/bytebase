@@ -1,22 +1,31 @@
 <template>
   <slot v-if="ready"></slot>
   <div v-else class="flex items-center justify-center h-screen">
-    <BBSpin />
+    <Loader2
+      class="size-5 text-accent animate-spin"
+      aria-label="Loading"
+      role="status"
+    />
   </div>
   <template v-if="!isAuthRoute && authStore.isLoggedIn">
-    <!-- Do not show the modal when the user is in auth related pages. -->
-    <SigninModal v-if="authStore.unauthenticatedOccurred" />
-    <InactiveRemindModal v-else />
+    <!-- Session-expired surface lives in the React app
+         (src/react/app/SessionExpiredSurfaceGate.tsx).
+         InactiveRemindModal stays mounted here because it reads Vue router
+         state via the bridged provide/inject context, which the sibling
+         React app doesn't carry. -->
+    <ReactPageMount
+      v-if="!authStore.unauthenticatedOccurred"
+      page="InactiveRemindModal"
+    />
   </template>
 </template>
 
 <script setup lang="ts">
+import { Loader2 } from "lucide-vue-next";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { BBSpin } from "@/bbkit";
+import ReactPageMount from "@/react/ReactPageMount.vue";
 import { isAuthRelatedRoute } from "@/utils/auth";
-import InactiveRemindModal from "@/views/auth/InactiveRemindModal.vue";
-import SigninModal from "@/views/auth/SigninModal.vue";
 import { t } from "./plugins/i18n";
 import { WORKSPACE_ROOT_MODULE } from "./router/dashboard/workspaceRoutes";
 import {
@@ -25,6 +34,7 @@ import {
   useCurrentUserV1,
   useGroupStore,
   useRoleStore,
+  useSubscriptionV1Store,
   useWorkspaceV1Store,
 } from "./store";
 import { isDev } from "./utils";
@@ -39,9 +49,11 @@ const currentUser = useCurrentUserV1();
 const workspaceStore = useWorkspaceV1Store();
 const roleStore = useRoleStore();
 const groupStore = useGroupStore();
+const subscriptionStore = useSubscriptionV1Store();
+
 const ready = ref(false);
 
-const authCheckIntervalId = ref<NodeJS.Timeout>();
+const authCheckIntervalId = ref<ReturnType<typeof setInterval>>();
 
 const isAuthRoute = computed(() => {
   return (
@@ -109,7 +121,9 @@ watch(
     ready.value = false;
     try {
       await Promise.all([
+        subscriptionStore.fetchSubscription(),
         workspaceStore.fetchIamPolicy(),
+        workspaceStore.fetchWorkspaceList(),
         roleStore.fetchRoleList(),
         // we only care about the groups for the current user.
         groupStore.batchGetOrFetchGroups(currentUser.value.groups),

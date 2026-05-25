@@ -8,9 +8,66 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bytebase/bytebase/backend/common"
+	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/store"
 )
+
+func TestShouldDiffSchemaViaSDL(t *testing.T) {
+	tests := []struct {
+		name   string
+		engine storepb.Engine
+		req    *v1pb.DiffSchemaRequest
+		want   bool
+	}{
+		{
+			name:   "postgres raw schema text uses SDL",
+			engine: storepb.Engine_POSTGRES,
+			req: &v1pb.DiffSchemaRequest{
+				Target: &v1pb.DiffSchemaRequest_Schema{Schema: "CREATE TABLE t(id int);"},
+			},
+			want: true,
+		},
+		{
+			name:   "postgres empty raw schema text uses SDL",
+			engine: storepb.Engine_POSTGRES,
+			req: &v1pb.DiffSchemaRequest{
+				Target: &v1pb.DiffSchemaRequest_Schema{Schema: ""},
+			},
+			want: true,
+		},
+		{
+			name:   "postgres changelog target uses metadata diff",
+			engine: storepb.Engine_POSTGRES,
+			req: &v1pb.DiffSchemaRequest{
+				Target: &v1pb.DiffSchemaRequest_Changelog{Changelog: "instances/prod/databases/app/changelogs/123"},
+			},
+			want: false,
+		},
+		{
+			name:   "cockroach raw schema text uses SDL",
+			engine: storepb.Engine_COCKROACHDB,
+			req: &v1pb.DiffSchemaRequest{
+				Target: &v1pb.DiffSchemaRequest_Schema{Schema: "CREATE TABLE t(id int);"},
+			},
+			want: true,
+		},
+		{
+			name:   "mysql raw schema text uses metadata parser",
+			engine: storepb.Engine_MYSQL,
+			req: &v1pb.DiffSchemaRequest{
+				Target: &v1pb.DiffSchemaRequest_Schema{Schema: "CREATE TABLE t(id int);"},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, shouldDiffSchemaViaSDL(tt.engine, tt.req))
+		})
+	}
+}
 
 func TestListDatabaseFilter(t *testing.T) {
 	testCases := []struct {
@@ -34,9 +91,18 @@ func TestListDatabaseFilter(t *testing.T) {
 			wantArgs: []any{"sample"},
 		},
 		{
-			input:    `name.matches("Employee")`,
+			input:    `name.contains("Employee")`,
 			wantSQL:  `(LOWER(db.name) LIKE $1)`,
 			wantArgs: []any{"%employee%"},
+		},
+		{
+			input:    `table.contains("user")`,
+			wantSQL:  "(EXISTS (\n\t\t\t\t\t\tSELECT 1\n\t\t\t\t\t\tFROM json_array_elements(ds.metadata->'schemas') AS s,\n\t\t\t\t\t\t \t json_array_elements(s->'tables') AS t\n\t\t\t\t\t\tWHERE t->>'name' LIKE $1))",
+			wantArgs: []any{"%user%"},
+		},
+		{
+			input: `name.matches("Employee")`,
+			error: connect.NewError(connect.CodeInvalidArgument, errors.Errorf("unexpected function matches")),
 		},
 		{
 			input:    `engine in ["MYSQL", "POSTGRES"]`,
@@ -73,4 +139,60 @@ func TestListDatabaseFilter(t *testing.T) {
 			require.Equal(t, tc.wantArgs, args)
 		}
 	}
+}
+
+func TestGetDatabaseMetadataFilter(t *testing.T) {
+	testCases := []struct {
+		name         string
+		input        string
+		wantSchema   *string
+		wantTable    *string
+		wantWildcard bool
+		errContains  string
+	}{
+		{
+			name:         "table contains",
+			input:        `table.contains("user")`,
+			wantTable:    ptrValue("user"),
+			wantWildcard: true,
+		},
+		{
+			name:         "schema and table contains",
+			input:        `schema == "public" && table.contains("user")`,
+			wantSchema:   ptrValue("public"),
+			wantTable:    ptrValue("user"),
+			wantWildcard: true,
+		},
+		{
+			name:        "table matches unsupported",
+			input:       `table.matches("user")`,
+			errContains: "unexpected function matches",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			filter, err := getDatabaseMetadataFilter(tc.input)
+			if tc.errContains != "" {
+				require.Error(t, err)
+				require.ErrorContains(t, err, tc.errContains)
+				return
+			}
+
+			require.NoError(t, err)
+			if tc.wantSchema != nil {
+				require.NotNil(t, filter.schema)
+				require.Equal(t, *tc.wantSchema, *filter.schema)
+			}
+			if tc.wantTable != nil {
+				require.NotNil(t, filter.table)
+				require.Equal(t, *tc.wantTable, filter.table.name)
+				require.Equal(t, tc.wantWildcard, filter.table.wildcard)
+			}
+		})
+	}
+}
+
+func ptrValue[T any](v T) *T {
+	return &v
 }

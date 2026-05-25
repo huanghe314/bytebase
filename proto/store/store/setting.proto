@@ -20,6 +20,7 @@ enum SettingName {
   DATA_CLASSIFICATION = 6;
   SEMANTIC_TYPES = 7;
   ENVIRONMENT = 8;
+  EMAIL = 9;
 }
 
 message SystemSetting {
@@ -109,8 +110,7 @@ message WorkspaceProfileSetting {
   // The token for directory sync authentication.
   string directory_sync_token = 15;
 
-  // The branding logo as a data URI (e.g. data:image/png;base64,...).
-  string branding_logo = 16;
+  reserved 16;
 
   message PasswordRestriction {
     // min_length is the minimum length for password, should be no less than 8.
@@ -144,6 +144,10 @@ message WorkspaceProfileSetting {
 
   // The query timeout duration for query and export, works for the SQL Editor and Export Center.
   google.protobuf.Duration query_timeout = 21;
+
+  // Allow signin/signup using email + a 6-digit one-time verification code.
+  // Requires the EMAIL setting to be configured on the workspace.
+  bool allow_email_code_signin = 22;
 }
 
 message WorkspaceApprovalSetting {
@@ -171,21 +175,20 @@ message DataClassificationSetting {
     string title = 2;
 
     message Level {
-      string id = 1;
       string title = 2;
-      string description = 3;
+      // The numeric level for ordering. Higher = more sensitive.
+      int32 level = 4;
     }
 
     // levels is user defined level list for classification.
-    // The order for the level decides its priority.
     repeated Level levels = 3;
 
     message DataClassification {
       // id is the classification id in [0-9]+-[0-9]+-[0-9]+ format.
       string id = 1;
       string title = 2;
-      string description = 3;
-      optional string level_id = 4;
+      // The sensitivity level. Maps to Level.level.
+      optional int32 level = 4;
     }
 
     // classification is the id - DataClassification map.
@@ -340,5 +343,45 @@ message EnvironmentSetting {
     string title = 3;
     map<string, string> tags = 4;
     string color = 5;
+  }
+}
+
+message EmailSetting {
+  string from = 1;
+  string from_name = 2;
+
+  Type type = 3;
+
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    SMTP = 1;
+  }
+
+  oneof config {
+    SMTPConfig smtp = 4;
+  }
+
+  message SMTPConfig {
+    string host = 1;
+    int32 port = 2;
+    string username = 3;
+    string password = 4;
+    Encryption encryption = 5;
+    Authentication authentication = 6;
+
+    enum Encryption {
+      ENCRYPTION_UNSPECIFIED = 0;
+      ENCRYPTION_NONE = 1;
+      STARTTLS = 2;
+      SSL_TLS = 3;
+    }
+
+    enum Authentication {
+      AUTHENTICATION_UNSPECIFIED = 0;
+      AUTHENTICATION_NONE = 1;
+      PLAIN = 2;
+      LOGIN = 3;
+      CRAM_MD5 = 4;
+    }
   }
 }

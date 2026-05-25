@@ -44,6 +44,7 @@ type PlanCheckRunMessage struct {
 // FindPlanCheckRunMessage is the message for finding plan check runs.
 type FindPlanCheckRunMessage struct {
 	ProjectID    string
+	ProjectIDs   *[]string
 	PlanUID      *int64
 	PlanUIDs     *[]int64
 	UIDs         *[]int64
@@ -100,7 +101,17 @@ func (s *Store) ListPlanCheckRuns(ctx context.Context, find *FindPlanCheckRunMes
 			plan_check_run.status,
 			plan_check_run.result
 		FROM plan_check_run
-		WHERE plan_check_run.project = ?`, find.ProjectID)
+		WHERE TRUE`)
+	if v := find.ProjectID; v != "" {
+		q.Space("AND plan_check_run.project = ?", v)
+	}
+	if v := find.ProjectIDs; v != nil {
+		if len(*v) == 1 {
+			q.Space("AND plan_check_run.project = ?", (*v)[0])
+		} else if len(*v) > 1 {
+			q.Space("AND plan_check_run.project = ANY(?)", *v)
+		}
+	}
 	if v := find.PlanUID; v != nil {
 		q.Space("AND plan_check_run.plan_id = ?", *v)
 	}
@@ -253,8 +264,8 @@ func (s *Store) ClaimAvailablePlanCheckRuns(ctx context.Context) ([]*ClaimedPlan
 	q := qb.Q().Space(`
 		UPDATE plan_check_run
 		SET status = ?, updated_at = now()
-		WHERE id IN (
-			SELECT id FROM plan_check_run
+		WHERE (project, id) IN (
+			SELECT project, id FROM plan_check_run
 			WHERE status = ?
 			FOR UPDATE SKIP LOCKED
 		)

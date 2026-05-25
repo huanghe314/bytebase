@@ -1,70 +1,30 @@
 import { defineStore } from "pinia";
-import { v1 as uuidv1 } from "uuid";
-import type {
-  Notification,
-  NotificationCreate,
-  NotificationFilter,
-} from "@/types";
+import { VueShellBridgeEvent } from "@/react/shell-bridge";
+import type { NotificationCreate } from "@/types";
 
-interface NotificationState {
-  notificationByModule: Map<string, Notification[]>;
-}
-
+/**
+ * Notification store — kept as a Pinia store for backward compatibility
+ * with the 17 Vue-side pushNotification() callers. No internal queue: each
+ * push dispatches a window CustomEvent that the React toast manager
+ * (frontend/src/react/lib/toast.ts) catches and renders. The Pinia layer
+ * dies entirely in Phase B3 (Pinia -> Zustand).
+ */
 export const useNotificationStore = defineStore("notification", {
-  state: (): NotificationState => ({
-    notificationByModule: new Map(),
-  }),
+  state: () => ({}),
   actions: {
-    appendNotification(notification: Notification) {
-      const list = this.notificationByModule.get(notification.module);
-      if (list) {
-        list.push(notification);
-      } else {
-        this.notificationByModule.set(notification.module, [notification]);
+    pushNotification(notification: NotificationCreate) {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent<NotificationCreate>(
+            VueShellBridgeEvent.notification,
+            { detail: notification }
+          )
+        );
       }
-    },
-    removeNotification(notification: Notification) {
-      const list = this.notificationByModule.get(notification.module);
-      if (list) {
-        const i = list.indexOf(notification);
-        if (i > -1) {
-          list.splice(i, 1);
-        }
-      }
-    },
-    pushNotification(notificationCreate: NotificationCreate) {
-      const notification: Notification = {
-        id: uuidv1(),
-        createdTs: Date.now() / 1000,
-        ...notificationCreate,
-      };
-      this.appendNotification(notification);
-    },
-    tryPopNotification(filter: NotificationFilter) {
-      const notification = findNotification(this.$state, filter);
-      if (notification) {
-        this.removeNotification(notification);
-      }
-      return notification;
     },
   },
 });
 
-function findNotification(
-  state: NotificationState,
-  filter: NotificationFilter
-): Notification | undefined {
-  const list = state.notificationByModule.get(filter.module);
-  if (list && list.length > 0) {
-    if (filter.id) {
-      return list.find((item) => item.id === filter.id);
-    }
-    return list[0];
-  }
-  return undefined;
-}
-
-export const pushNotification = (notificationCreate: NotificationCreate) => {
-  const store = useNotificationStore();
-  store.pushNotification(notificationCreate);
+export const pushNotification = (notification: NotificationCreate) => {
+  useNotificationStore().pushNotification(notification);
 };

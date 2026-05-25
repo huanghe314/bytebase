@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
+	"github.com/bytebase/bytebase/backend/common/yamltest"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
@@ -20,7 +21,7 @@ func TestGetQuerySpan(t *testing.T) {
 	}
 
 	var (
-		record        = true
+		record        = false
 		testDataPaths = []string{
 			"test-data/query-span/standard.yaml",
 		}
@@ -28,8 +29,6 @@ func TestGetQuerySpan(t *testing.T) {
 
 	a := require.New(t)
 	for _, testDataPath := range testDataPaths {
-		testDataPath := testDataPath
-
 		yamlFile, err := os.Open(testDataPath)
 		a.NoError(err)
 
@@ -51,10 +50,7 @@ func TestGetQuerySpan(t *testing.T) {
 		}
 
 		if record {
-			byteValue, err := yaml.Marshal(testCases)
-			a.NoError(err)
-			err = os.WriteFile(testDataPath, byteValue, 0644)
-			a.NoError(err)
+			yamltest.Record(t, testDataPath, testCases)
 		}
 	}
 }

@@ -1,5 +1,4 @@
-- description:
-  statement: |-
+- statement: |-
     SELECT
       MIN(bb) AS aa
     FROM
@@ -23,11 +22,11 @@
   querySpan:
     type: 1
     results:
-      - name: aa
-        sourcecolumns: []
-        isplainfield: false
-        sourcefieldpaths: []
-        selectasterisk: false
+        - name: aa
+          sourcecolumns: []
+          isplainfield: false
+          sourcefieldpaths: []
+          selectasterisk: false
     sourcecolumns: []
     predicatecolumns: []
 - description: unnest as table source with alias
@@ -99,7 +98,7 @@
   querySpan:
     type: 1
     results:
-        - name: unnest
+        - name: t
           sourcecolumns: []
           isplainfield: false
           sourcefieldpaths: []
@@ -120,13 +119,16 @@
               "name":  "t1",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 },
                 {
-                  "name": "c"
+                  "name": "c",
+                  "type": "text"
                 }
               ]
             },
@@ -134,13 +136,16 @@
               "name":  "t2",
               "columns":  [
                 {
-                  "name":  "c"
+                  "name":  "c",
+                  "type": "text"
                 },
                 {
-                  "name":  "d"
+                  "name":  "d",
+                  "type": "text"
                 },
                 {
-                  "name":  "e"
+                  "name":  "e",
+                  "type": "text"
                 }
               ]
             }
@@ -228,10 +233,12 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 }
               ]
             },
@@ -239,10 +246,12 @@
               "name":  "t2",
               "columns":  [
                 {
-                  "name":  "c"
+                  "name":  "c",
+                  "type": "text"
                 },
                 {
-                  "name":  "d"
+                  "name":  "d",
+                  "type": "text"
                 }
               ]
             }
@@ -285,7 +294,17 @@
           schema: public
           table: t2
           column: ""
-    predicatecolumns: []
+    predicatecolumns:
+        - server: ""
+          database: db
+          schema: public
+          table: t
+          column: b
+        - server: ""
+          database: db
+          schema: public
+          table: t2
+          column: d
 - description: Function Overloading
   statement: SELECT plpgsql_t(1, 2);
   defaultDatabase: db
@@ -300,10 +319,12 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 }
               ]
             },
@@ -311,10 +332,12 @@
               "name":  "t2",
               "columns":  [
                 {
-                  "name":  "c"
+                  "name":  "c",
+                  "type": "text"
                 },
                 {
-                  "name":  "d"
+                  "name":  "d",
+                  "type": "text"
                 }
               ]
             }
@@ -795,11 +818,6 @@
             - server: ""
               database: db
               schema: public
-              table: issue
-              column: payload
-            - server: ""
-              database: db
-              schema: public
               table: principal
               column: email
           isplainfield: false
@@ -812,11 +830,6 @@
               schema: public
               table: principal
               column: email
-            - server: ""
-              database: db
-              schema: public
-              table: task_run
-              column: creator_id
           isplainfield: false
           sourcefieldpaths: []
           selectasterisk: false
@@ -841,7 +854,22 @@
           schema: public
           table: task_run
           column: ""
-    predicatecolumns: []
+    predicatecolumns:
+        - server: ""
+          database: db
+          schema: public
+          table: issue
+          column: status
+        - server: ""
+          database: db
+          schema: public
+          table: principal
+          column: email
+        - server: ""
+          database: db
+          schema: public
+          table: task_run
+          column: creator_id
 - description: Test For PLpgSQL User Defined Function in expression
   statement: SELECT plpgsql_t(1);
   defaultDatabase: db
@@ -856,10 +884,12 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 }
               ]
             }
@@ -897,7 +927,12 @@
           schema: public
           table: t
           column: ""
-    predicatecolumns: []
+    predicatecolumns:
+        - server: ""
+          database: db
+          schema: public
+          table: t
+          column: a
 - description: json_object as target field
   statement: 'SELECT json_object(''id'': a) FROM t'
   defaultDatabase: db
@@ -912,7 +947,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -954,7 +990,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -996,7 +1033,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -1038,7 +1076,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -1059,17 +1098,7 @@
           isplainfield: true
           sourcefieldpaths: []
           selectasterisk: false
-        - name: key
-          sourcecolumns:
-            - server: ""
-              database: db
-              schema: public
-              table: t
-              column: a
-          isplainfield: false
-          sourcefieldpaths: []
-          selectasterisk: false
-        - name: value
+        - name: jsonb_each
           sourcecolumns:
             - server: ""
               database: db
@@ -1100,7 +1129,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -1142,7 +1172,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -1184,7 +1215,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -1221,7 +1253,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -1253,7 +1286,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -1285,7 +1319,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -1317,7 +1352,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -1369,7 +1405,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             },
@@ -1377,7 +1414,8 @@
               "name":  "t2",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -1435,7 +1473,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -1483,7 +1522,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -1535,7 +1575,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -1583,7 +1624,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -1610,7 +1652,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -1642,16 +1685,20 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 },
                 {
-                  "name":  "c"
+                  "name":  "c",
+                  "type": "text"
                 },
                 {
-                  "name":  "d"
+                  "name":  "d",
+                  "type": "text"
                 }
               ]
             }
@@ -1733,16 +1780,20 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 },
                 {
-                  "name":  "c"
+                  "name":  "c",
+                  "type": "text"
                 },
                 {
-                  "name":  "d"
+                  "name":  "d",
+                  "type": "text"
                 }
               ]
             }
@@ -1814,16 +1865,20 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 },
                 {
-                  "name":  "c"
+                  "name":  "c",
+                  "type": "text"
                 },
                 {
-                  "name":  "d"
+                  "name":  "d",
+                  "type": "text"
                 }
               ]
             }
@@ -1895,16 +1950,20 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 },
                 {
-                  "name":  "c"
+                  "name":  "c",
+                  "type": "text"
                 },
                 {
-                  "name":  "d"
+                  "name":  "d",
+                  "type": "text"
                 }
               ]
             }
@@ -1966,16 +2025,20 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 },
                 {
-                  "name":  "c"
+                  "name":  "c",
+                  "type": "text"
                 },
                 {
-                  "name":  "d"
+                  "name":  "d",
+                  "type": "text"
                 }
               ]
             }
@@ -2012,10 +2075,12 @@
               "name":  "galleries",
               "columns":  [
                 {
-                  "name":  "id"
+                  "name":  "id",
+                  "type": "text"
                 },
                 {
-                  "name":  "city"
+                  "name":  "city",
+                  "type": "text"
                 }
               ]
             },
@@ -2023,16 +2088,20 @@
               "name":  "paintings",
               "columns":  [
                 {
-                  "name":  "gallery_id"
+                  "name":  "gallery_id",
+                  "type": "text"
                 },
                 {
-                  "name":  "artist_id"
+                  "name":  "artist_id",
+                  "type": "text"
                 },
                 {
-                  "name":  "title"
+                  "name":  "title",
+                  "type": "text"
                 },
                 {
-                  "name":  "price"
+                  "name":  "price",
+                  "type": "text"
                 }
               ]
             }
@@ -2069,7 +2138,17 @@
           schema: public
           table: paintings
           column: ""
-    predicatecolumns: []
+    predicatecolumns:
+        - server: ""
+          database: db
+          schema: public
+          table: galleries
+          column: id
+        - server: ""
+          database: db
+          schema: public
+          table: paintings
+          column: gallery_id
 - description: Test for functions
   statement: SELECT max(a), a-b AS c1, a=b AS c2, a>b, b in (a, c, d) from (SELECT * FROM t) result;
   defaultDatabase: db
@@ -2084,16 +2163,20 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 },
                 {
-                  "name":  "c"
+                  "name":  "c",
+                  "type": "text"
                 },
                 {
-                  "name":  "d"
+                  "name":  "d",
+                  "type": "text"
                 }
               ]
             }
@@ -2144,7 +2227,7 @@
           isplainfield: false
           sourcefieldpaths: []
           selectasterisk: false
-        - name: a
+        - name: ?column?
           sourcecolumns:
             - server: ""
               database: db
@@ -2159,7 +2242,7 @@
           isplainfield: false
           sourcefieldpaths: []
           selectasterisk: false
-        - name: b
+        - name: ?column?
           sourcecolumns:
             - server: ""
               database: db
@@ -2205,10 +2288,12 @@
               "name":  "t1",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 }
               ]
             },
@@ -2216,10 +2301,12 @@
               "name":  "t2",
               "columns":  [
                 {
-                  "name":  "c"
+                  "name":  "c",
+                  "type": "text"
                 },
                 {
-                  "name":  "d"
+                  "name":  "d",
+                  "type": "text"
                 }
               ]
             }
@@ -2291,16 +2378,20 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 },
                 {
-                  "name":  "c"
+                  "name":  "c",
+                  "type": "text"
                 },
                 {
-                  "name":  "d"
+                  "name":  "d",
+                  "type": "text"
                 }
               ]
             }
@@ -2402,16 +2493,20 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 },
                 {
-                  "name":  "c"
+                  "name":  "c",
+                  "type": "text"
                 },
                 {
-                  "name":  "d"
+                  "name":  "d",
+                  "type": "text"
                 }
               ]
             }
@@ -2483,16 +2578,20 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 },
                 {
-                  "name":  "c"
+                  "name":  "c",
+                  "type": "text"
                 },
                 {
-                  "name":  "d"
+                  "name":  "d",
+                  "type": "text"
                 }
               ]
             }
@@ -2534,16 +2633,20 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 },
                 {
-                  "name":  "c"
+                  "name":  "c",
+                  "type": "text"
                 },
                 {
-                  "name":  "d"
+                  "name":  "d",
+                  "type": "text"
                 }
               ]
             }
@@ -2615,16 +2718,20 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 },
                 {
-                  "name":  "c"
+                  "name":  "c",
+                  "type": "text"
                 },
                 {
-                  "name":  "d"
+                  "name":  "d",
+                  "type": "text"
                 }
               ]
             }
@@ -2711,16 +2818,20 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 },
                 {
-                  "name":  "b"
+                  "name":  "b",
+                  "type": "text"
                 },
                 {
-                  "name":  "c"
+                  "name":  "c",
+                  "type": "text"
                 },
                 {
-                  "name":  "d"
+                  "name":  "d",
+                  "type": "text"
                 }
               ]
             }
@@ -2792,7 +2903,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -2818,17 +2930,17 @@
             {
               "name": "users",
               "columns": [
-                {"name": "id"},
-                {"name": "name"},
-                {"name": "email"}
+                {"name": "id", "type": "text"},
+                {"name": "name", "type": "text"},
+                {"name": "email", "type": "text"}
               ]
             },
             {
               "name": "payments",
               "columns": [
-                {"name": "id"},
-                {"name": "user_id"},
-                {"name": "amount"}
+                {"name": "id", "type": "text"},
+                {"name": "user_id", "type": "text"},
+                {"name": "amount", "type": "text"}
               ]
             }
           ]
@@ -2924,7 +3036,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -2945,7 +3058,7 @@
           isplainfield: true
           sourcefieldpaths: []
           selectasterisk: false
-        - name: value
+        - name: jsonb_array_elements
           sourcecolumns:
             - server: ""
               database: db
@@ -2976,7 +3089,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -3028,7 +3142,8 @@
               "name":  "t",
               "columns":  [
                 {
-                  "name":  "a"
+                  "name":  "a",
+                  "type": "text"
                 }
               ]
             }
@@ -3049,7 +3164,7 @@
           isplainfield: true
           sourcefieldpaths: []
           selectasterisk: false
-        - name: value
+        - name: jsonb_array_elements_text
           sourcecolumns:
             - server: ""
               database: db
@@ -3086,9 +3201,9 @@
             {
               "name":  "t1",
               "columns":  [
-                {"name":  "id"},
-                {"name":  "scores"},
-                {"name":  "finished_at"}
+                {"name": "id", "type": "text"},
+                {"name": "scores", "type": "text"},
+                {"name": "finished_at", "type": "text"}
               ]
             }
           ]
@@ -3124,4 +3239,9 @@
           schema: public
           table: t1
           column: ""
-    predicatecolumns: []
+    predicatecolumns:
+        - server: ""
+          database: db
+          schema: public
+          table: t1
+          column: finished_at

@@ -19,12 +19,11 @@ import (
 func convertToProtoAny(i any) (*anypb.Any, error) {
 	switch deltas := i.(type) {
 	case []*v1pb.BindingDelta:
-		auditData := v1pb.AuditData{
+		return anypb.New(&v1pb.AuditData{
 			PolicyDelta: &v1pb.PolicyDelta{
 				BindingDeltas: deltas,
 			},
-		}
-		return anypb.New(&auditData)
+		})
 	default:
 		return &anypb.Any{}, nil
 	}
@@ -63,6 +62,8 @@ func convertToStoreActivityTypes(types []v1pb.Activity_Type) ([]storepb.Activity
 			result = append(result, storepb.Activity_ISSUE_APPROVAL_REQUESTED)
 		case v1pb.Activity_ISSUE_SENT_BACK:
 			result = append(result, storepb.Activity_ISSUE_SENT_BACK)
+		case v1pb.Activity_ISSUE_APPROVED:
+			result = append(result, storepb.Activity_ISSUE_APPROVED)
 		case v1pb.Activity_PIPELINE_FAILED:
 			result = append(result, storepb.Activity_PIPELINE_FAILED)
 		case v1pb.Activity_PIPELINE_COMPLETED:
@@ -84,6 +85,8 @@ func convertToV1ActivityTypes(types []storepb.Activity_Type) []v1pb.Activity_Typ
 			result = append(result, v1pb.Activity_ISSUE_APPROVAL_REQUESTED)
 		case storepb.Activity_ISSUE_SENT_BACK:
 			result = append(result, v1pb.Activity_ISSUE_SENT_BACK)
+		case storepb.Activity_ISSUE_APPROVED:
+			result = append(result, v1pb.Activity_ISSUE_APPROVED)
 		case storepb.Activity_PIPELINE_FAILED:
 			result = append(result, v1pb.Activity_PIPELINE_FAILED)
 		case storepb.Activity_PIPELINE_COMPLETED:
@@ -113,6 +116,8 @@ func convertToStoreWebhookType(tp v1pb.WebhookType) (storepb.WebhookType, error)
 		return storepb.WebhookType_WECOM, nil
 	case v1pb.WebhookType_LARK:
 		return storepb.WebhookType_LARK, nil
+	case v1pb.WebhookType_GOOGLE_CHAT:
+		return storepb.WebhookType_GOOGLE_CHAT, nil
 	default:
 		return storepb.WebhookType_WEBHOOK_TYPE_UNSPECIFIED, common.Errorf(common.Invalid, "webhook type %q is not supported", tp)
 	}
@@ -134,6 +139,8 @@ func convertToV1WebhookType(tp storepb.WebhookType) v1pb.WebhookType {
 		return v1pb.WebhookType_WECOM
 	case storepb.WebhookType_LARK:
 		return v1pb.WebhookType_LARK
+	case storepb.WebhookType_GOOGLE_CHAT:
+		return v1pb.WebhookType_GOOGLE_CHAT
 	default:
 		return v1pb.WebhookType_WEBHOOK_TYPE_UNSPECIFIED
 	}
@@ -315,23 +322,22 @@ func convertToStoreExecutionRetryPolicy(policy *v1pb.Project_ExecutionRetryPolic
 }
 
 func convertToProjectMessage(resourceID string, project *v1pb.Project) *store.ProjectMessage {
-	setting := &storepb.Project{
-		EnforceIssueTitle:          project.EnforceIssueTitle,
-		PostgresDatabaseTenantMode: project.PostgresDatabaseTenantMode,
-		AllowSelfApproval:          project.AllowSelfApproval,
-		CiSamplingSize:             project.CiSamplingSize,
-		ParallelTasksPerRollout:    project.ParallelTasksPerRollout,
-		Labels:                     project.Labels,
-		EnforceSqlReview:           project.EnforceSqlReview,
-		RequireIssueApproval:       project.RequireIssueApproval,
-		RequirePlanCheckNoError:    project.RequirePlanCheckNoError,
-		AllowRequestRole:           project.AllowRequestRole,
-		AllowJustInTimeAccess:      project.AllowJustInTimeAccess,
-		DataClassificationConfigId: project.DataClassificationConfigId,
-	}
 	return &store.ProjectMessage{
 		ResourceID: resourceID,
 		Title:      project.Title,
-		Setting:    setting,
+		Setting: &storepb.Project{
+			EnforceIssueTitle:          project.EnforceIssueTitle,
+			PostgresDatabaseTenantMode: project.PostgresDatabaseTenantMode,
+			AllowSelfApproval:          project.AllowSelfApproval,
+			CiSamplingSize:             project.CiSamplingSize,
+			ParallelTasksPerRollout:    project.ParallelTasksPerRollout,
+			Labels:                     project.Labels,
+			EnforceSqlReview:           project.EnforceSqlReview,
+			RequireIssueApproval:       project.RequireIssueApproval,
+			RequirePlanCheckNoError:    project.RequirePlanCheckNoError,
+			AllowRequestRole:           project.AllowRequestRole,
+			AllowJustInTimeAccess:      project.AllowJustInTimeAccess,
+			DataClassificationConfigId: project.DataClassificationConfigId,
+		},
 	}
 }

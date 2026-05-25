@@ -55,6 +55,7 @@ func (s *ReleaseService) CheckRelease(ctx context.Context, req *connect.Request[
 		// Handle database target.
 		if instanceID, databaseName, err := common.GetInstanceDatabaseID(target); err == nil {
 			database, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+				Workspace:    common.GetWorkspaceIDFromContext(ctx),
 				InstanceID:   &instanceID,
 				DatabaseName: &databaseName,
 			})
@@ -93,6 +94,7 @@ func (s *ReleaseService) CheckRelease(ctx context.Context, req *connect.Request[
 				return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("database group %q not found", databaseGroupResourceID))
 			}
 			groupDatabases, err := s.store.ListDatabases(ctx, &store.FindDatabaseMessage{
+				Workspace: common.GetWorkspaceIDFromContext(ctx),
 				ProjectID: &projectResourceID,
 			})
 			if err != nil {
@@ -191,7 +193,7 @@ loop:
 		revisions, err := s.store.ListRevisions(ctx, &store.FindRevisionMessage{
 			InstanceID:   database.InstanceID,
 			DatabaseName: &database.DatabaseName,
-			Type:         common.NewP(storepb.SchemaChangeType_VERSIONED),
+			Type:         new(storepb.SchemaChangeType_VERSIONED),
 			Versions:     &releaseFileVersions,
 			ShowDeleted:  false,
 		})
@@ -369,8 +371,8 @@ func (s *ReleaseService) checkReleaseDeclarative(ctx context.Context, files []*v
 		revisions, err := s.store.ListRevisions(ctx, &store.FindRevisionMessage{
 			InstanceID:   database.InstanceID,
 			DatabaseName: &database.DatabaseName,
-			Type:         common.NewP(storepb.SchemaChangeType_DECLARATIVE),
-			Limit:        common.NewP(1),
+			Type:         new(storepb.SchemaChangeType_DECLARATIVE),
+			Limit:        new(1),
 			ShowDeleted:  false,
 		})
 		if err != nil {
@@ -441,35 +443,22 @@ func (s *ReleaseService) checkReleaseDeclarative(ctx context.Context, files []*v
 
 			// Run SDL DROP operation checks
 			// This checks for data loss risks from DROP operations by analyzing the schema diff
-			pengine, err := common.ConvertToParserEngine(engine)
-			if err == nil {
-				// Get current database schema
-				dbMetadata, err := s.store.GetDBSchema(ctx, &store.FindDBSchemaMessage{
-					Workspace:    common.GetWorkspaceIDFromContext(ctx),
-					InstanceID:   database.InstanceID,
-					DatabaseName: database.DatabaseName,
-				})
-				if err == nil && dbMetadata != nil {
-					// Get previous SDL from the database's release field (last applied release)
-					// Returns empty string if no previous release exists (initialization scenario)
-					previousUserSDL := getPreviousSDLForDatabase(ctx, s.store, database)
+			dbMetadata, err := s.store.GetDBSchema(ctx, &store.FindDBSchemaMessage{
+				Workspace:    common.GetWorkspaceIDFromContext(ctx),
+				InstanceID:   database.InstanceID,
+				DatabaseName: database.DatabaseName,
+			})
+			if err == nil && dbMetadata != nil {
+				// Combine all SDL files into single text
+				var combinedCurrentSDL strings.Builder
+				for _, file := range files {
+					combinedCurrentSDL.Write(file.Statement)
+					combinedCurrentSDL.WriteString("\n\n")
+				}
 
-					// Combine all SDL files into single text
-					var combinedCurrentSDL strings.Builder
-					for _, file := range files {
-						combinedCurrentSDL.Write(file.Statement)
-						combinedCurrentSDL.WriteString("\n\n")
-					}
-
-					// Generate diff
-					schemaDiff, err := schema.GetSDLDiff(pengine, combinedCurrentSDL.String(), previousUserSDL, dbMetadata)
-					if err == nil {
-						// Filter out bbdataarchive schema changes for Postgres
-						schemaDiff = schema.FilterPostgresArchiveSchema(schemaDiff)
-
-						// Check for DROP operations in the diff
-						sdlDropAdvices = advisorpg.CheckSDLDropOperations(schemaDiff)
-					}
+				advices, err := schema.SDLDropAdvices(engine, combinedCurrentSDL.String(), dbMetadata)
+				if err == nil {
+					sdlDropAdvices = advices
 				}
 			}
 		}
@@ -760,52 +749,4 @@ func getStatementTypesWithPositionsForEngine(engine storepb.Engine, asts []base.
 		// For unsupported engines, return empty list (skip check)
 		return []statementTypeWithPosition{}, nil
 	}
-}
-
-// getPreviousSDLForDatabase retrieves the previous SDL text from the database's last applied release.
-// Returns empty string if no previous release exists or if there are any errors loading it.
-func getPreviousSDLForDatabase(ctx context.Context, s *store.Store, database *store.DatabaseMessage) string {
-	// Get the previous SDL text from the database's release field
-	if database.Metadata == nil || database.Metadata.Release == "" {
-		return ""
-	}
-
-	// Parse release name to get project ID and release ID
-	projectID, releaseID, err := common.GetProjectReleaseID(database.Metadata.Release)
-	if err != nil {
-		slog.Warn("Failed to parse release name, treating as initialization", "release", database.Metadata.Release, "error", err)
-		return ""
-	}
-
-	// Load the release
-	release, err := s.GetRelease(ctx, &store.FindReleaseMessage{
-		ProjectID: &projectID,
-		ReleaseID: &releaseID,
-	})
-	if err != nil {
-		slog.Warn("Failed to get release, treating as initialization", "project", projectID, "release", releaseID, "error", err)
-		return ""
-	}
-	if release == nil {
-		slog.Warn("Release not found, treating as initialization", "project", projectID, "release", releaseID)
-		return ""
-	}
-
-	// For SDL/declarative releases, combine all files
-	var combinedSDL strings.Builder
-	for _, file := range release.Payload.Files {
-		sheet, err := s.GetSheetFull(ctx, file.SheetSha256)
-		if err != nil {
-			slog.Warn("Failed to get sheet, treating as initialization", "sha256", file.SheetSha256, "error", err)
-			return ""
-		}
-		if sheet == nil {
-			slog.Warn("Sheet not found, treating as initialization", "sha256", file.SheetSha256)
-			return ""
-		}
-		combinedSDL.WriteString(sheet.Statement)
-		combinedSDL.WriteString("\n\n")
-	}
-
-	return combinedSDL.String()
 }

@@ -10,9 +10,13 @@ export const AUTH_PASSWORD_RESET_MODULE = "auth.password.reset";
 export const AUTH_PASSWORD_FORGOT_MODULE = "auth.password.forgot";
 export const AUTH_OAUTH_CALLBACK_MODULE = "auth.oauth.callback";
 export const AUTH_OIDC_CALLBACK_MODULE = "auth.oidc.callback";
-export const AUTH_IDP_INIT_MODULE = "auth.idp.init";
+export const AUTH_PROFILE_SETUP_MODULE = "auth.profile.setup";
 export const AUTH_2FA_SETUP_MODULE = "auth.2fa.setup";
 export const OAUTH2_CONSENT_MODULE = "oauth2.consent";
+
+// Every auth/consent route renders a React page mounted by ReactPageMount.vue.
+// The `page` prop names the React component registered in @/react/mount.ts.
+const reactPage = () => import("@/react/ReactPageMount.vue");
 
 const authRoutes: RouteRecordRaw[] = [
   {
@@ -23,7 +27,8 @@ const authRoutes: RouteRecordRaw[] = [
         path: "",
         name: OAUTH2_CONSENT_MODULE,
         meta: { title: () => t("oauth2.consent.title") },
-        component: () => import("@/views/OAuth2Consent.vue"),
+        component: reactPage,
+        props: { page: "OAuth2ConsentPage" },
       },
     ],
   },
@@ -37,62 +42,72 @@ const authRoutes: RouteRecordRaw[] = [
         alias: "signin",
         name: AUTH_SIGNIN_MODULE,
         meta: { title: () => t("common.sign-in") },
-        component: () => import("@/views/auth/Signin.vue"),
+        component: reactPage,
+        props: { page: "SigninPage" },
       },
       {
         // We need the admin as the backdoor for the workspace admin.
         path: "admin",
         name: AUTH_SIGNIN_ADMIN_MODULE,
         meta: { title: () => t("common.sign-in-as-admin") },
-        component: () => import("@/views/auth/SigninAdmin.vue"),
+        component: reactPage,
+        props: { page: "SigninAdminPage" },
       },
       {
         path: "signup",
         name: AUTH_SIGNUP_MODULE,
         meta: { title: () => t("common.sign-up") },
-        component: () => import("@/views/auth/Signup.vue"),
+        component: reactPage,
+        props: { page: "SignupPage" },
       },
       {
         path: "password-forgot",
         name: AUTH_PASSWORD_FORGOT_MODULE,
         meta: { title: () => `${t("auth.password-forgot")}` },
-        component: () => import("@/views/auth/PasswordForgot.vue"),
+        component: reactPage,
+        props: { page: "PasswordForgotPage" },
       },
       {
         path: "password-reset",
         name: AUTH_PASSWORD_RESET_MODULE,
         meta: { title: () => `${t("auth.password-reset.title")}` },
-        component: () => import("@/views/auth/PasswordReset.vue"),
+        component: reactPage,
+        props: { page: "PasswordResetPage" },
       },
       {
         path: "mfa",
         name: AUTH_MFA_MODULE,
         meta: { title: () => t("multi-factor.self") },
-        component: () => import("@/views/auth/MultiFactor.vue"),
+        component: reactPage,
+        props: { page: "MultiFactorPage" },
       },
       {
-        path: "idp-init",
-        name: AUTH_IDP_INIT_MODULE,
-        meta: { title: () => t("common.loading") },
-        component: () => import("@/views/IdPInitiatedSSO.vue"),
+        path: "profile-setup",
+        name: AUTH_PROFILE_SETUP_MODULE,
+        meta: { title: () => t("auth.profile-setup") },
+        component: reactPage,
+        props: { page: "ProfileSetupPage" },
       },
     ],
   },
   {
     path: "/oauth/callback",
     name: AUTH_OAUTH_CALLBACK_MODULE,
-    component: () => import("@/views/OAuthCallback.vue"),
+    component: reactPage,
+    props: { page: "OAuthCallbackPage" },
   },
   {
     path: "/oidc/callback",
     name: AUTH_OIDC_CALLBACK_MODULE,
-    component: () => import("@/views/OAuthCallback.vue"),
+    component: reactPage,
+    props: { page: "OAuthCallbackPage" },
   },
   {
     path: "/2fa/setup",
     name: AUTH_2FA_SETUP_MODULE,
     meta: { title: () => t("two-factor.self") },
-    component: () => import("@/views/TwoFactorRequired.vue"),
+    component: reactPage,
+    props: { page: "TwoFactorRequiredPage" },
   },
 ];
 

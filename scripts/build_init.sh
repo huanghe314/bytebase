@@ -30,7 +30,7 @@ mkdir_output() {
 }
 
 # Go and node version checks.
-TARGET_GO_VERSION="1.24.4"
+TARGET_GO_VERSION="1.26.3"
 GO_VERSION=`go version | { read _ _ v _; echo ${v#go}; }`
 if [ "$(version ${GO_VERSION})" -lt "$(version $TARGET_GO_VERSION)" ];
 then
@@ -38,9 +38,10 @@ then
 fi
 
 NODE_VERSION=`node -v | { read v; echo ${v#v}; }`
-if [ "$(version ${NODE_VERSION})" -lt "$(version 23.11.0)" ];
+TARGET_NODE_VERSION=24.15.0
+if [ "$(version ${NODE_VERSION})" -lt "$(version $TARGET_NODE_VERSION)" ];
 then
-   echo "${RED}Precheck failed.${NC} Require node.js version >= 23.11.0. Current version ${NODE_VERSION}."; exit 1;
+   echo "${RED}Precheck failed.${NC} Require node.js version >= $TARGET_NODE_VERSION. Current version ${NODE_VERSION}."; exit 1;
 fi
 
 if ! command -v npm > /dev/null

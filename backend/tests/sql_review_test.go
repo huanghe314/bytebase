@@ -23,6 +23,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/bytebase/bytebase/backend/common"
+	"github.com/bytebase/bytebase/backend/common/yamltest"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 )
 
@@ -40,8 +41,8 @@ var (
 	builtinOnlyPolicyWithConflict = []*v1pb.PlanCheckRun_Result{
 		{
 			Status:  v1pb.Advice_WARNING,
-			Title:   "Table `user` already exists",
-			Content: "Table `user` already exists",
+			Title:   "Table 'user' already exists",
+			Content: "Table 'user' already exists",
 			Code:    607, // code.TableExists
 			Report: &v1pb.PlanCheckRun_Result_SqlReviewReport_{
 				SqlReviewReport: &v1pb.PlanCheckRun_Result_SqlReviewReport{
@@ -145,7 +146,7 @@ func TestSQLReviewForPostgreSQL(t *testing.T) {
 		Instance: &v1pb.Instance{
 			Title:       "pgInstance",
 			Engine:      v1pb.Engine_POSTGRES,
-			Environment: stringPtr("environments/prod"),
+			Environment: new("environments/prod"),
 			Activation:  true,
 			DataSources: []*v1pb.DataSource{{Type: v1pb.DataSourceType_ADMIN, Host: pgContainer.host, Port: pgContainer.port, Username: "bytebase", Password: "bytebase", Id: "admin"}},
 		},
@@ -312,7 +313,7 @@ func TestSQLReviewForMySQL(t *testing.T) {
 		Instance: &v1pb.Instance{
 			Title:       "mysqlInstance",
 			Engine:      v1pb.Engine_MYSQL,
-			Environment: stringPtr("environments/prod"),
+			Environment: new("environments/prod"),
 			Activation:  true,
 			DataSources: []*v1pb.DataSource{{Type: v1pb.DataSourceType_ADMIN, Host: mysqlContainer.host, Port: mysqlContainer.port, Username: "bytebase", Password: "bytebase", Id: "admin"}},
 		},
@@ -362,9 +363,8 @@ func TestSQLReviewForMySQL(t *testing.T) {
 	countSQL := "SELECT count(*) FROM test WHERE 1=1;"
 	dmlSQL := "INSERT INTO test SELECT * FROM " + valueTable
 	originQueryResp, err := ctl.sqlServiceClient.Query(ctx, connect.NewRequest(&v1pb.QueryRequest{
-		Name:         database.Msg.Name,
-		Statement:    countSQL,
-		DataSourceId: "admin",
+		Name:      database.Msg.Name,
+		Statement: countSQL,
 	}))
 	a.NoError(err)
 	a.Equal(1, len(originQueryResp.Msg.Results))
@@ -374,9 +374,8 @@ func TestSQLReviewForMySQL(t *testing.T) {
 	createIssueAndReturnSQLReviewResult(ctx, a, ctl, ctl.project, database.Msg, dmlSQL, false /* wait */)
 
 	finalQueryResp, err := ctl.sqlServiceClient.Query(ctx, connect.NewRequest(&v1pb.QueryRequest{
-		Name:         database.Msg.Name,
-		Statement:    countSQL,
-		DataSourceId: "admin",
+		Name:      database.Msg.Name,
+		Statement: countSQL,
 	}))
 	a.NoError(err)
 	a.Equal(1, len(finalQueryResp.Msg.Results))
@@ -463,15 +462,7 @@ func writeTestData(filepath string, tests []test) error {
 		yamlTests = append(yamlTests, yamlTest)
 	}
 
-	byteValue, err := yaml.Marshal(yamlTests)
-	if err != nil {
-		return err
-	}
-	err = os.WriteFile(filepath, byteValue, 0644)
-	if err != nil {
-		return err
-	}
-	return nil
+	return yamltest.WriteFile(filepath, yamlTests)
 }
 
 func createIssueAndReturnSQLReviewResult(ctx context.Context, a *require.Assertions, ctl *controller, project *v1pb.Project, database *v1pb.Database, statement string, wait bool) []*v1pb.PlanCheckRun_Result {

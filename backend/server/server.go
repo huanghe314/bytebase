@@ -13,13 +13,12 @@ import (
 
 	"github.com/labstack/echo/v5"
 	"github.com/pkg/errors"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 
 	directorysync "github.com/bytebase/bytebase/backend/api/directory-sync"
 	"github.com/bytebase/bytebase/backend/api/lsp"
 	"github.com/bytebase/bytebase/backend/api/mcp"
 	"github.com/bytebase/bytebase/backend/api/oauth2"
+	stripeapi "github.com/bytebase/bytebase/backend/api/stripe"
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/component/bus"
@@ -28,9 +27,7 @@ import (
 	"github.com/bytebase/bytebase/backend/component/iam"
 	"github.com/bytebase/bytebase/backend/component/sampleinstance"
 	"github.com/bytebase/bytebase/backend/component/sheet"
-	"github.com/bytebase/bytebase/backend/component/telemetry"
 	"github.com/bytebase/bytebase/backend/component/webhook"
-	"github.com/bytebase/bytebase/backend/demo"
 	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
@@ -103,7 +100,6 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 	slog.Info("-----Config BEGIN-----")
 	slog.Info(fmt.Sprintf("mode=%s", profile.Mode))
 	slog.Info(fmt.Sprintf("dataDir=%s", profile.DataDir))
-	slog.Info(fmt.Sprintf("demo=%v", profile.Demo))
 	slog.Info(fmt.Sprintf("replicaID=%s", profile.ReplicaID))
 	slog.Info("-----Config END-------")
 
@@ -121,9 +117,6 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 	var pgURL string
 	if profile.UseEmbedDB() {
 		pgDataDir := path.Join(profile.DataDir, "pgdata")
-		if profile.Demo {
-			pgDataDir = path.Join(profile.DataDir, "pgdata-demo")
-		}
 
 		stopper, err := postgres.StartMetadataInstance(ctx, pgDataDir, profile.DatastorePort, profile.Mode)
 		if err != nil {
@@ -141,12 +134,6 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 		return nil, errors.Wrapf(err, "failed to new store")
 	}
 
-	if profile.Demo {
-		if err := demo.LoadDemoData(ctx, stores.GetDB()); err != nil {
-			stores.Close()
-			return nil, errors.Wrapf(err, "failed to load demo data")
-		}
-	}
 	if err := migrator.MigrateSchema(ctx, stores.GetDB()); err != nil {
 		stores.Close()
 		return nil, errors.Wrapf(err, "failed to migrate schema")
@@ -154,6 +141,16 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 	s.store = stores
 	sheetManager := sheet.NewManager()
 
+	s.licenseService, err = enterprise.NewLicenseService(profile.Mode, stores, profile.SaaS, profile.LicensePrivateKey)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create license service")
+	}
+
+	logSetup := &storepb.WorkspaceProfileSetting{
+		EnableAuditLogStdout:   false,
+		EnableMetricCollection: true,
+		EnableDebug:            profile.Debug,
+	}
 	if !s.profile.SaaS {
 		s.sampleInstanceManager = sampleinstance.NewManager(stores, profile)
 
@@ -165,34 +162,23 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 				slog.Warn("failed to start sample instances", log.BBError(err))
 			}
 
-			if workspaceProfile, err := s.store.GetWorkspaceProfileSetting(ctx, workspaceID); err == nil {
-				profile.RuntimeDebug.Store(workspaceProfile.EnableDebug)
-				if workspaceProfile.EnableDebug {
-					log.LogLevel.Set(slog.LevelDebug)
+			if workspaceProfileSetting, err := s.store.GetWorkspaceProfileSetting(ctx, workspaceID); err == nil {
+				logSetup = workspaceProfileSetting
+				if logSetup.GetEnableAuditLogStdout() && s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_AUDIT_LOG) == nil {
+					s.profile.RuntimeEnableAuditLogStdout.Store(true)
 				}
-				if workspaceProfile.GetEnableAuditLogStdout() {
-					if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_AUDIT_LOG); err == nil {
-						s.profile.RuntimeEnableAuditLogStdout.Store(true)
-					}
-				}
-				telemetry.InitGlobalReporter(
-					workspaceID,
-					profile.Version,
-					profile.GitCommit,
-					workspaceProfile.GetEnableMetricCollection(),
-				)
 			}
 		}
+	}
+
+	profile.RuntimeDebug.Store(logSetup.EnableDebug)
+	if logSetup.EnableDebug {
+		log.LogLevel.Set(slog.LevelDebug)
 	}
 
 	s.bus, err = bus.New()
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to create message bus")
-	}
-
-	s.licenseService, err = enterprise.NewLicenseService(profile.Mode, stores)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create license service")
 	}
 
 	// The auth secret is a global infrastructure value stored in server_config.
@@ -242,10 +228,12 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 		return nil, errors.Wrapf(err, "failed to create MCP server")
 	}
 
+	stripeWebhookHandler := stripeapi.NewWebhookHandler(s.store, s.licenseService, profile.StripeWebhookSecret)
+
 	if err := configureGrpcRouters(ctx, s.echoServer, s.store, sheetManager, s.dbFactory, s.licenseService, s.profile, s.bus, s.schemaSyncer, s.webhookManager, s.iamManager, secret, s.sampleInstanceManager); err != nil {
 		return nil, errors.Wrapf(err, "failed to configure gRPC routers")
 	}
-	configureEchoRouters(s.echoServer, s.lspServer, directorySyncServer, oauth2Service, mcpServer, profile)
+	configureEchoRouters(s.echoServer, s.lspServer, directorySyncServer, oauth2Service, mcpServer, stripeWebhookHandler, profile)
 
 	serverStarted = true
 	return s, nil
@@ -286,9 +274,13 @@ func (s *Server) Run(ctx context.Context, port int) error {
 	}
 
 	// Create HTTP server with H2C support (Echo v5)
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
 	s.httpServer = &http.Server{
-		Addr:    address,
-		Handler: h2c.NewHandler(s.echoServer, &http2.Server{}),
+		Addr:      address,
+		Handler:   s.echoServer,
+		Protocols: protocols,
 	}
 
 	go func() {

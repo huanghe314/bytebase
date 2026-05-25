@@ -116,6 +116,7 @@ export type Permission =
   | "bb.sheets.create"
   | "bb.sheets.get"
   | "bb.sheets.update"
+  | "bb.subscription.manage"
   | "bb.sql.select"
   | "bb.sql.ddl"
   | "bb.sql.dml"
@@ -139,5 +140,7 @@ export type Permission =
   | "bb.workloadIdentities.list"
   | "bb.workloadIdentities.undelete"
   | "bb.workloadIdentities.update"
+  | "bb.workspaces.delete"
   | "bb.workspaces.getIamPolicy"
+  | "bb.workspaces.update"
   | "bb.workspaces.setIamPolicy";

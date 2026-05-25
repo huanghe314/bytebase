@@ -1,10 +1,21 @@
 import { create } from "@bufbuild/protobuf";
+import { FieldMaskSchema } from "@bufbuild/protobuf/wkt";
 import { cloneDeep } from "lodash-es";
 import { defineStore } from "pinia";
-import { computed, ref } from "vue";
-import { workspaceServiceClientConnect } from "@/connect";
-import { userNamePrefix } from "@/store/modules/v1/common";
+import { computed, ref, watch } from "vue";
+import {
+  authServiceClientConnect,
+  workspaceServiceClientConnect,
+} from "@/connect";
+import { router } from "@/router";
+import { WORKSPACE_ROUTE_LANDING } from "@/router/dashboard/workspaceRoutes";
+import { userNamePrefix, workspaceNamePrefix } from "@/store/modules/v1/common";
+import {
+  broadcastWorkspaceSwitch,
+  workspaceSwitchChannel,
+} from "@/store/workspaceSwitchChannel";
 import { ALL_USERS_USER_EMAIL } from "@/types";
+import { SwitchWorkspaceRequestSchema } from "@/types/proto-es/v1/auth_service_pb";
 import type { IamPolicy } from "@/types/proto-es/v1/iam_policy_pb";
 import {
   BindingSchema,
@@ -12,16 +23,67 @@ import {
   IamPolicySchema,
   SetIamPolicyRequestSchema,
 } from "@/types/proto-es/v1/iam_policy_pb";
+import type { Workspace } from "@/types/proto-es/v1/workspace_service_pb";
+import { UpdateWorkspaceRequestSchema } from "@/types/proto-es/v1/workspace_service_pb";
 import { getUserListInBinding, isBindingPolicyExpired } from "@/utils";
 import { useActuatorV1Store } from "./actuator";
 import { composePolicyBindings } from "./projectIamPolicy";
 
+// Listen on the shared cross-tab channel. Using `addEventListener` instead of
+// `onmessage = ...` lets the React-side store register its own handler on the
+// same channel object — and crucially, posts made through that same object
+// (e.g. from the OAuth2 consent page via `switchWorkspaceWithoutRedirect`)
+// will NOT trigger either listener in the sending tab thanks to source-object
+// exclusion.
+workspaceSwitchChannel.addEventListener("message", () => {
+  // Another tab switched workspace — full-reload to the landing page
+  // to pick up the new cookie and reset all frontend state.
+  const landingPath = router.resolve({ name: WORKSPACE_ROUTE_LANDING }).href;
+  window.location.href = landingPath;
+});
+
 export const useWorkspaceV1Store = defineStore("workspace_v1", () => {
   const _workspaceIamPolicy = ref<IamPolicy>(create(IamPolicySchema, {}));
+  const workspaceList = ref<Workspace[]>([]);
+  const currentWorkspace = ref<Workspace | undefined>();
+  const actuatorStore = useActuatorV1Store();
 
   const workspaceIamPolicy = computed(() => {
     return _workspaceIamPolicy.value;
   });
+
+  watch(
+    () => actuatorStore.workspaceResourceName,
+    async (name) => {
+      const requestName = name || `${workspaceNamePrefix}-`;
+      const workspace = await workspaceServiceClientConnect.getWorkspace({
+        name: requestName,
+      });
+      currentWorkspace.value = workspace;
+    },
+    { immediate: true }
+  );
+
+  const updateWorkspace = async (
+    workspace: Workspace,
+    updateMask: string[]
+  ) => {
+    const updated = await workspaceServiceClientConnect.updateWorkspace(
+      create(UpdateWorkspaceRequestSchema, {
+        workspace: workspace,
+        updateMask: create(FieldMaskSchema, {
+          paths: updateMask,
+        }),
+      })
+    );
+    const index = workspaceList.value.findIndex(
+      (ws) => ws.name === updated.name
+    );
+    if (index >= 0) {
+      workspaceList.value[index] = updated;
+    }
+    currentWorkspace.value = updated;
+  };
 
   // roleMapToUsers returns Map<roles/{role}, Set<userfullname>>
   // the user fullname can be
@@ -67,7 +129,7 @@ export const useWorkspaceV1Store = defineStore("workspace_v1", () => {
 
   const fetchIamPolicy = async () => {
     const request = create(GetIamPolicyRequestSchema, {
-      resource: useActuatorV1Store().workspaceResourceName,
+      resource: actuatorStore.workspaceResourceName,
     });
     const policy = await workspaceServiceClientConnect.getIamPolicy(request);
     await composePolicyBindings(policy.bindings);
@@ -132,7 +194,7 @@ export const useWorkspaceV1Store = defineStore("workspace_v1", () => {
     }
 
     const request = create(SetIamPolicyRequestSchema, {
-      resource: useActuatorV1Store().workspaceResourceName,
+      resource: actuatorStore.workspaceResourceName,
       policy: workspacePolicy,
       etag: workspacePolicy.etag,
     });
@@ -165,6 +227,46 @@ export const useWorkspaceV1Store = defineStore("workspace_v1", () => {
     return specificRoles;
   };
 
+  const fetchCurrentWorkspace = async () => {
+    const name =
+      actuatorStore.workspaceResourceName || `${workspaceNamePrefix}-`;
+    const workspace = await workspaceServiceClientConnect.getWorkspace({
+      name,
+    });
+    currentWorkspace.value = workspace;
+  };
+
+  const fetchWorkspaceList = async () => {
+    const resp = await workspaceServiceClientConnect.listWorkspaces({});
+    workspaceList.value = resp.workspaces;
+  };
+
+  // switchWorkspaceWithoutRedirect performs the server-side switch and
+  // notifies other tabs, but leaves navigation to the caller. Posting via
+  // the shared `broadcastWorkspaceSwitch` helper uses the single
+  // workspaceSwitchChannel instance both the Vue and React stores listen
+  // on, so source-object exclusion suppresses both in-tab listeners — the
+  // caller (e.g. the OAuth2 consent page) is free to handle its own page
+  // lifecycle via location.reload() without losing the consent URL.
+  const switchWorkspaceWithoutRedirect = async (workspaceName: string) => {
+    await authServiceClientConnect.switchWorkspace(
+      create(SwitchWorkspaceRequestSchema, {
+        workspace: workspaceName,
+        web: true,
+      })
+    );
+    broadcastWorkspaceSwitch(workspaceName);
+  };
+
+  const switchWorkspace = async (workspaceName: string) => {
+    await switchWorkspaceWithoutRedirect(workspaceName);
+    // Full-reload to the landing page to reset all frontend state.
+    // Reloading the current URL would fail if the page is project-scoped
+    // (the project likely doesn't exist in the target workspace).
+    const landingPath = router.resolve({ name: WORKSPACE_ROUTE_LANDING }).href;
+    window.location.href = landingPath;
+  };
+
   return {
     userMapToRoles,
     workspaceIamPolicy,
@@ -173,5 +275,12 @@ export const useWorkspaceV1Store = defineStore("workspace_v1", () => {
     findRolesByMember,
     roleMapToUsers,
     getWorkspaceRolesByName,
+    workspaceList,
+    currentWorkspace,
+    updateWorkspace,
+    fetchCurrentWorkspace,
+    fetchWorkspaceList,
+    switchWorkspace,
+    switchWorkspaceWithoutRedirect,
   };
 });

@@ -72,6 +72,7 @@ func (s *RolloutService) GetRollout(ctx context.Context, req *connect.Request[v1
 
 	// getRolloutWithTasks inlined
 	plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: projectID,
 		UID:       &planID,
 	})
@@ -86,7 +87,7 @@ func (s *RolloutService) GetRollout(ctx context.Context, req *connect.Request[v1
 		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("rollout %d not found in project %s", planID, projectID))
 	}
 
-	tasks, err := s.store.ListTasks(ctx, &store.TaskFind{ProjectID: projectID, PlanID: &planID})
+	tasks, err := s.store.ListTasks(ctx, &store.TaskFind{Workspace: common.GetWorkspaceIDFromContext(ctx), ProjectID: projectID, PlanID: &planID})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get tasks"))
 	}
@@ -139,6 +140,7 @@ func (s *RolloutService) ListRollouts(ctx context.Context, req *connect.Request[
 	// Filter plans to only those with rollouts (tasks).
 	hasRollout := true
 	findPlan := &store.FindPlanMessage{
+		Workspace:  common.GetWorkspaceIDFromContext(ctx),
 		ProjectID:  projectID,
 		Limit:      &limitPlusOne,
 		Offset:     &offset.offset,
@@ -168,7 +170,7 @@ func (s *RolloutService) ListRollouts(ctx context.Context, req *connect.Request[
 	var allTasks []*store.TaskMessage
 	if len(planIDs) > 0 {
 		var err error
-		allTasks, err = s.store.ListTasks(ctx, &store.TaskFind{ProjectID: projectID, PlanIDs: &planIDs})
+		allTasks, err = s.store.ListTasks(ctx, &store.TaskFind{Workspace: common.GetWorkspaceIDFromContext(ctx), ProjectID: projectID, PlanIDs: &planIDs})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to list tasks"))
 		}
@@ -240,7 +242,7 @@ func (s *RolloutService) CreateRollout(ctx context.Context, req *connect.Request
 		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("project not found for id: %v", projectID))
 	}
 
-	plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{ProjectID: projectID, UID: &planID})
+	plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{Workspace: common.GetWorkspaceIDFromContext(ctx), ProjectID: projectID, UID: &planID})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get plan"))
 	}
@@ -255,6 +257,7 @@ func (s *RolloutService) CreateRollout(ctx context.Context, req *connect.Request
 
 	// Fetch issue associated with this plan (if any)
 	issue, err := s.store.GetIssue(ctx, &store.FindIssueMessage{
+		Workspace:  common.GetWorkspaceIDFromContext(ctx),
 		ProjectIDs: []string{projectID},
 		PlanUID:    &planID,
 	})
@@ -290,7 +293,7 @@ func (s *RolloutService) CreateRollout(ctx context.Context, req *connect.Request
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 
-	tasks, err = s.store.ListTasks(ctx, &store.TaskFind{ProjectID: projectID, PlanID: &planID})
+	tasks, err = s.store.ListTasks(ctx, &store.TaskFind{Workspace: common.GetWorkspaceIDFromContext(ctx), ProjectID: projectID, PlanID: &planID})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get tasks"))
 	}
@@ -336,6 +339,7 @@ func (s *RolloutService) ListTaskRuns(ctx context.Context, req *connect.Request[
 	}
 
 	plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: projectID,
 		UID:       &planID,
 	})
@@ -346,6 +350,7 @@ func (s *RolloutService) ListTaskRuns(ctx context.Context, req *connect.Request[
 		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("rollout %d not found in project %s", planID, projectID))
 	}
 	taskRuns, err := s.store.ListTaskRuns(ctx, &store.FindTaskRunMessage{
+		Workspace:   common.GetWorkspaceIDFromContext(ctx),
 		ProjectID:   projectID,
 		PlanUID:     &planID,
 		Environment: maybeStageID,
@@ -435,7 +440,7 @@ func CreateRolloutAndPendingTasks(
 		policy, ok := envPolicies[task.Environment]
 		if !ok {
 			var err error
-			policy, err = s.GetRolloutPolicy(ctx, common.GetWorkspaceIDFromContext(ctx), task.Environment)
+			policy, err = s.GetRolloutPolicy(ctx, project.Workspace, task.Environment)
 			if err != nil {
 				// Don't error out entirely just because policy fetch failed for one env, but logging/continuing is better.
 				// However, here we don't have logger injected easily.
@@ -482,6 +487,7 @@ func (s *RolloutService) GetTaskRun(ctx context.Context, req *connect.Request[v1
 	}
 
 	plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: projectID,
 		UID:       &planID,
 	})
@@ -493,6 +499,7 @@ func (s *RolloutService) GetTaskRun(ctx context.Context, req *connect.Request[v1
 	}
 
 	taskRun, err := s.store.GetTaskRunV1(ctx, &store.FindTaskRunMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: projectID,
 		UID:       &taskRunUID,
 		PlanUID:   &planID,
@@ -519,6 +526,7 @@ func (s *RolloutService) GetTaskRunLog(ctx context.Context, req *connect.Request
 	}
 
 	plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: projectID,
 		UID:       &planID,
 	})
@@ -530,6 +538,7 @@ func (s *RolloutService) GetTaskRunLog(ctx context.Context, req *connect.Request
 	}
 
 	taskRun, err := s.store.GetTaskRunV1(ctx, &store.FindTaskRunMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: projectID,
 		UID:       &taskRunUID,
 		PlanUID:   &planID,
@@ -556,6 +565,7 @@ func (s *RolloutService) GetTaskRunSession(ctx context.Context, req *connect.Req
 	}
 
 	plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: projectID,
 		UID:       &planID,
 	})
@@ -566,7 +576,7 @@ func (s *RolloutService) GetTaskRunSession(ctx context.Context, req *connect.Req
 		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("plan %d not found in project %s", planID, projectID))
 	}
 
-	tasks, err := s.store.ListTasks(ctx, &store.TaskFind{ProjectID: projectID, ID: &taskUID, PlanID: &planID})
+	tasks, err := s.store.ListTasks(ctx, &store.TaskFind{Workspace: common.GetWorkspaceIDFromContext(ctx), ProjectID: projectID, ID: &taskUID, PlanID: &planID})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get task"))
 	}
@@ -720,6 +730,7 @@ func (s *RolloutService) BatchRunTasks(ctx context.Context, req *connect.Request
 	}
 
 	plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: projectID,
 		UID:       &planID,
 	})
@@ -730,13 +741,8 @@ func (s *RolloutService) BatchRunTasks(ctx context.Context, req *connect.Request
 		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("rollout (plan) %v not found", planID))
 	}
 
-	// Reset notification state so user gets fresh feedback on retry
-	if err := s.store.ResetPlanWebhookDelivery(ctx, projectID, planID); err != nil {
-		slog.Error("failed to reset plan webhook delivery", log.BBError(err))
-		// Don't fail the request - notification is non-critical
-	}
-
 	issueN, err := s.store.GetIssue(ctx, &store.FindIssueMessage{
+		Workspace:  common.GetWorkspaceIDFromContext(ctx),
 		ProjectIDs: []string{projectID},
 		PlanUID:    &planID,
 	})
@@ -768,7 +774,7 @@ func (s *RolloutService) BatchRunTasks(ctx context.Context, req *connect.Request
 	}
 
 	// Get all tasks in the same environment
-	stageToRunTasks, err := s.store.ListTasks(ctx, &store.TaskFind{ProjectID: projectID, PlanID: &planID, Environment: &environmentToRun})
+	stageToRunTasks, err := s.store.ListTasks(ctx, &store.TaskFind{Workspace: common.GetWorkspaceIDFromContext(ctx), ProjectID: projectID, PlanID: &planID, Environment: &environmentToRun})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to list tasks"))
 	}
@@ -832,6 +838,21 @@ func (s *RolloutService) BatchRunTasks(ctx context.Context, req *connect.Request
 		}
 	})
 
+	// Reset notification state so the user gets fresh feedback on this retry.
+	// Placed AFTER all validation (auth, approval, task parse) so a rejected
+	// request leaves the dedup ledger untouched, but BEFORE
+	// CreatePendingTaskRuns so the pending-task scheduler — which polls
+	// independently on its own ticker — cannot observe the new task_run rows
+	// before the stale plan_webhook_delivery row is cleared. Without this
+	// ordering, a fast-failing retry could be picked up, fail, and try to
+	// claim PIPELINE_FAILED against the stale row (ON CONFLICT DO NOTHING),
+	// and the API's later reset would clear the row with no pending event
+	// left to re-fire. Errors are logged and swallowed so a transient DB
+	// hiccup doesn't fail the user-facing run request.
+	if err := s.store.ResetPlanWebhookDelivery(ctx, projectID, planID); err != nil {
+		slog.Error("failed to reset plan webhook delivery", log.BBError(err))
+	}
+
 	if err := s.store.CreatePendingTaskRuns(ctx, user.Email, taskRunCreates...); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to create pending task runs, error %v", err))
 	}
@@ -845,6 +866,14 @@ func (s *RolloutService) BatchRunTasks(ctx context.Context, req *connect.Request
 // BatchSkipTasks skips tasks in batch.
 func (s *RolloutService) BatchSkipTasks(ctx context.Context, req *connect.Request[v1pb.BatchSkipTasksRequest]) (*connect.Response[v1pb.BatchSkipTasksResponse], error) {
 	request := req.Msg
+	// Reject empty input early. Without this guard the request would skip the
+	// task-parse loop, the environmentSet-based permission check, and arrive
+	// at a no-op store.BatchSkipTasks — but still run ResetPlanWebhookDelivery
+	// and signal the completion check, mutating dedup state for a request that
+	// did nothing. Mirrors the BatchRunTasks pattern.
+	if len(request.Tasks) == 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("The tasks in request cannot be empty"))
+	}
 	projectID, planID, _, err := common.GetProjectIDPlanIDMaybeStageID(request.Parent)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
@@ -861,6 +890,7 @@ func (s *RolloutService) BatchSkipTasks(ctx context.Context, req *connect.Reques
 	}
 
 	plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: projectID,
 		UID:       &planID,
 	})
@@ -872,6 +902,7 @@ func (s *RolloutService) BatchSkipTasks(ctx context.Context, req *connect.Reques
 	}
 
 	issueN, err := s.store.GetIssue(ctx, &store.FindIssueMessage{
+		Workspace:  common.GetWorkspaceIDFromContext(ctx),
 		ProjectIDs: []string{projectID},
 		PlanUID:    &planID,
 	})
@@ -879,7 +910,7 @@ func (s *RolloutService) BatchSkipTasks(ctx context.Context, req *connect.Reques
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to find issue"))
 	}
 
-	tasks, err := s.store.ListTasks(ctx, &store.TaskFind{ProjectID: projectID, PlanID: &planID})
+	tasks, err := s.store.ListTasks(ctx, &store.TaskFind{Workspace: common.GetWorkspaceIDFromContext(ctx), ProjectID: projectID, PlanID: &planID})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to list tasks"))
 	}
@@ -922,6 +953,17 @@ func (s *RolloutService) BatchSkipTasks(ctx context.Context, req *connect.Reques
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to skip tasks"))
 	}
 
+	// Reset notification state so PIPELINE_COMPLETED can fire after skipping a
+	// failed task (the BYT-9398 fix). Placed after authorization + the
+	// successful BatchSkipTasks so a rejected request (auth fail, unknown
+	// task, etc.) leaves the dedup ledger untouched. Must run before the
+	// completion-check signal below so the async claim sees the cleared row.
+	// Errors are logged and swallowed so a DB hiccup doesn't fail the
+	// user-facing skip request.
+	if err := s.store.ResetPlanWebhookDelivery(ctx, projectID, planID); err != nil {
+		slog.Error("failed to reset plan webhook delivery", log.BBError(err))
+	}
+
 	// Signal to check if plan is complete and successful (may send PIPELINE_COMPLETED)
 	s.bus.PlanCompletionCheckChan <- bus.PlanRef{ProjectID: projectID, PlanID: planID}
 
@@ -952,6 +994,7 @@ func (s *RolloutService) BatchCancelTaskRuns(ctx context.Context, req *connect.R
 	}
 
 	plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: projectID,
 		UID:       &planID,
 	})
@@ -963,6 +1006,7 @@ func (s *RolloutService) BatchCancelTaskRuns(ctx context.Context, req *connect.R
 	}
 
 	issueN, err := s.store.GetIssue(ctx, &store.FindIssueMessage{
+		Workspace:  common.GetWorkspaceIDFromContext(ctx),
 		ProjectIDs: []string{projectID},
 		PlanUID:    &planID,
 	})
@@ -1004,6 +1048,7 @@ func (s *RolloutService) BatchCancelTaskRuns(ctx context.Context, req *connect.R
 	}
 
 	taskRuns, err := s.store.ListTaskRuns(ctx, &store.FindTaskRunMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: projectID,
 		UIDs:      &taskRunIDs,
 	})
@@ -1050,6 +1095,7 @@ func (s *RolloutService) PreviewTaskRunRollback(ctx context.Context, req *connec
 	}
 
 	plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: projectID,
 		UID:       &planID,
 	})
@@ -1061,6 +1107,7 @@ func (s *RolloutService) PreviewTaskRunRollback(ctx context.Context, req *connec
 	}
 
 	taskRuns, err := s.store.ListTaskRuns(ctx, &store.FindTaskRunMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: projectID,
 		UID:       &taskRunUID,
 		PlanUID:   &planID,
@@ -1105,7 +1152,7 @@ func (s *RolloutService) PreviewTaskRunRollback(ctx context.Context, req *connec
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("task run %v has no backup detail in logs", taskRun.ID))
 	}
 
-	tasks, err := s.store.ListTasks(ctx, &store.TaskFind{ProjectID: projectID, ID: &taskUID, PlanID: &planID})
+	tasks, err := s.store.ListTasks(ctx, &store.TaskFind{Workspace: common.GetWorkspaceIDFromContext(ctx), ProjectID: projectID, ID: &taskUID, PlanID: &planID})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get task"))
 	}

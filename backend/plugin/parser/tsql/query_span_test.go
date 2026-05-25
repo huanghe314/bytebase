@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/bytebase/bytebase/backend/common"
+	"github.com/bytebase/bytebase/backend/common/yamltest"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	"github.com/bytebase/bytebase/backend/store/model"
@@ -74,10 +75,7 @@ func TestGetQuerySpan(t *testing.T) {
 		}
 
 		if record {
-			byteValue, err := yaml.Marshal(testCases)
-			a.NoError(err)
-			err = os.WriteFile(testDataPath, byteValue, 0644)
-			a.NoError(err)
+			yamltest.Record(t, testDataPath, testCases)
 		}
 	}
 }
@@ -101,4 +99,28 @@ func buildMockDatabaseMetadataGetter(databaseMetadata []*storepb.DatabaseSchemaM
 			}
 			return names, nil
 		}
+}
+
+func TestGetQuerySpanCyclicViewReference(t *testing.T) {
+	metadata := &storepb.DatabaseSchemaMetadata{
+		Name: "db",
+		Schemas: []*storepb.SchemaMetadata{
+			{
+				Name: "dbo",
+				Views: []*storepb.ViewMetadata{
+					{Name: "v1", Definition: "CREATE VIEW [dbo].[v1] AS SELECT * FROM v2"},
+					{Name: "v2", Definition: "CREATE VIEW [dbo].[v2] AS SELECT * FROM v1"},
+				},
+			},
+		},
+	}
+	getter, lister := buildMockDatabaseMetadataGetter([]*storepb.DatabaseSchemaMetadata{metadata})
+
+	_, err := GetQuerySpan(context.Background(), base.GetQuerySpanContext{
+		GetDatabaseMetadataFunc: getter,
+		ListDatabaseNamesFunc:   lister,
+		TempTables:              make(map[string]*base.PhysicalTable),
+	}, base.Statement{Text: "SELECT * FROM v1"}, "db", "dbo", true)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "cyclic view reference")
 }

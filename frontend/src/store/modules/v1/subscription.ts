@@ -17,12 +17,23 @@ import type {
   Instance,
   InstanceResource,
 } from "@/types/proto-es/v1/instance_service_pb";
-import type { Subscription } from "@/types/proto-es/v1/subscription_service_pb";
+import type {
+  PaymentInfo,
+  PurchasePlan,
+  Subscription,
+} from "@/types/proto-es/v1/subscription_service_pb";
 import {
+  BillingInterval,
+  CancelPurchaseRequestSchema,
+  CreatePurchaseRequestSchema,
+  GetPaymentInfoRequestSchema,
   GetSubscriptionRequestSchema,
+  ListPurchasePlansRequestSchema,
   PlanFeature,
   PlanType,
-  UpdateSubscriptionRequestSchema,
+  UpdatePurchaseRequestSchema,
+  UploadLicenseRequestSchema,
+  VerifyCheckoutSessionRequestSchema,
 } from "@/types/proto-es/v1/subscription_service_pb";
 import { formatAbsoluteDateTime } from "@/utils/datetime";
 
@@ -34,6 +45,8 @@ export const useSubscriptionV1Store = defineStore("subscription_v1", () => {
   // State
   const subscription = ref<Subscription | undefined>(undefined);
   const trialingDays = ref(14);
+  const paymentInfo = ref<PaymentInfo | undefined>(undefined);
+  const purchasePlans = ref<PurchasePlan[]>([]);
 
   // Getters
   const currentPlan = computed(() => {
@@ -88,6 +101,14 @@ export const useSubscriptionV1Store = defineStore("subscription_v1", () => {
       return Number.MAX_VALUE;
     }
     return count;
+  });
+
+  const hasUnifiedInstanceLicense = computed(() => {
+    return instanceCountLimit.value <= instanceLicenseCount.value;
+  });
+
+  const hasSplitInstanceLicense = computed(() => {
+    return !isFreePlan.value && !hasUnifiedInstanceLicense.value;
   });
 
   const expireAt = computed(() => {
@@ -183,7 +204,7 @@ export const useSubscriptionV1Store = defineStore("subscription_v1", () => {
     return checkInstanceFeature(
       currentPlan.value,
       feature,
-      instance.activation
+      hasUnifiedInstanceLicense.value || instance.activation
     );
   };
 
@@ -198,42 +219,152 @@ export const useSubscriptionV1Store = defineStore("subscription_v1", () => {
     if (!instance) {
       return false;
     }
+    if (hasUnifiedInstanceLicense.value) {
+      return false;
+    }
     // Feature is available in plan but instance is not activated
     return hasFeature(feature) && !instance.activation;
   };
 
-  const fetchSubscription = async () => {
+  // Fetch subscription. When cache=false, returns the result without updating the store.
+  // Useful for polling during plan changes to avoid UI flashing (PAID → FREE → PAID).
+  const fetchSubscription = async (cache = true) => {
     try {
       const request = create(GetSubscriptionRequestSchema, {});
       const sub =
         await subscriptionServiceClientConnect.getSubscription(request);
-      setSubscription(sub);
+      if (cache) {
+        setSubscription(sub);
+      }
       return sub;
     } catch (e) {
       console.error(e);
     }
   };
 
-  const patchSubscription = async (license: string) => {
-    const request = create(UpdateSubscriptionRequestSchema, {
+  // Poll GetSubscription until predicate returns true, timeout, or abort.
+  // Used after webhook-driven state changes (purchase, update, cancel) to reflect
+  // the new subscription in the store without requiring a manual page refresh.
+  // On match, the store is updated and the subscription is returned. Returns
+  // undefined on timeout or abort without mutating the store.
+  const pollSubscriptionUntil = async (
+    predicate: (sub: Subscription) => boolean,
+    options: {
+      timeoutMs?: number;
+      intervalMs?: number;
+      signal?: AbortSignal;
+    } = {}
+  ): Promise<Subscription | undefined> => {
+    const { timeoutMs = 60_000, intervalMs = 2_000, signal } = options;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (signal?.aborted) return undefined;
+      const sub = await fetchSubscription(false);
+      if (signal?.aborted) return undefined;
+      if (sub && predicate(sub)) {
+        setSubscription(sub);
+        return sub;
+      }
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+    return undefined;
+  };
+
+  const uploadLicense = async (license: string) => {
+    const request = create(UploadLicenseRequestSchema, {
       license,
     });
-    const sub =
-      await subscriptionServiceClientConnect.updateSubscription(request);
+    const sub = await subscriptionServiceClientConnect.uploadLicense(request);
     setSubscription(sub);
     return sub;
+  };
+
+  // Purchase actions (SaaS only)
+  const createPurchase = async (
+    plan: PlanType,
+    interval: BillingInterval,
+    seats: number
+  ): Promise<string> => {
+    const request = create(CreatePurchaseRequestSchema, {
+      plan,
+      interval,
+      seats,
+    });
+    const response =
+      await subscriptionServiceClientConnect.createPurchase(request);
+    return response.paymentUrl;
+  };
+
+  const updatePurchase = async (
+    plan: PlanType,
+    interval: BillingInterval,
+    seats: number,
+    etag: string
+  ): Promise<string> => {
+    const request = create(UpdatePurchaseRequestSchema, {
+      plan,
+      interval,
+      seats,
+      etag,
+    });
+    const response =
+      await subscriptionServiceClientConnect.updatePurchase(request);
+    return response.paymentUrl;
+  };
+
+  const cancelPurchase = async (feedback: string, comment: string) => {
+    const request = create(CancelPurchaseRequestSchema, { feedback, comment });
+    await subscriptionServiceClientConnect.cancelPurchase(request);
+    await fetchSubscription();
+  };
+
+  const fetchPaymentInfo = async () => {
+    try {
+      const request = create(GetPaymentInfoRequestSchema, {});
+      const info =
+        await subscriptionServiceClientConnect.getPaymentInfo(request);
+      paymentInfo.value = info;
+      return info;
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const verifyCheckoutSession = async (sessionId: string): Promise<string> => {
+    const request = create(VerifyCheckoutSessionRequestSchema, {
+      sessionId,
+    });
+    const response =
+      await subscriptionServiceClientConnect.verifyCheckoutSession(request);
+    return response.status;
+  };
+
+  const fetchPurchasePlans = async () => {
+    try {
+      const request = create(ListPurchasePlansRequestSchema, {});
+      const response =
+        await subscriptionServiceClientConnect.listPurchasePlans(request);
+      purchasePlans.value = response.plans;
+      return response.plans;
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   return {
     // State
     subscription,
     trialingDays,
+    paymentInfo,
+    purchasePlans,
     // Getters
     currentPlan,
     isFreePlan,
     instanceCountLimit,
     userCountLimit,
     instanceLicenseCount,
+    hasUnifiedInstanceLicense,
+    hasSplitInstanceLicense,
     expireAt,
     isTrialing,
     isExpired,
@@ -248,7 +379,16 @@ export const useSubscriptionV1Store = defineStore("subscription_v1", () => {
     instanceMissingLicense,
     getMinimumRequiredPlan,
     fetchSubscription,
-    patchSubscription,
+    pollSubscriptionUntil,
+    uploadLicense,
+    setSubscription,
+    // Purchase actions (SaaS)
+    createPurchase,
+    updatePurchase,
+    cancelPurchase,
+    verifyCheckoutSession,
+    fetchPaymentInfo,
+    fetchPurchasePlans,
   };
 });
 

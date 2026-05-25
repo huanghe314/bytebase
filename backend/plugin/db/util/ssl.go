@@ -4,16 +4,108 @@ package util
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"io"
+	"os"
+	"path/filepath"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/proto"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 )
 
+const maxTLSMaterialFileSize int64 = 10 << 20
+
+func HasTLSPath(ds *storepb.DataSource) bool {
+	if ds == nil {
+		return false
+	}
+	return ds.GetSslCaPath() != "" || ds.GetSslCertPath() != "" || ds.GetSslKeyPath() != ""
+}
+
+func ResolveTLSMaterial(ds *storepb.DataSource) (*storepb.DataSource, error) {
+	if ds == nil {
+		return nil, nil
+	}
+	resolved := proto.Clone(ds).(*storepb.DataSource)
+	if !resolved.GetUseSsl() || !HasTLSPath(resolved) {
+		return resolved, nil
+	}
+
+	if resolved.GetSslCaPath() != "" {
+		content, err := readTLSPathFile("CA certificate", resolved.GetSslCaPath())
+		if err != nil {
+			return nil, err
+		}
+		resolved.SslCa = content
+		resolved.SslCaPath = ""
+	}
+	if resolved.GetSslCertPath() != "" {
+		content, err := readTLSPathFile("client certificate", resolved.GetSslCertPath())
+		if err != nil {
+			return nil, err
+		}
+		resolved.SslCert = content
+		resolved.SslCertPath = ""
+	}
+	if resolved.GetSslKeyPath() != "" {
+		content, err := readTLSPathFile("client key", resolved.GetSslKeyPath())
+		if err != nil {
+			return nil, err
+		}
+		resolved.SslKey = content
+		resolved.SslKeyPath = ""
+	}
+
+	return resolved, nil
+}
+
+func readTLSPathFile(label, path string) (string, error) {
+	if !filepath.IsAbs(path) {
+		return "", errors.Errorf("%s path must be absolute", label)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", errors.Errorf("failed to read %s file", label)
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.Errorf("%s path must point to a regular file", label)
+	}
+	if info.Size() == 0 {
+		return "", errors.Errorf("%s file is empty", label)
+	}
+	if info.Size() > maxTLSMaterialFileSize {
+		return "", errors.Errorf("%s file is too large", label)
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return "", errors.Errorf("failed to read %s file", label)
+	}
+	defer file.Close()
+
+	content, err := io.ReadAll(io.LimitReader(file, maxTLSMaterialFileSize+1))
+	if err != nil {
+		return "", errors.Errorf("failed to read %s file", label)
+	}
+	if len(content) == 0 {
+		return "", errors.Errorf("%s file is empty", label)
+	}
+	if int64(len(content)) > maxTLSMaterialFileSize {
+		return "", errors.Errorf("%s file is too large", label)
+	}
+	return string(content), nil
+}
+
 // GetTLSConfig gets the TLS config for connection.
+// The datasource must already have path-backed TLS material resolved via ResolveTLSMaterial.
 func GetTLSConfig(ds *storepb.DataSource) (*tls.Config, error) {
 	if !ds.GetUseSsl() {
 		return nil, nil
+	}
+	if HasTLSPath(ds) {
+		return nil, errors.New("TLS material must be resolved before building TLS config")
 	}
 
 	cfg := &tls.Config{}
@@ -121,6 +213,7 @@ func configureClientCertificates(ds *storepb.DataSource, cfg *tls.Config) error 
 type SSLMode string
 
 const (
+	sslModeRequire    SSLMode = "require"
 	sslModeVerifyCA   SSLMode = "verify-ca"
 	sslModeVerifyFull SSLMode = "verify-full"
 )
@@ -128,6 +221,9 @@ const (
 // GetPGSSLMode is used only when SSL is enabled.
 // We should consider allowing user to override this default in the future even if SSL is enabled.
 func GetPGSSLMode(ds *storepb.DataSource) SSLMode {
+	if !ds.GetVerifyTlsCertificate() {
+		return sslModeRequire
+	}
 	sslMode := sslModeVerifyFull
 	if ds.GetSslCa() != "" {
 		if ds.GetSshHost() != "" {
@@ -135,4 +231,28 @@ func GetPGSSLMode(ds *storepb.DataSource) SSLMode {
 		}
 	}
 	return sslMode
+}
+
+// ApplyPGTLSConfig applies Bytebase TLS settings to pgx primary and fallback TLS configs.
+func ApplyPGTLSConfig(tlscfg *tls.Config, host string, fallbacks []*pgconn.FallbackConfig) {
+	if tlscfg == nil {
+		return
+	}
+	applyPGTLSConfigForHost(tlscfg, host, tlscfg)
+	for _, fallback := range fallbacks {
+		if fallback != nil && fallback.TLSConfig != nil {
+			applyPGTLSConfigForHost(fallback.TLSConfig, fallback.Host, tlscfg)
+		}
+	}
+}
+
+func applyPGTLSConfigForHost(dst *tls.Config, host string, src *tls.Config) {
+	if len(src.Certificates) > 0 {
+		dst.Certificates = append([]tls.Certificate(nil), src.Certificates...)
+	}
+	if src.VerifyPeerCertificate != nil {
+		dst.RootCAs = src.RootCAs
+		dst.InsecureSkipVerify = src.InsecureSkipVerify
+		dst.VerifyPeerCertificate = CreateCertificateVerifier(src.RootCAs, host)
+	}
 }

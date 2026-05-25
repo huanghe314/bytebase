@@ -10,6 +10,7 @@ import (
 	"github.com/labstack/echo/v5/middleware"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	connectcors "connectrpc.com/cors"
 
@@ -17,9 +18,11 @@ import (
 	"github.com/bytebase/bytebase/backend/api/lsp"
 	"github.com/bytebase/bytebase/backend/api/mcp"
 	"github.com/bytebase/bytebase/backend/api/oauth2"
+	stripeapi "github.com/bytebase/bytebase/backend/api/stripe"
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/component/config"
+	stripeplugin "github.com/bytebase/bytebase/backend/plugin/stripe"
 )
 
 func configureEchoRouters(
@@ -28,6 +31,7 @@ func configureEchoRouters(
 	directorySyncServer *directorysync.Service,
 	oauth2Service *oauth2.Service,
 	mcpServer *mcp.Server,
+	stripeWebhookHandler *stripeapi.WebhookHandler,
 	profile *config.Profile,
 ) {
 	e.Use(recoverMiddleware)
@@ -65,9 +69,30 @@ func configureEchoRouters(
 		Subsystem:  "api",
 		Registerer: registry,
 	}))
-	e.GET("/metrics", echoprometheus.NewHandlerWithConfig(echoprometheus.HandlerConfig{
-		Gatherer: registry,
-	}))
+	// Fold the local echo registry with the default registry at scrape
+	// time. The local registry isolates echo HTTP middleware metrics from
+	// duplicate-registration errors in tests; the default registry catches
+	// promauto-registered metrics from other packages (e.g. db_metrics,
+	// the tidb dispatcher fallback counter, and Go runtime metrics auto-
+	// registered by client_golang). Without this fold, those metrics are
+	// registered but never exposed at /metrics.
+	//
+	// Why bypass echoprometheus.NewHandlerWithConfig: that helper only
+	// applies promhttp.InstrumentMetricHandler when its Gatherer also
+	// implements prometheus.Registerer (echoprometheus/prometheus.go:129).
+	// prometheus.Gatherers (slice type) does not implement Registerer,
+	// so passing the fold there silently drops scrape-health
+	// self-instrumentation (promhttp_metric_handler_requests_total etc.).
+	// Use promhttp directly: pass the local registry as the Registerer
+	// for self-instrumentation; pass the Gatherers fold as the gather
+	// source. Both observability surfaces preserved.
+	e.GET("/metrics", echo.WrapHandler(promhttp.InstrumentMetricHandler(
+		registry,
+		promhttp.HandlerFor(
+			prometheus.Gatherers{registry, prometheus.DefaultGatherer},
+			promhttp.HandlerOpts{},
+		),
+	)))
 
 	e.GET("/healthz", func(c *echo.Context) error {
 		return c.String(http.StatusOK, "OK")
@@ -79,6 +104,13 @@ func configureEchoRouters(
 	hookGroup := e.Group(webhookAPIPrefix)
 	scimGroup := hookGroup.Group(scimAPIPrefix)
 	directorySyncServer.RegisterDirectorySyncRoutes(scimGroup)
+
+	// Stripe (SaaS only, requires both API key and webhook secret).
+	if profile.SaaS && profile.StripeAPISecret != "" && profile.StripeWebhookSecret != "" {
+		stripeplugin.Init(profile.StripeAPISecret)
+		stripeGroup := hookGroup.Group("/stripe")
+		stripeWebhookHandler.RegisterRoutes(stripeGroup)
+	}
 
 	// OAuth2 server.
 	oauth2Service.RegisterRoutes(e)

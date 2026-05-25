@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/bytebase/parser/mysql"
+	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
 type columnSet map[string]bool
@@ -68,23 +68,6 @@ func (t tableColumnTypes) delete(tableName string, columnName string) {
 }
 
 // isKeyword checks if the keyword is a MySQL keyword.
-// TODO: We should check with map instead of linear search.
 func isKeyword(suspect string) bool {
-	for _, item := range mysql.Keywords80 {
-		if strings.EqualFold(suspect, item.Keyword) {
-			return true
-		}
-	}
-	return false
-}
-
-// isCharsetDataType checks if the data type supports charset.
-func isCharsetDataType(dataType mysql.IDataTypeContext) bool {
-	return dataType != nil && (dataType.CHAR_SYMBOL() != nil ||
-		dataType.VARCHAR_SYMBOL() != nil ||
-		dataType.VARYING_SYMBOL() != nil ||
-		dataType.TINYTEXT_SYMBOL() != nil ||
-		dataType.TEXT_SYMBOL() != nil ||
-		dataType.MEDIUMTEXT_SYMBOL() != nil ||
-		dataType.LONGTEXT_SYMBOL() != nil)
+	return mysqlparser.IsKeyword(suspect)
 }

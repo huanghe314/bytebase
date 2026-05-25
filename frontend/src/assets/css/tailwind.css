@@ -22,6 +22,34 @@
   ::file-selector-button {
     border-color: var(--color-gray-200, currentcolor);
   }
+
+  /* Thin scrollbars globally */
+  * {
+    scrollbar-width: thin; /* Firefox */
+    scrollbar-color: #d1d5db transparent; /* gray-300 */
+  }
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: #d1d5db; /* gray-300 */
+    border-radius: 3px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: #9ca3af; /* gray-400 */
+  }
+
+  /* All disabled form elements should show not-allowed cursor */
+  input:disabled,
+  select:disabled,
+  textarea:disabled,
+  button:disabled {
+    cursor: not-allowed;
+  }
 }
 
 @utility hide-scrollbar {
@@ -137,6 +165,11 @@
     --color-block-border: 229 231 235; /* #e5e7eb */
     /* gray-300 */
     --color-control-border: 209 213 219; /* #d1d5db */
+
+    /* white - page/card/panel background */
+    --color-background: 255 255 255; /* #ffffff */
+    /* black - overlay backdrop, use with opacity e.g. bg-overlay/50 */
+    --color-overlay: 0 0 0; /* #000000 */
   }
   :root {
     /* same as vs-dark theme's bg, not pure black. */
@@ -207,11 +240,11 @@
   }
 
   .textlabeltip {
-    @apply text-xs font-normal text-red-500 ml-2;
+    @apply text-xs font-normal text-error ml-2;
   }
 
   .textfield {
-    @apply text-main disabled:text-control disabled:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-70 focus:ring-control focus:border-control sm:text-sm border-control-border rounded-sm;
+    @apply text-main disabled:text-control disabled:bg-control-bg disabled:cursor-not-allowed disabled:opacity-70 focus:ring-control focus:border-control sm:text-sm border-control-border rounded-sm;
   }
 
   .textarea {
@@ -231,11 +264,11 @@
   }
 
   .radio .btn {
-    @apply focus:ring-accent h-4 w-4 text-accent select-none;
+    @apply focus:ring-accent size-4 text-accent select-none;
   }
 
   .radio .label {
-    @apply ml-1.5 block text-sm font-medium text-gray-700 select-none;
+    @apply ml-1.5 block text-sm font-medium text-control select-none;
   }
 
   .outline-title {
@@ -267,7 +300,7 @@
   }
 
   .normal-link {
-    @apply cursor-pointer text-blue-600 hover:underline hover:text-blue-800 focus:outline-hidden;
+    @apply cursor-pointer text-info hover:underline hover:text-info-hover focus:outline-hidden;
   }
 
   .light-link {
@@ -341,6 +374,26 @@
   }
 }
 
+.bb-banner-scroll {
+  display: inline-block;
+  animation: bb-banner-scroll 4s ease-in-out infinite;
+}
+
+@keyframes bb-banner-scroll {
+  0% {
+    transform: translateY(100%);
+  }
+  25% {
+    transform: translateY(0);
+  }
+  80% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(-100%);
+  }
+}
+
 .fade-slide-up-leave-active {
   transition-property: opacity, transform;
   transition-duration: 100ms;
@@ -365,9 +418,11 @@
   transform: scale(1);
 }
 
-/* compatibility fixes for tailwindcss and naive-ui */
-.n-base-selection-input:focus,
-.n-base-selection-input-tag__input:focus,
-.n-input__input-el:focus {
-  box-shadow: 0 0 0 0;
+/* SchemaDiagram screenshot capture: while `useScreenshot` flips this
+   attribute on <body>, any element marked `data-screenshot-hide` is
+   omitted from the html-to-image pass. Used for chrome affordances
+   (zoom buttons, schema selector, etc.) that shouldn't appear in
+   the exported PNG. */
+body[data-bb-screenshot-active] [data-screenshot-hide] {
+  display: none !important;
 }

@@ -75,6 +75,29 @@ export const isStringOperator = (op: Operator): op is StringOperator => {
   return StringOperatorList.includes(op as StringOperator);
 };
 
+// Display labels for operators that differ from their source form.
+const OPERATOR_DISPLAY: Record<string, string> = {
+  "<=": "≤",
+  ">=": "≥",
+  "==": "=",
+  "!=": "≠",
+  "@in": "in",
+  "@not_in": "not in",
+  "@not_contains": "not contains",
+};
+
+// Returns a human-readable label for any operator form:
+// plain ("<="), CEL AST ("_<=_"), or prefixed ("@not_in").
+export function operatorDisplayLabel(op: string): string {
+  if (op in OPERATOR_DISPLAY) return OPERATOR_DISPLAY[op];
+  // CEL AST operators like "_<=_" — strip surrounding underscores.
+  if (op.startsWith("_")) {
+    const plain = op.replace(/^_|_$/g, "");
+    return OPERATOR_DISPLAY[plain] ?? plain;
+  }
+  return op;
+}
+
 /// Define supported operators for each factor
 const OperatorList: Record<Factor, Operator[]> = {
   [CEL_ATTRIBUTE_STATEMENT_AFFECTED_ROWS]: uniq([
@@ -137,6 +160,8 @@ const OperatorList: Record<Factor, Operator[]> = {
   ]),
   [CEL_ATTRIBUTE_STATEMENT_TEXT]: uniq([...StringOperatorList]),
   [CEL_ATTRIBUTE_RESOURCE_CLASSIFICATION_LEVEL]: uniq([
+    ...EqualityOperatorList,
+    ...CompareOperatorList,
     ...CollectionOperatorList,
   ]),
 

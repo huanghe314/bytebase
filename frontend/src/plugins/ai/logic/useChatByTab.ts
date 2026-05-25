@@ -1,10 +1,9 @@
 import { last } from "lodash-es";
 import { computed, ref, watch } from "vue";
-import { useSQLEditorTabStore } from "@/store";
+import { useSQLEditorTabStore } from "@/react/stores/sqlEditor/tab-vue-state";
 import type { SQLEditorTab } from "@/types";
 import { useConversationStore } from "../store";
 import type { AIChatInfo, Conversation } from "../types";
-import { useAIContext } from "./context";
 
 const chatsByTab = new Map<string, AIChatInfo>();
 
@@ -49,23 +48,15 @@ export const useChatByTab = () => {
     return chat;
   };
 
+  const emptyChat: AIChatInfo = {
+    list: ref([]),
+    ready: ref(false),
+    selected: ref(undefined),
+  };
+
   return computed(() => {
-    const tab = useSQLEditorTabStore().currentTab!;
+    const tab = useSQLEditorTabStore().currentTab;
+    if (!tab) return emptyChat;
     return getChatByTab(tab);
   });
-};
-
-export const useCurrentChat = (context = useAIContext()) => {
-  const { chat } = context;
-  const list = computed(() => chat.value.list.value);
-  const ready = computed(() => chat.value.ready.value);
-  const selected = computed({
-    get() {
-      return chat.value.selected.value;
-    },
-    set(val) {
-      chat.value.selected.value = val;
-    },
-  });
-  return { list, ready, selected };
 };

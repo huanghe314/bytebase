@@ -176,12 +176,10 @@ func (m *Manager) GenerateOnboardingData(ctx context.Context, workspaceID string
 		project = sampleProject
 	}
 
-	testEnvID := common.DefaultTestEnvironmentID
-	prodEnvID := common.DefaultProdEnvironmentID
 	instanceMessages := []*store.InstanceMessage{
 		{
 			ResourceID:    "test-sample-instance",
-			EnvironmentID: &testEnvID,
+			EnvironmentID: new(common.DefaultTestEnvironmentID),
 			Workspace:     workspaceID,
 			Metadata: &storepb.Instance{
 				Title: "Test Sample Instance",
@@ -195,7 +193,7 @@ func (m *Manager) GenerateOnboardingData(ctx context.Context, workspaceID string
 		},
 		{
 			ResourceID:    "prod-sample-instance",
-			EnvironmentID: &prodEnvID,
+			EnvironmentID: new(common.DefaultProdEnvironmentID),
 			Workspace:     workspaceID,
 			Metadata: &storepb.Instance{
 				Title: "Prod Sample Instance",
@@ -283,6 +281,7 @@ func (m *Manager) generateInstance(
 	}
 
 	testDatabase, err := m.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+		Workspace:    instance.Workspace,
 		InstanceID:   &instance.ResourceID,
 		DatabaseName: &dbName,
 	})

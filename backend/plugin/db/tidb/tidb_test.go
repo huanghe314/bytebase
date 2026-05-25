@@ -4,7 +4,52 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
+	"github.com/bytebase/bytebase/backend/plugin/db"
 )
+
+func TestGetTiDBConnectionUsesExtraConnectionParameters(t *testing.T) {
+	d := &Driver{}
+	dsn, err := d.getTiDBConnection(db.ConnectionConfig{
+		DataSource: &storepb.DataSource{
+			Host:     "127.0.0.1",
+			Port:     "4000",
+			Username: "root",
+			ExtraConnectionParameters: map[string]string{
+				"readTimeout":  "30s",
+				"writeTimeout": "45s",
+			},
+		},
+		Password: "secret",
+		ConnectionContext: db.ConnectionContext{
+			DatabaseName: "test",
+		},
+	})
+	require.NoError(t, err)
+	require.Contains(t, dsn, "readTimeout=30s")
+	require.Contains(t, dsn, "writeTimeout=45s")
+}
+
+func TestGetTiDBConnectionRejectsAllowAllFiles(t *testing.T) {
+	d := &Driver{}
+	_, err := d.getTiDBConnection(db.ConnectionConfig{
+		DataSource: &storepb.DataSource{
+			Host:     "127.0.0.1",
+			Port:     "4000",
+			Username: "root",
+			ExtraConnectionParameters: map[string]string{
+				"allowAllFiles": "true",
+			},
+		},
+		Password: "secret",
+		ConnectionContext: db.ConnectionContext{
+			DatabaseName: "test",
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "allowAllFiles")
+}
 
 func TestParseVersion(t *testing.T) {
 	tests := []struct {
@@ -49,38 +94,5 @@ func TestTiDBVersionAtLeast(t *testing.T) {
 		got, err := tidbVersionAtLeast(tc.version, tc.threshold)
 		a.NoError(err)
 		a.Equal(tc.want, got, "version=%s threshold=%s", tc.version, tc.threshold)
-	}
-}
-
-func TestIsNonTransactionStatement(t *testing.T) {
-	tests := []struct {
-		stmt string
-		want bool
-	}{
-		{
-			`CREATE DATABASE "hello" ENCODING "UTF8";`,
-			false,
-		},
-		{
-			`CREATE table hello(id integer);`,
-			false,
-		},
-		{
-			`CREATE INDEX c1 ON t1 (c1);`,
-			true,
-		},
-		{
-			`CREATE UNIQUE INDEX c1 ON t1 (c1);`,
-			true,
-		},
-		{
-			`CREATE UNIQUE INDEX c1 ON t1 (c1) INVISIBLE;`,
-			true,
-		},
-	}
-
-	for _, test := range tests {
-		got := isNonTransactionStatement(test.stmt)
-		require.Equal(t, test.want, got)
 	}
 }

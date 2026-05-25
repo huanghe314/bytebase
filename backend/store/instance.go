@@ -175,7 +175,7 @@ func (s *Store) ListInstances(ctx context.Context, find *FindInstanceMessage) ([
 
 // CreateInstance creates an instance.
 func (s *Store) CreateInstance(ctx context.Context, instanceCreate *InstanceMessage) (*InstanceMessage, error) {
-	if err := validateDataSources(instanceCreate.Metadata); err != nil {
+	if err := validateInstanceDataSources(instanceCreate.Metadata); err != nil {
 		return nil, err
 	}
 
@@ -298,22 +298,34 @@ func (s *Store) GetActivatedInstanceCount(ctx context.Context, workspaceID strin
 	return count, nil
 }
 
-func validateDataSources(metadata *storepb.Instance) error {
+func ValidateDataSources(dataSources []*storepb.DataSource) error {
 	dataSourceMap := map[string]bool{}
 	adminCount := 0
-	for _, dataSource := range metadata.GetDataSources() {
+	readOnlyCount := 0
+	for _, dataSource := range dataSources {
 		if dataSourceMap[dataSource.GetId()] {
 			return errors.Errorf("duplicate data source ID %s", dataSource.GetId())
 		}
 		dataSourceMap[dataSource.GetId()] = true
-		if dataSource.GetType() == storepb.DataSourceType_ADMIN {
+		switch dataSource.GetType() {
+		case storepb.DataSourceType_ADMIN:
 			adminCount++
+		case storepb.DataSourceType_READ_ONLY:
+			readOnlyCount++
+		default:
 		}
 	}
 	if adminCount != 1 {
 		return errors.Errorf("require exactly one admin data source")
 	}
+	if readOnlyCount > 1 {
+		return errors.Errorf("require at most one read-only data source")
+	}
 	return nil
+}
+
+func validateInstanceDataSources(metadata *storepb.Instance) error {
+	return ValidateDataSources(metadata.GetDataSources())
 }
 
 // IsObjectCaseSensitive returns true if the engine ignores database and table case sensitive.
@@ -345,10 +357,16 @@ func (s *Store) obfuscateInstance(ctx context.Context, instance *storepb.Instanc
 		ds.Password = ""
 		ds.ObfuscatedSslCa = common.Obfuscate(ds.GetSslCa(), secret)
 		ds.SslCa = ""
+		ds.ObfuscatedSslCaPath = common.Obfuscate(ds.GetSslCaPath(), secret)
+		ds.SslCaPath = ""
 		ds.ObfuscatedSslCert = common.Obfuscate(ds.GetSslCert(), secret)
 		ds.SslCert = ""
+		ds.ObfuscatedSslCertPath = common.Obfuscate(ds.GetSslCertPath(), secret)
+		ds.SslCertPath = ""
 		ds.ObfuscatedSslKey = common.Obfuscate(ds.GetSslKey(), secret)
 		ds.SslKey = ""
+		ds.ObfuscatedSslKeyPath = common.Obfuscate(ds.GetSslKeyPath(), secret)
+		ds.SslKeyPath = ""
 		ds.ObfuscatedSshPassword = common.Obfuscate(ds.GetSshPassword(), secret)
 		ds.SshPassword = ""
 		ds.ObfuscatedSshPrivateKey = common.Obfuscate(ds.GetSshPrivateKey(), secret)
@@ -410,18 +428,33 @@ func (s *Store) deobfuscateInstances(ctx context.Context, instances []*InstanceM
 				return err
 			}
 			ds.SslCa = sslCa
+			sslCaPath, err := common.Unobfuscate(ds.GetObfuscatedSslCaPath(), secret)
+			if err != nil {
+				return err
+			}
+			ds.SslCaPath = sslCaPath
 
 			sslCert, err := common.Unobfuscate(ds.GetObfuscatedSslCert(), secret)
 			if err != nil {
 				return err
 			}
 			ds.SslCert = sslCert
+			sslCertPath, err := common.Unobfuscate(ds.GetObfuscatedSslCertPath(), secret)
+			if err != nil {
+				return err
+			}
+			ds.SslCertPath = sslCertPath
 
 			sslKey, err := common.Unobfuscate(ds.GetObfuscatedSslKey(), secret)
 			if err != nil {
 				return err
 			}
 			ds.SslKey = sslKey
+			sslKeyPath, err := common.Unobfuscate(ds.GetObfuscatedSslKeyPath(), secret)
+			if err != nil {
+				return err
+			}
+			ds.SslKeyPath = sslKeyPath
 
 			sshPassword, err := common.Unobfuscate(ds.GetObfuscatedSshPassword(), secret)
 			if err != nil {
@@ -554,12 +587,13 @@ func (s *Store) DeleteInstance(ctx context.Context, workspace string, resourceID
 
 	// Delete task_run_log entries for tasks associated with this instance
 	q = qb.Q().Space(`
-		DELETE FROM task_run_log
-		WHERE task_run_id IN (
-			SELECT tr.id FROM task_run tr
-			JOIN task t ON t.project = tr.project AND t.id = tr.task_id
-			WHERE t.instance = ?
-		)
+		DELETE FROM task_run_log trl
+		USING task_run tr, task t
+		WHERE trl.project = tr.project
+		  AND trl.task_run_id = tr.id
+		  AND tr.project = t.project
+		  AND tr.task_id = t.id
+		  AND t.instance = ?
 	`, resourceID)
 	query, args, err = q.ToSQL()
 	if err != nil {
@@ -571,10 +605,11 @@ func (s *Store) DeleteInstance(ctx context.Context, workspace string, resourceID
 
 	// Delete task_run entries for tasks associated with this instance
 	q = qb.Q().Space(`
-		DELETE FROM task_run
-		WHERE task_id IN (
-			SELECT id FROM task WHERE instance = ?
-		)
+		DELETE FROM task_run tr
+		USING task t
+		WHERE tr.project = t.project
+		  AND tr.task_id = t.id
+		  AND t.instance = ?
 	`, resourceID)
 	query, args, err = q.ToSQL()
 	if err != nil {
@@ -860,7 +895,7 @@ func GetListInstanceFilter(filter string) (*qb.Query, error) {
 			case celoperators.Equals:
 				variable, value := getVariableAndValueFromExpr(expr)
 				return parseToSQL(variable, value)
-			case celoverloads.Matches:
+			case celoverloads.Contains:
 				variable := expr.AsCall().Target().AsIdent()
 				args := expr.AsCall().Args()
 				if len(args) != 1 {
@@ -881,7 +916,9 @@ func GetListInstanceFilter(filter string) (*qb.Query, error) {
 				case "resource_id":
 					return qb.Q().Space("LOWER(instance.resource_id) LIKE ?", "%"+strings.ToLower(strValue)+"%"), nil
 				case "host", "port":
-					return qb.Q().Space(fmt.Sprintf("ds ->> '%s' LIKE ?", variable), "%"+strValue+"%"), nil
+					return qb.Q().Space(
+						fmt.Sprintf(`EXISTS (SELECT 1 FROM jsonb_array_elements(instance.metadata -> 'dataSources') AS ds WHERE ds ->> '%s' LIKE ?)`, variable),
+						"%"+strValue+"%"), nil
 				default:
 					return nil, errors.Errorf("unsupport variable %q", variable)
 				}

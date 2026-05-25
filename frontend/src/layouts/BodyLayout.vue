@@ -1,163 +1,108 @@
 <template>
-  <div class="h-full flex flex-col overflow-hidden">
-    <div class="flex-1 flex overflow-hidden">
-      <template v-if="!isRootPath">
-        <!-- Mobile sidebar drawer -->
-        <NDrawer
-          v-model:show="state.showMobileOverlay"
-          placement="left"
-          :width="208"
-          :class="[sidebarView === 'MOBILE' ? '' : 'hidden!']"
-        >
-          <NDrawerContent body-content-class="!p-0">
-            <div class="h-full overflow-y-auto bg-control-bg">
-              <router-view v-if="sidebarView === 'MOBILE'" name="leftSidebar" />
-            </div>
-          </NDrawerContent>
-        </NDrawer>
-
-        <!-- Static sidebar for desktop -->
-        <aside
-          v-if="sidebarView === 'DESKTOP'"
-          class="shrink-0 flex"
-          data-label="bb-dashboard-static-sidebar"
-        >
-          <div class="flex flex-col w-52 bg-control-bg">
-            <div class="flex-1 flex flex-col py-0 overflow-y-auto">
-              <router-view name="leftSidebar" />
-            </div>
-          </div>
-        </aside>
-      </template>
-
-      <div
-        class="flex flex-col min-w-0 flex-1"
-        data-label="bb-main-body-wrapper"
-      >
-        <nav
-          v-if="!isRootPath"
-          class="bg-white border-b border-block-border"
-          data-label="bb-dashboard-header"
-        >
-          <div class="max-w-full mx-auto">
-            <DashboardHeader
-              :show-logo="false"
-              :show-mobile-sidebar-toggle="true"
-              @toggle-mobile-sidebar="state.showMobileOverlay = true"
-            />
-          </div>
-        </nav>
-
-        <!-- This area may scroll -->
-        <div
-          id="bb-layout-main"
-          ref="mainContainerRef"
-          class="md:min-w-0 flex-1 overflow-y-auto"
-        >
-          <RoutePermissionGuard
-            class="m-4"
-            :routes="[
-              ...workspaceRoutes,
-              ...workspaceSettingRoutes,
-              ...environmentV1Routes,
-              ...instanceRoutes,
-            ]"
-          >
-            <!-- Start main area-->
-            <router-view name="content" />
-            <!-- End main area -->
-          </RoutePermissionGuard>
-        </div>
-      </div>
-    </div>
-
-    <Quickstart />
-  </div>
-
-  <AgentWindow />
-
-  <ReleaseRemindModal
-    v-if="state.showReleaseModal && route.name !== WORKSPACE_ROOT_MODULE"
-    @cancel="state.showReleaseModal = false"
+  <ReactPageMount
+    page="DashboardBodyShell"
+    :page-props="{
+      variant: 'workspace',
+      isRootPath,
+      routeKey: route.fullPath,
+      onReady: handleReady,
+    }"
   />
+
+  <teleport v-if="sidebarTarget && !isRootPath" :to="sidebarTarget">
+    <router-view name="leftSidebar" />
+  </teleport>
+
+  <teleport v-if="contentTarget && isProjectRoute" :to="contentTarget">
+    <router-view name="content" />
+  </teleport>
+
+  <teleport v-else-if="contentTarget" :to="contentTarget">
+    <ReactPageMount
+      page="RoutePermissionGuardShell"
+      :page-props="{
+        routeKey: route.fullPath,
+        className: 'm-4',
+        targetClassName: 'h-full min-h-0',
+        onReady: handlePermissionReady,
+      }"
+    />
+  </teleport>
+
+  <teleport
+    v-if="!isProjectRoute && routePermissionTarget"
+    :to="routePermissionTarget"
+  >
+    <router-view name="content" />
+  </teleport>
+
+  <teleport v-if="quickstartTarget" :to="quickstartTarget">
+    <ReactPageMount page="Quickstart" container-class="w-full" />
+  </teleport>
+
 </template>
 
 <script lang="ts" setup>
 import { useWindowSize } from "@vueuse/core";
-import { NDrawer, NDrawerContent } from "naive-ui";
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import RoutePermissionGuard from "@/components/Permission/RoutePermissionGuard.vue";
-import ReleaseRemindModal from "@/components/ReleaseRemindModal.vue";
-import { AgentWindow, useAgentShortcut } from "@/plugins/agent";
 import { t } from "@/plugins/i18n";
-import environmentV1Routes from "@/router/dashboard/environmentV1";
-import instanceRoutes from "@/router/dashboard/instance";
-import workspaceRoutes from "@/router/dashboard/workspace";
+import type { DashboardShellTargets } from "@/react/dashboard-shell";
+import ReactPageMount from "@/react/ReactPageMount.vue";
 import { WORKSPACE_ROOT_MODULE } from "@/router/dashboard/workspaceRoutes";
-import workspaceSettingRoutes from "@/router/dashboard/workspaceSetting";
-import {
-  pushNotification,
-  useActuatorV1Store,
-  usePermissionStore,
-  useSubscriptionV1Store,
-} from "@/store";
-import { PresetRoleType } from "@/types";
-import { PlanType } from "@/types/proto-es/v1/subscription_service_pb";
-import DashboardHeader from "@/views/DashboardHeader.vue";
-import Quickstart from "../components/Quickstart.vue";
+import { pushNotification, useActuatorV1Store } from "@/store";
+
 import { provideBodyLayoutContext } from "./common";
 
-interface LocalState {
-  showMobileOverlay: boolean;
-  showReleaseModal: boolean;
-  showRefreshRemindModal: boolean;
-}
-
 const actuatorStore = useActuatorV1Store();
-const permissionStore = usePermissionStore();
-const subscriptionStore = useSubscriptionV1Store();
 const route = useRoute();
 const router = useRouter();
-
-const state = reactive<LocalState>({
-  showMobileOverlay: false,
-  showReleaseModal: false,
-  showRefreshRemindModal: false,
-});
-
-// Close mobile drawer on route change
-watch(
-  () => route.fullPath,
-  () => {
-    state.showMobileOverlay = false;
-  }
-);
-
-const mainContainerRef = ref<HTMLDivElement>();
 const { width: windowWidth } = useWindowSize();
+
+const shellTargets = shallowRef<DashboardShellTargets>({
+  desktopSidebar: null,
+  mobileSidebar: null,
+  content: null,
+  quickstart: null,
+  mainContainer: null,
+});
+const mainContainerRef = ref<HTMLDivElement>();
+const routePermissionTarget = shallowRef<HTMLDivElement | null>(null);
 
 const isRootPath = computed(() => {
   return router.currentRoute.value.name === WORKSPACE_ROOT_MODULE;
 });
-
-const sidebarView = computed(() => {
-  return windowWidth.value >= 768 ? "DESKTOP" : "MOBILE";
+const isProjectRoute = computed(() => {
+  return Boolean(route.params.projectId);
 });
 
-actuatorStore.tryToRemindRelease().then((openRemindModal) => {
-  if (
-    subscriptionStore.currentPlan === PlanType.ENTERPRISE &&
-    !permissionStore.currentRolesInWorkspace.has(PresetRoleType.WORKSPACE_ADMIN)
-  ) {
-    return;
+const contentTarget = computed(() => shellTargets.value.content);
+const quickstartTarget = computed(() => shellTargets.value.quickstart);
+const sidebarTarget = computed(() => {
+  if (windowWidth.value >= 768) {
+    return shellTargets.value.desktopSidebar;
   }
-  state.showReleaseModal = openRemindModal;
+  return shellTargets.value.mobileSidebar;
 });
 
-// compare BE and FE commit hash every 30 minutes.
-// if they are different, show the refresh remind modal.
-const refreshRemindTimer = ref<NodeJS.Timeout>();
+const handleReady = (targets: DashboardShellTargets) => {
+  shellTargets.value = targets;
+  mainContainerRef.value = targets.mainContainer ?? undefined;
+};
+
+const handlePermissionReady = (target: HTMLDivElement | null) => {
+  routePermissionTarget.value = target;
+};
+
+watch(
+  () => route.fullPath,
+  () => {
+    routePermissionTarget.value = null;
+  },
+  { flush: "sync" }
+);
+
+const refreshRemindTimer = ref<ReturnType<typeof setTimeout>>();
 onMounted(async () => {
   const remind = await actuatorStore.tryToRemindRefresh();
   if (remind) {
@@ -191,7 +136,15 @@ onUnmounted(() => {
   }
 });
 
-useAgentShortcut();
+const agentShortcutHandler = async (e: KeyboardEvent) => {
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "A") {
+    e.preventDefault();
+    const { useAgentStore } = await import("@/react/plugins/agent/store/agent");
+    useAgentStore.getState().toggle();
+  }
+};
+onMounted(() => window.addEventListener("keydown", agentShortcutHandler));
+onUnmounted(() => window.removeEventListener("keydown", agentShortcutHandler));
 
 provideBodyLayoutContext({
   mainContainerRef,

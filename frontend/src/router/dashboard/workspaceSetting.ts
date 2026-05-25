@@ -14,11 +14,13 @@ const workspaceSettingRoutes: RouteRecordRaw[] = [
     name: SETTING_ROUTE_WORKSPACE,
     meta: { title: () => t("common.settings") },
     components: {
-      content: () => import("@/layouts/SettingLayout.vue"),
-      leftSidebar: () => import("@/views/DashboardSidebar.vue"),
+      content: () => import("@/react/ReactRouteShellBridge.vue"),
+      leftSidebar: () => import("@/react/ReactSidebarMount.vue"),
     },
     props: {
-      content: true,
+      content: () => ({
+        page: "SettingRouteShell",
+      }),
       leftSidebar: true,
     },
     children: [
@@ -26,15 +28,15 @@ const workspaceSettingRoutes: RouteRecordRaw[] = [
         path: "profile",
         name: SETTING_ROUTE_PROFILE,
         meta: { title: () => t("settings.sidebar.profile") },
-        component: () => import("@/views/ProfileDashboard.vue"),
-        props: true,
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: () => ({ page: "ProfilePage" }),
       },
       {
         path: "profile/two-factor",
         name: SETTING_ROUTE_PROFILE_TWO_FACTOR,
         meta: { title: () => t("two-factor.self") },
-        component: () => import("@/views/TwoFactorSetup.vue"),
-        props: true,
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: () => ({ page: "TwoFactorSetupPage" }),
       },
       {
         path: "general",
@@ -46,8 +48,8 @@ const workspaceSettingRoutes: RouteRecordRaw[] = [
             "bb.policies.get",
           ],
         },
-        component: () => import("@/views/SettingWorkspaceGeneral.vue"),
-        props: true,
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: () => ({ page: "GeneralPage" }),
       },
       {
         path: "subscription",
@@ -56,8 +58,8 @@ const workspaceSettingRoutes: RouteRecordRaw[] = [
           title: () => t("settings.sidebar.subscription"),
           requiredPermissionList: () => ["bb.settings.get"],
         },
-        component: () => import("@/views/SettingWorkspaceSubscription.vue"),
-        props: true,
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: () => ({ page: "SubscriptionPage" }),
       },
     ],
   },

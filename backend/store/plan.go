@@ -35,6 +35,9 @@ type PlanMessage struct {
 
 // FindPlanMessage is the message to find a plan.
 type FindPlanMessage struct {
+	// Workspace filters plans by the parent project's workspace.
+	// Empty string skips filtering (for cross-workspace queries like runners).
+	Workspace string
 	UID       *int64
 	ProjectID string
 
@@ -141,6 +144,10 @@ func (s *Store) ListPlans(ctx context.Context, find *FindPlanMessage) ([]*PlanMe
 		LEFT JOIN issue on plan.project = issue.project AND plan.id = issue.plan_id
 		WHERE plan.project = ?
 	`, find.ProjectID)
+
+	if find.Workspace != "" {
+		q.And("plan.project IN (SELECT resource_id FROM project WHERE workspace = ?)", find.Workspace)
+	}
 
 	if filterQ := find.FilterQ; filterQ != nil {
 		q.And("?", filterQ)
@@ -376,7 +383,7 @@ func GetListPlanFilter(filter string) (*qb.Query, error) {
 					return qb.Q().Space("plan.created_at >= ?", t), nil
 				}
 				return qb.Q().Space("plan.created_at <= ?", t), nil
-			case celoverloads.Matches:
+			case celoverloads.Contains:
 				variable := expr.AsCall().Target().AsIdent()
 				args := expr.AsCall().Args()
 				if len(args) != 1 {
@@ -393,7 +400,7 @@ func GetListPlanFilter(filter string) (*qb.Query, error) {
 				case "title":
 					return qb.Q().Space("LOWER(plan.name) LIKE ?", "%"+strValue+"%"), nil
 				default:
-					return nil, errors.Errorf(`only "title" supports %q operator, but found %q`, celoverloads.Matches, variable)
+					return nil, errors.Errorf(`only "title" supports %q operator, but found %q`, celoverloads.Contains, variable)
 				}
 			default:
 				return nil, errors.Errorf("unsupported function %v", functionName)

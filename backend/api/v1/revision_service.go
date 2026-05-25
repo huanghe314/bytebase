@@ -42,6 +42,7 @@ func (s *RevisionService) ListRevisions(
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrapf(err, "failed to parse %q", request.Parent))
 	}
 	database, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+		Workspace:    common.GetWorkspaceIDFromContext(ctx),
 		InstanceID:   &instanceID,
 		DatabaseName: &databaseName,
 		ShowDeleted:  true,
@@ -102,6 +103,7 @@ func (s *RevisionService) GetRevision(
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrapf(err, "failed to get revision ID from %v", request.Name))
 	}
 	database, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+		Workspace:    common.GetWorkspaceIDFromContext(ctx),
 		InstanceID:   &instanceID,
 		DatabaseName: &databaseName,
 		ShowDeleted:  true,
@@ -132,6 +134,7 @@ func (s *RevisionService) BatchCreateRevisions(
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrapf(err, "failed to parse %q", request.Parent))
 	}
 	database, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+		Workspace:    common.GetWorkspaceIDFromContext(ctx),
 		InstanceID:   &instanceID,
 		DatabaseName: &databaseName,
 	})
@@ -199,7 +202,11 @@ func (s *RevisionService) createRevisions(
 			if err != nil {
 				return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("failed to get taskRun from %q", revision.TaskRun))
 			}
-			taskRun, err := s.store.GetTaskRunByUID(ctx, projectID, taskRunID)
+			taskRun, err := s.store.GetTaskRunV1(ctx, &store.FindTaskRunMessage{
+				Workspace: common.GetWorkspaceIDFromContext(ctx),
+				ProjectID: projectID,
+				UID:       &taskRunID,
+			})
 			if err != nil {
 				return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get taskRun"))
 			}
@@ -296,6 +303,10 @@ func convertToRevisions(parent string, projectID string, revisions []*store.Revi
 
 func convertToRevision(parent string, projectID string, revision *store.RevisionMessage) *v1pb.Revision {
 	taskRunName := revision.Payload.TaskRun
+	file := revision.Payload.File
+	if file != "" && revision.Payload.Release != "" {
+		file = common.FormatReleaseFile(revision.Payload.Release, file)
+	}
 	r := &v1pb.Revision{
 		Name:        fmt.Sprintf("%s/%s%s", parent, common.RevisionNamePrefix, revision.ResourceID),
 		Release:     revision.Payload.Release,
@@ -303,7 +314,7 @@ func convertToRevision(parent string, projectID string, revision *store.Revision
 		Sheet:       common.FormatSheet(projectID, revision.Payload.SheetSha256),
 		SheetSha256: revision.Payload.SheetSha256,
 		Version:     revision.Version,
-		File:        revision.Payload.File,
+		File:        file,
 		TaskRun:     taskRunName,
 		Type:        convertToRevisionType(revision.Payload.Type),
 	}
@@ -333,13 +344,20 @@ func convertToRevisionType(t storepb.SchemaChangeType) v1pb.Revision_Type {
 }
 
 func convertRevision(revision *v1pb.Revision, database *store.DatabaseMessage, sheetSha256 string) *store.RevisionMessage {
+	file := revision.File
+	if file != "" {
+		_, _, fileID, err := common.GetProjectReleaseIDFile(file)
+		if err == nil {
+			file = fileID
+		}
+	}
 	r := &store.RevisionMessage{
 		InstanceID:   database.InstanceID,
 		DatabaseName: database.DatabaseName,
 		Version:      revision.Version,
 		Payload: &storepb.RevisionPayload{
 			Release:     revision.Release,
-			File:        revision.File,
+			File:        file,
 			SheetSha256: sheetSha256,
 			TaskRun:     revision.TaskRun,
 			Type:        convertRevisionType(revision.Type),

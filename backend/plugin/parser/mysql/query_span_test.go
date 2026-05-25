@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/antlr4-go/antlr/v4"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
 	"github.com/bytebase/bytebase/backend/common"
+	"github.com/bytebase/bytebase/backend/common/yamltest"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	"github.com/bytebase/bytebase/backend/store/model"
@@ -77,10 +77,7 @@ func TestGetQuerySpan(t *testing.T) {
 		}
 
 		if record {
-			byteValue, err := yaml.Marshal(testCases)
-			a.NoError(err)
-			err = os.WriteFile(testDataPath, byteValue, 0644)
-			a.NoError(err)
+			yamltest.Record(t, testDataPath, testCases)
 		}
 	}
 }
@@ -104,6 +101,30 @@ func buildMockDatabaseMetadataGetter(databaseMetadata []*storepb.DatabaseSchemaM
 			}
 			return names, nil
 		}
+}
+
+func TestGetQuerySpanCyclicViewReference(t *testing.T) {
+	metadata := &storepb.DatabaseSchemaMetadata{
+		Name: "db",
+		Schemas: []*storepb.SchemaMetadata{
+			{
+				Name: "",
+				Views: []*storepb.ViewMetadata{
+					{Name: "v1", Definition: "SELECT * FROM v2"},
+					{Name: "v2", Definition: "SELECT * FROM v1"},
+				},
+			},
+		},
+	}
+	getter, lister := buildMockDatabaseMetadataGetter([]*storepb.DatabaseSchemaMetadata{metadata})
+
+	_, err := GetQuerySpan(context.Background(), base.GetQuerySpanContext{
+		GetDatabaseMetadataFunc: getter,
+		ListDatabaseNamesFunc:   lister,
+		Engine:                  storepb.Engine_MYSQL,
+	}, base.Statement{Text: "SELECT * FROM v1"}, "db", "", false)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "cyclic view reference")
 }
 
 func TestExtractTableRefs(t *testing.T) {
@@ -149,15 +170,19 @@ func TestExtractTableRefs(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		parseResult, err := ParseMySQL(test.statement)
+		parseResult, err := ParseMySQLOmni(test.statement)
 		require.NoError(t, err, "failed to parse statement: %s", test.statement)
-		require.Len(t, parseResult, 1, "expected one parse result for statement: %s", test.statement)
-		require.NotNil(t, parseResult[0].Tree, "parse tree is nil for statement: %s", test.statement)
+		require.Len(t, parseResult.Items, 1, "expected one parse result for statement: %s", test.statement)
 
-		tree, ok := parseResult[0].Tree.(antlr.ParserRuleContext)
-		require.True(t, ok, "expected parse tree to be of type antlr.RuleContext for statement: %s", test.statement)
-
-		resources := extractTableRefs("db", tree)
-		require.Equal(t, test.expected, resources, test.statement)
+		sourceColumns := collectOmniAccessTables(parseResult.Items[0], "db", false)
+		var resources []base.SchemaResource
+		for resource := range sourceColumns {
+			resources = append(resources, base.SchemaResource{
+				Database: resource.Database,
+				Schema:   resource.Schema,
+				Table:    resource.Table,
+			})
+		}
+		require.ElementsMatch(t, test.expected, resources, test.statement)
 	}
 }

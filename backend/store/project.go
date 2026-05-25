@@ -60,8 +60,7 @@ type UpdateProjectMessage struct {
 // Checks for new format ("default-{workspaceID}") first, falls back to legacy ("default").
 func (s *Store) GetDefaultProjectID(ctx context.Context, workspace string) (string, error) {
 	newID := common.DefaultProjectID(workspace)
-	resourceID := newID
-	project, err := s.GetProject(ctx, &FindProjectMessage{Workspace: workspace, ResourceID: &resourceID})
+	project, err := s.GetProject(ctx, &FindProjectMessage{Workspace: workspace, ResourceID: new(newID)})
 	if err != nil {
 		return "", err
 	}
@@ -129,7 +128,6 @@ func (s *Store) ListProjects(ctx context.Context, find *FindProjectMessage) ([]*
 		}
 		q.Space(fmt.Sprintf("ORDER BY %s", strings.Join(orderBy, ", ")))
 	} else {
-		// TODO(ed): order won't work
 		q.Space("ORDER BY project.resource_id")
 	}
 	if v := find.Limit; v != nil {
@@ -299,8 +297,7 @@ func (s *Store) UpdateProjects(ctx context.Context, patches ...*UpdateProjectMes
 			if err != nil {
 				return err
 			}
-			s := string(payload)
-			settings[i] = &s
+			settings[i] = new(string(payload))
 		}
 	}
 
@@ -384,8 +381,7 @@ func (s *Store) DeleteProject(ctx context.Context, workspace string, resourceID 
 	}
 
 	// Delete issue_comment entries for issues in this project
-	q = qb.Q().Space("DELETE FROM issue_comment")
-	q.Space("WHERE issue_id IN (SELECT id FROM issue WHERE project = ?)", resourceID)
+	q = qb.Q().Space("DELETE FROM issue_comment WHERE project = ?", resourceID)
 	sql, args, err = q.ToSQL()
 	if err != nil {
 		return errors.Wrap(err, "failed to build issue_comment delete query")
@@ -405,8 +401,7 @@ func (s *Store) DeleteProject(ctx context.Context, workspace string, resourceID 
 	}
 
 	// Delete plan_webhook_delivery entries for plans in this project
-	q = qb.Q().Space("DELETE FROM plan_webhook_delivery")
-	q.Space("WHERE plan_id IN (SELECT id FROM plan WHERE project = ?)", resourceID)
+	q = qb.Q().Space("DELETE FROM plan_webhook_delivery WHERE project = ?", resourceID)
 	sql, args, err = q.ToSQL()
 	if err != nil {
 		return errors.Wrap(err, "failed to build plan_webhook_delivery delete query")
@@ -416,8 +411,7 @@ func (s *Store) DeleteProject(ctx context.Context, workspace string, resourceID 
 	}
 
 	// Delete plan_check_run entries for plans in this project
-	q = qb.Q().Space("DELETE FROM plan_check_run")
-	q.Space("WHERE plan_id IN (SELECT id FROM plan WHERE project = ?)", resourceID)
+	q = qb.Q().Space("DELETE FROM plan_check_run WHERE project = ?", resourceID)
 	sql, args, err = q.ToSQL()
 	if err != nil {
 		return errors.Wrap(err, "failed to build plan_check_run delete query")
@@ -427,12 +421,7 @@ func (s *Store) DeleteProject(ctx context.Context, workspace string, resourceID 
 	}
 
 	// Delete task_run_log entries for tasks in plans of this project
-	q = qb.Q().Space("DELETE FROM task_run_log")
-	q.Space("WHERE task_run_id IN (")
-	q.Space("SELECT tr.id FROM task_run tr")
-	q.Space("JOIN task t ON t.project = tr.project AND t.id = tr.task_id")
-	q.Space("JOIN plan p ON p.project = t.project AND p.id = t.plan_id")
-	q.Space("WHERE p.project = ?)", resourceID)
+	q = qb.Q().Space("DELETE FROM task_run_log WHERE project = ?", resourceID)
 	sql, args, err = q.ToSQL()
 	if err != nil {
 		return errors.Wrap(err, "failed to build task_run_log delete query")
@@ -442,11 +431,7 @@ func (s *Store) DeleteProject(ctx context.Context, workspace string, resourceID 
 	}
 
 	// Delete task_run entries for tasks in plans of this project
-	q = qb.Q().Space("DELETE FROM task_run")
-	q.Space("WHERE task_id IN (")
-	q.Space("SELECT t.id FROM task t")
-	q.Space("JOIN plan p ON p.project = t.project AND p.id = t.plan_id")
-	q.Space("WHERE p.project = ?)", resourceID)
+	q = qb.Q().Space("DELETE FROM task_run WHERE project = ?", resourceID)
 	sql, args, err = q.ToSQL()
 	if err != nil {
 		return errors.Wrap(err, "failed to build task_run delete query")
@@ -456,8 +441,7 @@ func (s *Store) DeleteProject(ctx context.Context, workspace string, resourceID 
 	}
 
 	// Delete tasks in plans of this project
-	q = qb.Q().Space("DELETE FROM task")
-	q.Space("WHERE plan_id IN (SELECT id FROM plan WHERE project = ?)", resourceID)
+	q = qb.Q().Space("DELETE FROM task WHERE project = ?", resourceID)
 	sql, args, err = q.ToSQL()
 	if err != nil {
 		return errors.Wrap(err, "failed to build task delete query")
@@ -720,7 +704,7 @@ func GetListProjectFilter(workspace, filter string) (*qb.Query, error) {
 			case celoperators.Equals:
 				variable, value := getVariableAndValueFromExpr(expr)
 				return parseToSQL(variable, value)
-			case celoverloads.Matches:
+			case celoverloads.Contains:
 				variable := expr.AsCall().Target().AsIdent()
 				args := expr.AsCall().Args()
 				if len(args) != 1 {

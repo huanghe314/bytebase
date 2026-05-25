@@ -11,6 +11,7 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/store"
@@ -26,17 +27,24 @@ func (s *Scheduler) runPendingTaskRunsScheduler(ctx context.Context, wg *sync.Wa
 		select {
 		case <-ticker.C:
 			if err := s.licenseService.CheckReplicaLimit(ctx); err != nil {
-				slog.Warn("Pending task runs scheduler skipped due to HA license restriction", log.BBError(err))
+				if s.haFailSince.IsZero() {
+					s.haFailSince = time.Now()
+				}
+				if time.Since(s.haFailSince) >= haFailGracePeriod {
+					s.failTaskRunsForHA(ctx, err)
+				}
 				continue
 			}
+			s.haFailSince = time.Time{}
 			if err := s.schedulePendingTaskRuns(ctx); err != nil {
 				slog.Error("failed to schedule pending task runs", log.BBError(err))
 			}
 		case <-s.bus.TaskRunTickleChan:
 			if err := s.licenseService.CheckReplicaLimit(ctx); err != nil {
-				slog.Warn("Pending task runs scheduler skipped due to HA license restriction", log.BBError(err))
+				// Grace period is tracked by the ticker branch; just skip here.
 				continue
 			}
+			s.haFailSince = time.Time{}
 			if err := s.schedulePendingTaskRuns(ctx); err != nil {
 				slog.Error("failed to schedule pending task runs", log.BBError(err))
 			}
@@ -180,7 +188,13 @@ func (s *Scheduler) promoteTaskRun(ctx context.Context, taskRun *store.TaskRunMe
 		ProjectID: taskRun.ProjectID,
 		Updater:   "",
 		Status:    storepb.TaskRun_AVAILABLE,
+		AllowedStatuses: []storepb.TaskRun_Status{
+			storepb.TaskRun_PENDING,
+		},
 	}); err != nil {
+		if common.ErrorCode(err) == common.Conflict {
+			return nil
+		}
 		return errors.Wrapf(err, "failed to update task run status to available")
 	}
 

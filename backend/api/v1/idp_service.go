@@ -52,17 +52,30 @@ func (s *IdentityProviderService) GetIdentityProvider(ctx context.Context, req *
 }
 
 // ListIdentityProviders lists all identity providers.
-func (s *IdentityProviderService) ListIdentityProviders(ctx context.Context, _ *connect.Request[v1pb.ListIdentityProvidersRequest]) (*connect.Response[v1pb.ListIdentityProvidersResponse], error) {
+func (s *IdentityProviderService) ListIdentityProviders(ctx context.Context, req *connect.Request[v1pb.ListIdentityProvidersRequest]) (*connect.Response[v1pb.ListIdentityProvidersResponse], error) {
 	// allow_without_credential: workspace may not be in context (login page).
-	// In self-hosted (single workspace), fall back to store lookup.
-	workspaceID := common.GetWorkspaceIDFromContext(ctx)
-	if workspaceID == "" && !s.profile.SaaS {
-		workspaceID, _ = s.store.GetWorkspaceID(ctx)
+	// Workspace resolution order: request.parent -> JWT context -> default workspace (self-hosted).
+	var identityProviders []*store.IdentityProviderMessage
+
+	if req.Msg.Parent != "" {
+		workspaceID, err := common.GetWorkspaceID(req.Msg.Parent)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+
+		wsIDPs, err := s.store.ListIdentityProviders(ctx, &store.FindIdentityProviderMessage{Workspace: &workspaceID})
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		identityProviders = append(identityProviders, wsIDPs...)
+	} else {
+		globalIDPs, err := s.store.ListIdentityProviders(ctx, &store.FindIdentityProviderMessage{})
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		identityProviders = append(identityProviders, globalIDPs...)
 	}
-	identityProviders, err := s.store.ListIdentityProviders(ctx, &store.FindIdentityProviderMessage{Workspace: workspaceID})
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
+
 	response := &v1pb.ListIdentityProvidersResponse{}
 	for _, identityProviderMessage := range identityProviders {
 		identityProvider := convertToIdentityProvider(identityProviderMessage)
@@ -109,6 +122,9 @@ func (s *IdentityProviderService) CreateIdentityProvider(ctx context.Context, re
 
 	identityProviderMessage, err := s.store.CreateIdentityProvider(ctx, identityProviderMessage)
 	if err != nil {
+		if strings.Contains(err.Error(), "duplicate key") {
+			return nil, connect.NewError(connect.CodeAlreadyExists, errors.Errorf("identity provider ID %q already exists", req.Msg.IdentityProviderId))
+		}
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to create identity provider"))
 	}
 	identityProvider := convertToIdentityProvider(identityProviderMessage)
@@ -132,8 +148,9 @@ func (s *IdentityProviderService) UpdateIdentityProvider(ctx context.Context, re
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 
+	wsID := common.GetWorkspaceIDFromContext(ctx)
 	identityProviderMessage, err := s.store.GetIdentityProvider(ctx, &store.FindIdentityProviderMessage{
-		Workspace:  common.GetWorkspaceIDFromContext(ctx),
+		Workspace:  &wsID,
 		ResourceID: &identityProviderID,
 	})
 	if err != nil {
@@ -151,7 +168,6 @@ func (s *IdentityProviderService) UpdateIdentityProvider(ctx context.Context, re
 
 	patch := &store.UpdateIdentityProviderMessage{
 		ResourceID: identityProviderMessage.ResourceID,
-		Workspace:  identityProviderMessage.Workspace,
 	}
 	for _, path := range req.Msg.UpdateMask.Paths {
 		switch path {
@@ -204,7 +220,7 @@ func (s *IdentityProviderService) DeleteIdentityProvider(ctx context.Context, re
 		return nil, err
 	}
 
-	if err := s.store.DeleteIdentityProvider(ctx, identityProvider.Workspace, identityProvider.ResourceID); err != nil {
+	if err := s.store.DeleteIdentityProvider(ctx, identityProvider.ResourceID); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&emptypb.Empty{}), nil
@@ -391,8 +407,9 @@ func (s *IdentityProviderService) getIdentityProviderMessage(ctx context.Context
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 
+	wsID := common.GetWorkspaceIDFromContext(ctx)
 	identityProvider, err := s.store.GetIdentityProvider(ctx, &store.FindIdentityProviderMessage{
-		Workspace:  common.GetWorkspaceIDFromContext(ctx),
+		Workspace:  &wsID,
 		ResourceID: &identityProviderID,
 	})
 	if err != nil {

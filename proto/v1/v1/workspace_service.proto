@@ -3,19 +3,71 @@ syntax = "proto3";
 package bytebase.v1;
 
 import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "google/protobuf/field_mask.proto";
 import "v1/annotation.proto";
+import "v1/auth_service.proto";
 import "v1/iam_policy.proto";
 
 option go_package = "github.com/bytebase/bytebase/backend/generated-go/v1";
 
 // WorkspaceService manages workspace-level operations and profile.
 service WorkspaceService {
+  // Gets a workspace by name.
+  // Supports "workspaces/-" to resolve the current workspace:
+  // - Authenticated: uses the workspace from JWT context
+  // - Self-hosted unauthenticated: returns the single workspace
+  // - SaaS unauthenticated: returns minimal response
+  rpc GetWorkspace(GetWorkspaceRequest) returns (Workspace) {
+    option (google.api.http) = {get: "/v1/{name=workspaces/*}"};
+    option (bytebase.v1.allow_without_credential) = true;
+  }
+
+  // Lists all workspaces the current user is a member of.
+  rpc ListWorkspaces(ListWorkspacesRequest) returns (ListWorkspacesResponse) {
+    option (google.api.http) = {get: "/v1/workspaces"};
+    option (bytebase.v1.auth_method) = CUSTOM;
+  }
+
+  // Updates a workspace. Currently only title can be updated.
+  rpc UpdateWorkspace(UpdateWorkspaceRequest) returns (Workspace) {
+    option (google.api.http) = {
+      patch: "/v1/{workspace.name=workspaces/*}"
+      body: "*"
+    };
+    option (bytebase.v1.permission) = "bb.workspaces.update";
+    option (bytebase.v1.auth_method) = IAM;
+    option (bytebase.v1.audit) = true;
+  }
+
   // Retrieves IAM policy for the workspace.
   // Permissions required: bb.workspaces.getIamPolicy
   rpc GetIamPolicy(GetIamPolicyRequest) returns (IamPolicy) {
     option (google.api.http) = {get: "/v1/{resource=workspaces/*}:getIamPolicy"};
     option (bytebase.v1.permission) = "bb.workspaces.getIamPolicy";
     option (bytebase.v1.auth_method) = IAM;
+  }
+
+  // Deletes a workspace. SaaS only. Cancels any active subscription and
+  // soft-deletes the workspace so all associated data becomes inaccessible.
+  // Requires workspace admin permission.
+  rpc DeleteWorkspace(DeleteWorkspaceRequest) returns (LoginResponse) {
+    option (google.api.http) = {delete: "/v1/{name=workspaces/*}"};
+    option (bytebase.v1.permission) = "bb.workspaces.delete";
+    option (bytebase.v1.auth_method) = IAM;
+    option (bytebase.v1.audit) = true;
+  }
+
+  // Removes the calling user from a workspace and switches to the next
+  // available workspace. Available to any workspace member. Fails if the
+  // caller is the last workspace admin.
+  rpc LeaveWorkspace(LeaveWorkspaceRequest) returns (LoginResponse) {
+    option (google.api.http) = {
+      post: "/v1/{name=workspaces/*}:leave"
+      body: "*"
+    };
+    option (bytebase.v1.auth_method) = CUSTOM;
+    option (bytebase.v1.audit) = true;
   }
 
   // Sets IAM policy for the workspace.
@@ -29,4 +81,42 @@ service WorkspaceService {
     option (bytebase.v1.auth_method) = IAM;
     option (bytebase.v1.audit) = true;
   }
+}
+
+message ListWorkspacesRequest {}
+
+message ListWorkspacesResponse {
+  repeated Workspace workspaces = 1;
+}
+
+message GetWorkspaceRequest {
+  // The workspace name, format: workspaces/{workspace}.
+  // Use "workspaces/-" to get the current/default workspace.
+  string name = 1;
+}
+
+message Workspace {
+  // Format: workspaces/{workspace}
+  string name = 1;
+
+  string title = 2;
+
+  // The branding logo.
+  string logo = 3;
+}
+
+message DeleteWorkspaceRequest {
+  // Format: workspaces/{workspace}
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message UpdateWorkspaceRequest {
+  Workspace workspace = 1 [(google.api.field_behavior) = REQUIRED];
+
+  google.protobuf.FieldMask update_mask = 2;
+}
+
+message LeaveWorkspaceRequest {
+  // Format: workspaces/{workspace}
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
 }

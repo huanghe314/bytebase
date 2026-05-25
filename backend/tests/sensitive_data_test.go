@@ -154,7 +154,7 @@ func TestSensitiveData(t *testing.T) {
 		Instance: &v1pb.Instance{
 			Title:       "mysqlInstance",
 			Engine:      v1pb.Engine_MYSQL,
-			Environment: stringPtr("environments/prod"),
+			Environment: new("environments/prod"),
 			Activation:  true,
 			DataSources: []*v1pb.DataSource{{Type: v1pb.DataSourceType_ADMIN, Host: mysqlContainer.host, Port: mysqlContainer.port, Username: "bytebase", Password: "bytebase", Id: "admin"}},
 		},
@@ -173,9 +173,8 @@ func TestSensitiveData(t *testing.T) {
 
 	// Validate query syntax error - with new ACL system, syntax errors are returned in query results
 	syntaxErrorResp, err := ctl.sqlServiceClient.Query(ctx, connect.NewRequest(&v1pb.QueryRequest{
-		Name:         database.Name,
-		Statement:    "SELECT hello TO world;",
-		DataSourceId: "admin",
+		Name:      database.Name,
+		Statement: "SELECT hello TO world;",
 	}))
 	a.NoError(err)
 	a.Equal(1, len(syntaxErrorResp.Msg.Results))
@@ -248,9 +247,8 @@ func TestSensitiveData(t *testing.T) {
 
 	// Query masked data.
 	queryResp, err := ctl.sqlServiceClient.Query(ctx, connect.NewRequest(&v1pb.QueryRequest{
-		Name:         database.Name,
-		Statement:    queryTable,
-		DataSourceId: "admin",
+		Name:      database.Name,
+		Statement: queryTable,
 	}))
 	a.NoError(err)
 	a.Equal(1, len(queryResp.Msg.Results))
@@ -299,9 +297,8 @@ func TestSensitiveData(t *testing.T) {
 	// The database error message would normally contain the actual column value,
 	// but the masking pipeline should redact it.
 	errorLeakResp, err := ctl.sqlServiceClient.Query(ctx, connect.NewRequest(&v1pb.QueryRequest{
-		Name:         database.Name,
-		Statement:    "SELECT BIN_TO_UUID(author) FROM tech_book WHERE id = 1",
-		DataSourceId: "admin",
+		Name:      database.Name,
+		Statement: "SELECT BIN_TO_UUID(author) FROM tech_book WHERE id = 1",
 	}))
 	a.NoError(err)
 	a.Equal(1, len(errorLeakResp.Msg.Results))
@@ -312,9 +309,8 @@ func TestSensitiveData(t *testing.T) {
 
 	// Same query on a non-masked column should preserve the original error.
 	nonMaskedErrorResp, err := ctl.sqlServiceClient.Query(ctx, connect.NewRequest(&v1pb.QueryRequest{
-		Name:         database.Name,
-		Statement:    "SELECT BIN_TO_UUID(name) FROM tech_book WHERE id = 1",
-		DataSourceId: "admin",
+		Name:      database.Name,
+		Statement: "SELECT BIN_TO_UUID(name) FROM tech_book WHERE id = 1",
 	}))
 	a.NoError(err)
 	a.Equal(1, len(nonMaskedErrorResp.Msg.Results))

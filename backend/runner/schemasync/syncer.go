@@ -178,7 +178,7 @@ func (s *Syncer) trySyncAll(ctx context.Context) {
 	now := time.Now()
 	for _, instance := range instances {
 		instance := instance
-		interval := getOrDefaultSyncInterval(instance)
+		interval := s.getOrDefaultSyncInterval(ctx, instance)
 		if interval == defaultSyncInterval {
 			continue
 		}
@@ -221,7 +221,7 @@ func (s *Syncer) trySyncAll(ctx context.Context) {
 			continue
 		}
 		// The database inherits the sync interval from the instance.
-		interval := getOrDefaultSyncInterval(instance)
+		interval := s.getOrDefaultSyncInterval(ctx, instance)
 		if interval == defaultSyncInterval {
 			continue
 		}
@@ -356,11 +356,10 @@ func (s *Syncer) SyncInstance(ctx context.Context, instance *store.InstanceMessa
 	for _, database := range databases {
 		idx := slices.IndexFunc(filteredDatabaseMetadatas, func(db *storepb.DatabaseSchemaMetadata) bool { return db.Name == database.DatabaseName })
 		if idx < 0 {
-			d := true
 			if _, err := s.store.UpdateDatabase(ctx, &store.UpdateDatabaseMessage{
 				InstanceID:   instance.ResourceID,
 				DatabaseName: database.DatabaseName,
-				Deleted:      &d,
+				Deleted:      new(true),
 			}); err != nil {
 				return nil, nil, nil, errors.Errorf("failed to update database %q for instance %q", database.DatabaseName, instance.ResourceID)
 			}
@@ -372,6 +371,9 @@ func (s *Syncer) SyncInstance(ctx context.Context, instance *store.InstanceMessa
 
 // doSyncDatabaseSchema is the core implementation that syncs the schema for a database and optionally creates a sync history record.
 func (s *Syncer) doSyncDatabaseSchema(ctx context.Context, database *store.DatabaseMessage, createSyncHistory bool) (syncHistoryResourceID string, retErr error) {
+	if database == nil {
+		return "", errors.New("cannot sync nil database")
+	}
 	instance, err := s.store.GetInstanceByResourceID(ctx, database.InstanceID)
 	if err != nil {
 		return "", errors.Wrapf(err, "failed to get instance %q", database.InstanceID)
@@ -427,7 +429,7 @@ func (s *Syncer) doSyncDatabaseSchema(ctx context.Context, database *store.Datab
 	if _, err := s.store.UpdateDatabase(ctx, &store.UpdateDatabaseMessage{
 		InstanceID:      database.InstanceID,
 		DatabaseName:    database.DatabaseName,
-		Deleted:         proto.Bool(false),
+		Deleted:         new(false),
 		MetadataUpdates: metadataUpdates,
 	}); err != nil {
 		return "", errors.Wrapf(err, "failed to update database %q for instance %q", database.DatabaseName, database.InstanceID)
@@ -487,19 +489,8 @@ func (s *Syncer) databaseBackupAvailable(ctx context.Context, instance *store.In
 				return true
 			}
 		}
-	case storepb.Engine_MYSQL, storepb.Engine_MSSQL, storepb.Engine_TIDB:
+	case storepb.Engine_MYSQL, storepb.Engine_MARIADB, storepb.Engine_MSSQL, storepb.Engine_TIDB, storepb.Engine_ORACLE:
 		dbName := common.BackupDatabaseNameOfEngine(instance.Metadata.GetEngine())
-		backupDB, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
-			InstanceID:   &instance.ResourceID,
-			DatabaseName: &dbName,
-		})
-		if err != nil {
-			slog.Debug("Failed to get backup database", "err", err)
-			return false
-		}
-		return backupDB != nil
-	case storepb.Engine_ORACLE:
-		dbName := common.BackupDatabaseNameOfEngine(storepb.Engine_ORACLE)
 		backupDB, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
 			InstanceID:   &instance.ResourceID,
 			DatabaseName: &dbName,
@@ -517,8 +508,12 @@ func (s *Syncer) databaseBackupAvailable(ctx context.Context, instance *store.In
 	return false
 }
 
-func getOrDefaultSyncInterval(instance *store.InstanceMessage) time.Duration {
-	if !instance.Metadata.GetActivation() {
+func (s *Syncer) getOrDefaultSyncInterval(ctx context.Context, instance *store.InstanceMessage) time.Duration {
+	activated := instance.Metadata.GetActivation()
+	if s.licenseService != nil {
+		activated = s.licenseService.IsInstanceEffectivelyActivated(ctx, instance.Workspace, instance)
+	}
+	if !activated {
 		return defaultSyncInterval
 	}
 	if !instance.Metadata.GetSyncInterval().IsValid() {

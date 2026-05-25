@@ -18,6 +18,7 @@ import (
 	"github.com/bytebase/bytebase/backend/common/permission"
 	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/iam"
+	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -30,19 +31,21 @@ import (
 // DatabaseService implements the database service.
 type DatabaseService struct {
 	v1connect.UnimplementedDatabaseServiceHandler
-	store        *store.Store
-	schemaSyncer *schemasync.Syncer
-	profile      *config.Profile
-	iamManager   *iam.Manager
+	store          *store.Store
+	schemaSyncer   *schemasync.Syncer
+	profile        *config.Profile
+	iamManager     *iam.Manager
+	licenseService *enterprise.LicenseService
 }
 
 // NewDatabaseService creates a new DatabaseService.
-func NewDatabaseService(store *store.Store, schemaSyncer *schemasync.Syncer, profile *config.Profile, iamManager *iam.Manager) *DatabaseService {
+func NewDatabaseService(store *store.Store, schemaSyncer *schemasync.Syncer, profile *config.Profile, iamManager *iam.Manager, licenseService *enterprise.LicenseService) *DatabaseService {
 	return &DatabaseService{
-		store:        store,
-		schemaSyncer: schemaSyncer,
-		profile:      profile,
-		iamManager:   iamManager,
+		store:          store,
+		schemaSyncer:   schemaSyncer,
+		profile:        profile,
+		iamManager:     iamManager,
+		licenseService: licenseService,
 	}
 }
 
@@ -53,6 +56,7 @@ func (s *DatabaseService) GetDatabase(ctx context.Context, req *connect.Request[
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrapf(err, "failed to parse %q", req.Msg.Name))
 	}
 	databaseMessage, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+		Workspace:    common.GetWorkspaceIDFromContext(ctx),
 		InstanceID:   &instanceID,
 		DatabaseName: &databaseName,
 		ShowDeleted:  true,
@@ -83,7 +87,7 @@ func (s *DatabaseService) BatchGetDatabases(ctx context.Context, req *connect.Re
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("invalid parent %q", req.Msg.Parent))
 		}
-		projectIDFilter = &projectID
+		projectIDFilter = new(projectID)
 	}
 	// For instances/{instance} or "-" (wildcard), no project filter is applied.
 	databases := make([]*v1pb.Database, 0, len(req.Msg.Names))
@@ -93,6 +97,7 @@ func (s *DatabaseService) BatchGetDatabases(ctx context.Context, req *connect.Re
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrapf(err, "failed to parse %q", name))
 		}
 		databaseMessage, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+			Workspace:    common.GetWorkspaceIDFromContext(ctx),
 			InstanceID:   &instanceID,
 			DatabaseName: &databaseName,
 			ShowDeleted:  true,
@@ -185,6 +190,7 @@ func (s *DatabaseService) ListDatabases(ctx context.Context, req *connect.Reques
 	limitPlusOne := offset.limit + 1
 
 	find := &store.FindDatabaseMessage{
+		Workspace:   common.GetWorkspaceIDFromContext(ctx),
 		Limit:       &limitPlusOne,
 		Offset:      &offset.offset,
 		ShowDeleted: req.Msg.ShowDeleted,
@@ -283,6 +289,7 @@ func (s *DatabaseService) UpdateDatabase(ctx context.Context, req *connect.Reque
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrapf(err, "failed to parse %q", req.Msg.Database.Name))
 	}
 	databaseMessage, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+		Workspace:    common.GetWorkspaceIDFromContext(ctx),
 		InstanceID:   &instanceID,
 		DatabaseName: &databaseName,
 	})
@@ -342,36 +349,10 @@ func (s *DatabaseService) UpdateDatabase(ctx context.Context, req *connect.Reque
 				}
 				patch.EnvironmentID = &environmentID
 			} else {
-				unsetEnvironment := ""
-				patch.EnvironmentID = &unsetEnvironment
-			}
-		case "drifted":
-			// Create a new base schema.
-			syncHistory, err := s.schemaSyncer.SyncDatabaseSchemaToHistory(ctx, databaseMessage)
-			if err != nil {
-				return nil, errors.Wrapf(err, "failed to sync database metadata and schema")
-			}
-			instance, err := s.store.GetInstance(ctx, &store.FindInstanceMessage{
-				Workspace:  common.GetWorkspaceIDFromContext(ctx),
-				ResourceID: &databaseMessage.InstanceID,
-			})
-			if err != nil {
-				return nil, errors.Wrapf(err, "failed to get instance for format version")
-			}
-			if instance == nil {
-				return nil, errors.Errorf("instance %q not found", databaseMessage.InstanceID)
-			}
-			if _, err := s.store.CreateChangelog(ctx, &store.ChangelogMessage{
-				InstanceID:   databaseMessage.InstanceID,
-				DatabaseName: databaseMessage.DatabaseName,
-				Status:       store.ChangelogStatusDone,
-				SyncHistory:  &syncHistory,
-				Payload: &storepb.ChangelogPayload{
-					GitCommit: s.profile.GitCommit,
-				}}); err != nil {
-				return nil, errors.Wrapf(err, "failed to create changelog")
+				patch.EnvironmentID = new("")
 			}
 		default:
+			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("unsupported update mask path %q", path))
 		}
 	}
 
@@ -394,6 +375,7 @@ func (s *DatabaseService) SyncDatabase(ctx context.Context, req *connect.Request
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrapf(err, "failed to parse %q", req.Msg.Name))
 	}
 	databaseMessage, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+		Workspace:    common.GetWorkspaceIDFromContext(ctx),
 		InstanceID:   &instanceID,
 		DatabaseName: &databaseName,
 	})
@@ -420,6 +402,7 @@ func (s *DatabaseService) BatchSyncDatabases(ctx context.Context, req *connect.R
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrapf(err, "failed to parse %q", name))
 		}
 		databaseMessage, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+			Workspace:    common.GetWorkspaceIDFromContext(ctx),
 			InstanceID:   &instanceID,
 			DatabaseName: &databaseName,
 		})
@@ -476,7 +459,7 @@ func getDatabaseMetadataFilter(filter string) (*metadataFilter, error) {
 					}
 				}
 				return nil
-			case celoverloads.Matches:
+			case celoverloads.Contains:
 				variable := expr.AsCall().Target().AsIdent()
 				if variable != "table" {
 					return connect.NewError(connect.CodeInvalidArgument, errors.Errorf("unsupport variable %v", variable))
@@ -503,8 +486,7 @@ func getDatabaseMetadataFilter(filter string) (*metadataFilter, error) {
 				}
 				switch variable {
 				case "schema":
-					lowerValue := strings.ToLower(strValue)
-					metaFilter.schema = &lowerValue
+					metaFilter.schema = new(strings.ToLower(strValue))
 				case "table":
 					metaFilter.table = &tableMetadataFilter{
 						name: strings.ToLower(strValue),
@@ -539,6 +521,7 @@ func (s *DatabaseService) GetDatabaseMetadata(ctx context.Context, req *connect.
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrapf(err, "failed to parse %q", name))
 	}
 	database, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+		Workspace:    common.GetWorkspaceIDFromContext(ctx),
 		InstanceID:   &instanceID,
 		DatabaseName: &databaseName,
 		ShowDeleted:  true,
@@ -592,6 +575,7 @@ func (s *DatabaseService) GetDatabaseSchema(ctx context.Context, req *connect.Re
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("%v", err.Error()))
 	}
 	database, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+		Workspace:    common.GetWorkspaceIDFromContext(ctx),
 		InstanceID:   &instanceID,
 		DatabaseName: &databaseName,
 		ShowDeleted:  true,
@@ -639,6 +623,7 @@ func (s *DatabaseService) GetDatabaseSDLSchema(ctx context.Context, req *connect
 	}
 
 	database, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+		Workspace:    common.GetWorkspaceIDFromContext(ctx),
 		InstanceID:   &instanceID,
 		DatabaseName: &databaseName,
 		ShowDeleted:  true,
@@ -697,40 +682,79 @@ func (s *DatabaseService) GetDatabaseSDLSchema(ctx context.Context, req *connect
 
 // DiffSchema diff the database schema.
 func (s *DatabaseService) DiffSchema(ctx context.Context, req *connect.Request[v1pb.DiffSchemaRequest]) (*connect.Response[v1pb.DiffSchemaResponse], error) {
-	// Use unified SDL-based approach for all scenarios
-	sourceDBSchema, err := s.getSourceDBMetadata(ctx, req.Msg)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get source schema"))
-	}
-
-	targetDBSchema, err := s.getTargetDBMetadata(ctx, req.Msg)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get target schema"))
-	}
-
 	engine, err := s.getParserEngine(ctx, req.Msg)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get parser engine"))
 	}
 
-	schemaDiff, err := schema.GetDatabaseSchemaDiff(engine, sourceDBSchema, targetDBSchema)
+	// PG/CockroachDB raw schema text still needs the omni SDL diff path. Metadata
+	// targets such as changelogs use schema.DiffMigration's metadata path.
+	if shouldDiffSchemaViaSDL(engine, req.Msg) {
+		migrationSQL, err := s.diffSchemaViaSDL(ctx, req.Msg, engine)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to compute schema diff"))
+		}
+		return connect.NewResponse(&v1pb.DiffSchemaResponse{Diff: migrationSQL}), nil
+	}
+
+	// Metadata-backed diff path. PostgreSQL/CockroachDB changelog targets use
+	// their registered metadata migration here, while other engines keep the
+	// existing metadata parser/generator behavior.
+	sourceDBSchema, err := s.getSourceDBMetadata(ctx, req.Msg)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get source schema"))
+	}
+	targetDBSchema, err := s.getTargetDBMetadata(ctx, req.Msg)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get target schema"))
+	}
+	migrationSQL, err := schema.DiffMigration(engine, sourceDBSchema, targetDBSchema)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to compute schema diff"))
 	}
+	return connect.NewResponse(&v1pb.DiffSchemaResponse{Diff: migrationSQL}), nil
+}
 
-	// Filter out bbdataarchive schema changes for Postgres
-	if engine == storepb.Engine_POSTGRES {
-		schemaDiff = schema.FilterPostgresArchiveSchema(schemaDiff)
+func shouldDiffSchemaViaSDL(engine storepb.Engine, req *v1pb.DiffSchemaRequest) bool {
+	if engine != storepb.Engine_POSTGRES && engine != storepb.Engine_COCKROACHDB {
+		return false
 	}
+	_, ok := req.GetTarget().(*v1pb.DiffSchemaRequest_Schema)
+	return ok
+}
 
-	migrationSQL, err := schema.GenerateMigration(engine, schemaDiff)
+// diffSchemaViaSDL handles PG/CockroachDB DiffSchema using omni SDL diff.
+func (s *DatabaseService) diffSchemaViaSDL(ctx context.Context, req *v1pb.DiffSchemaRequest, engine storepb.Engine) (string, error) {
+	sourceMetadata, err := s.getSourceDBMetadata(ctx, req)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to generate migration SQL"))
+		return "", err
+	}
+	sourceSDL, err := schema.MetadataToSDL(engine, sourceMetadata)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to generate source SDL")
 	}
 
-	return connect.NewResponse(&v1pb.DiffSchemaResponse{
-		Diff: migrationSQL,
-	}), nil
+	// Resolve target schema text.
+	var targetSDL string
+	switch {
+	case req.GetSchema() != "":
+		// Schema text from GetDatabaseSchema (raw dump) — passed directly.
+		// pgDiffSDLMigration handles LoadSDL/LoadSQL fallback internally.
+		targetSDL = req.GetSchema()
+	case req.GetChangelog() != "":
+		targetMetadata, err := s.getSourceDBMetadata(ctx, &v1pb.DiffSchemaRequest{Name: req.GetChangelog()})
+		if err != nil {
+			return "", errors.Wrap(err, "failed to resolve target changelog")
+		}
+		targetSDL, err = schema.MetadataToSDL(engine, targetMetadata)
+		if err != nil {
+			return "", errors.Wrap(err, "failed to generate target SDL")
+		}
+	default:
+		return "", errors.Errorf("target must be either schema text or changelog")
+	}
+
+	return schema.DiffSDLMigration(engine, sourceSDL, targetSDL)
 }
 
 func (s *DatabaseService) getSourceDBMetadata(ctx context.Context, request *v1pb.DiffSchemaRequest) (*model.DatabaseMetadata, error) {
@@ -969,14 +993,15 @@ func (s *DatabaseService) convertToDatabase(ctx context.Context, database *store
 
 	var environment, effectiveEnvironment *string
 	if database.EnvironmentID != nil && *database.EnvironmentID != "" {
-		env := common.FormatEnvironment(*database.EnvironmentID)
-		environment = &env
+		environment = new(common.FormatEnvironment(*database.EnvironmentID))
 	}
 	if database.EffectiveEnvironmentID != nil && *database.EffectiveEnvironmentID != "" {
-		effEnv := common.FormatEnvironment(*database.EffectiveEnvironmentID)
-		effectiveEnvironment = &effEnv
+		effectiveEnvironment = new(common.FormatEnvironment(*database.EffectiveEnvironmentID))
 	}
-	instanceResource := convertToV1InstanceResource(instance)
+	instanceResource := convertToV1InstanceResource(
+		instance,
+		s.licenseService.IsInstanceEffectivelyActivated(ctx, common.GetWorkspaceIDFromContext(ctx), instance),
+	)
 	return &v1pb.Database{
 		Name:                 common.FormatDatabase(database.InstanceID, database.DatabaseName),
 		State:                convertDeletedToState(database.Deleted),
@@ -1020,6 +1045,7 @@ func (s *DatabaseService) GetSchemaString(ctx context.Context, req *connect.Requ
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrapf(err, "failed to parse %q", req.Msg.Name))
 	}
 	database, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+		Workspace:    common.GetWorkspaceIDFromContext(ctx),
 		InstanceID:   &instanceID,
 		DatabaseName: &databaseName,
 		ShowDeleted:  true,

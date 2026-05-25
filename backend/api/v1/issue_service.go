@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -39,7 +40,7 @@ type IssueService struct {
 }
 
 type filterIssueMessage struct {
-	ApprovalStatus *v1pb.Issue_ApprovalStatus
+	ApprovalStatus *v1pb.ApprovalStatus
 	// Approver is the user who can approve the issue.
 	Approver *store.UserMessage
 }
@@ -82,8 +83,9 @@ func (s *IssueService) getIssueFind(
 	offset *int,
 ) (*store.FindIssueMessage, *filterIssueMessage, error) {
 	issueFind := &store.FindIssueMessage{
-		Limit:  limit,
-		Offset: offset,
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
+		Limit:     limit,
+		Offset:    offset,
 	}
 	if query != "" {
 		issueFind.Query = &query
@@ -129,12 +131,11 @@ func (s *IssueService) getIssueFind(
 				case "labels":
 					issueFind.LabelList = append(issueFind.LabelList, value.(string))
 				case "approval_status":
-					approvalStatusValue, ok := v1pb.Issue_ApprovalStatus_value[value.(string)]
+					approvalStatusValue, ok := v1pb.ApprovalStatus_value[value.(string)]
 					if !ok {
 						return "", connect.NewError(connect.CodeInvalidArgument, errors.Errorf(`invalid approval_status %q`, value))
 					}
-					approvalStatus := v1pb.Issue_ApprovalStatus(approvalStatusValue)
-					filterIssue.ApprovalStatus = &approvalStatus
+					filterIssue.ApprovalStatus = new(v1pb.ApprovalStatus(approvalStatusValue))
 				case "current_approver", "creator":
 					user, err := s.getUserByIdentifier(ctx, value.(string))
 					if err != nil {
@@ -186,7 +187,7 @@ func (s *IssueService) getIssueFind(
 						issueFind.StatusList = append(issueFind.StatusList, newStatus)
 					}
 				case "type":
-					types := []storepb.Issue_Type{}
+					var types []storepb.Issue_Type
 					for _, raw := range rawList {
 						issueType, err := convertToAPIIssueType(v1pb.Issue_Type(v1pb.Issue_Type_value[raw.(string)]))
 						if err != nil {
@@ -398,6 +399,10 @@ func (s *IssueService) CreateIssue(ctx context.Context, req *connect.Request[v1p
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("require issue labels"))
 	}
 
+	// enforceIssueTitle is enforced on CreatePlan (plan.Name is gated there). Issues
+	// with empty Title inherit plan.Name via buildIssueMessage; ROLE_GRANT issues
+	// have their own title-required check below. No gate needed here.
+
 	user, ok := GetUserFromContext(ctx)
 	if !ok {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("user not found"))
@@ -434,7 +439,7 @@ func (s *IssueService) buildIssueMessage(ctx context.Context, project *store.Pro
 	switch request.Issue.Type {
 	case v1pb.Issue_ROLE_GRANT:
 		// Title is required for role grant requests.
-		if request.Issue.Title == "" {
+		if strings.TrimSpace(request.Issue.Title) == "" {
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("issue title is required"))
 		}
 
@@ -481,7 +486,7 @@ func (s *IssueService) buildIssueMessage(ctx context.Context, project *store.Pro
 			Expiration: request.Issue.RoleGrant.Expiration,
 		}
 
-		title = request.Issue.Title
+		title = strings.TrimSpace(request.Issue.Title)
 		description = request.Issue.Description
 
 	case v1pb.Issue_DATABASE_CHANGE, v1pb.Issue_DATABASE_EXPORT:
@@ -495,7 +500,7 @@ func (s *IssueService) buildIssueMessage(ctx context.Context, project *store.Pro
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("%v", err.Error()))
 		}
 
-		plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{UID: &planID, ProjectID: project.ResourceID})
+		plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{Workspace: common.GetWorkspaceIDFromContext(ctx), UID: &planID, ProjectID: project.ResourceID})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get plan"))
 		}
@@ -505,7 +510,7 @@ func (s *IssueService) buildIssueMessage(ctx context.Context, project *store.Pro
 		planUID = &plan.UID
 
 		// Use plan's title and description as defaults if not provided by request
-		title = request.Issue.Title
+		title = strings.TrimSpace(request.Issue.Title)
 		if title == "" {
 			title = plan.Name
 		}
@@ -630,8 +635,9 @@ func (s *IssueService) ApproveIssue(ctx context.Context, req *connect.Request[v1
 
 	approval.NotifyApprovalRequested(ctx, s.store, s.webhookManager, issue, project)
 
-	// If the issue is a role grant request and approved, complete it.
+	// If the issue is approved, notify the creator and complete access request if applicable.
 	if approved {
+		approval.NotifyIssueApproved(ctx, s.store, s.webhookManager, issue, project, user)
 		issue, err = completeAccessRequestIssue(ctx, s.store, user.Email, issue)
 		if err != nil {
 			slog.Debug("failed to complete role grant issue", log.BBError(err))
@@ -644,7 +650,7 @@ func (s *IssueService) ApproveIssue(ctx context.Context, req *connect.Request[v1
 	}
 
 	// Auto-create rollout if this approval completes the approval flow
-	if issueV1.ApprovalStatus == v1pb.Issue_APPROVED {
+	if issueV1.ApprovalStatus == v1pb.ApprovalStatus_APPROVED {
 		if issue.PlanUID != nil {
 			s.bus.RolloutCreationChan <- bus.PlanRef{ProjectID: issue.ProjectID, PlanID: *issue.PlanUID}
 		}
@@ -842,6 +848,98 @@ func (s *IssueService) RequestIssue(ctx context.Context, req *connect.Request[v1
 	return connect.NewResponse(issueV1), nil
 }
 
+// RetryIssueApproval re-runs approval-template finding for an issue stuck
+// in CHECKING. The synchronous post-create path in `postCreateIssue`
+// swallows errors (e.g. CEL evaluation failure against a malformed
+// workspace approval rule), and there is no event-driven retry for
+// non-DATABASE_CHANGE issue types — once stuck, only this RPC (or a
+// direct DB edit) gets the issue back into a resolved state.
+//
+// Authorization mirrors `RequestIssue`: only the issue creator may
+// retry. The action is a self-service for "my issue is stuck"; an
+// operator who needs to unstick someone else's issue should fix the
+// underlying workspace approval rule and (if necessary) ask the issue
+// creator to click Retry.
+//
+// Idempotent: returns the existing issue unchanged when approval-finding
+// has already completed.
+func (s *IssueService) RetryIssueApproval(ctx context.Context, req *connect.Request[v1pb.RetryIssueApprovalRequest]) (*connect.Response[v1pb.Issue], error) {
+	issue, err := s.getIssueMessage(ctx, req.Msg.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	user, ok := GetUserFromContext(ctx)
+	if !ok {
+		return nil, connect.NewError(connect.CodeInternal, errors.New("user not found"))
+	}
+	if !canRequestIssue(issue.CreatorEmail, user) {
+		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("only the issue creator can retry approval finding"))
+	}
+
+	// No-op fast path: nothing to retry if the previous attempt completed.
+	if issue.Payload.GetApproval().GetApprovalFindingDone() {
+		issueV1, err := s.convertToIssue(issue)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to convert to issue"))
+		}
+		return connect.NewResponse(issueV1), nil
+	}
+
+	if err := approval.FindAndApplyApprovalTemplate(ctx, s.store, s.bus, s.webhookManager, s.licenseService, issue); err != nil {
+		// Surface the underlying cause (e.g. CEL error in the workspace
+		// approval rule) so the operator can fix it.
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.Wrap(err, "approval finding still failing"))
+	}
+
+	uid := issue.UID
+	refreshed, err := s.store.GetIssue(ctx, &store.FindIssueMessage{
+		Workspace:  common.GetWorkspaceIDFromContext(ctx),
+		ProjectIDs: []string{issue.ProjectID},
+		UID:        &uid,
+	})
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to refresh issue"))
+	}
+	if refreshed == nil {
+		return nil, connect.NewError(connect.CodeNotFound, errors.New("issue not found after retry"))
+	}
+
+	// Mirror the post-approval side effects that `postCreateIssue` and the
+	// approval runner perform when finding completes — without these, an
+	// auto-approved (template-less / SKIPPED) retry result would leave the
+	// issue out of CHECKING but skip the actual work:
+	//   * ACCESS_GRANT / ROLE_GRANT → activate the grant via
+	//     `completeAccessRequestIssue`.
+	//   * DATABASE_CHANGE with a plan → enqueue rollout creation.
+	approved, err := utils.CheckIssueApproved(refreshed)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to check approval state"))
+	}
+	if approved {
+		switch refreshed.Type {
+		case storepb.Issue_ACCESS_GRANT, storepb.Issue_ROLE_GRANT:
+			if completed, completeErr := completeAccessRequestIssue(ctx, s.store, user.Email, refreshed); completeErr != nil {
+				slog.Warn("failed to complete access request issue after retry", log.BBError(completeErr))
+			} else {
+				refreshed = completed
+			}
+		case storepb.Issue_DATABASE_CHANGE:
+			if refreshed.PlanUID != nil {
+				s.bus.RolloutCreationChan <- bus.PlanRef{ProjectID: refreshed.ProjectID, PlanID: *refreshed.PlanUID}
+			}
+		default:
+			// DATABASE_EXPORT auto-approve has no follow-up step.
+		}
+	}
+
+	issueV1, err := s.convertToIssue(refreshed)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to convert to issue"))
+	}
+	return connect.NewResponse(issueV1), nil
+}
+
 // UpdateIssue updates the issue.
 func (s *IssueService) UpdateIssue(ctx context.Context, req *connect.Request[v1pb.UpdateIssueRequest]) (*connect.Response[v1pb.Issue], error) {
 	user, ok := GetUserFromContext(ctx)
@@ -894,11 +992,17 @@ func (s *IssueService) UpdateIssue(ctx context.Context, req *connect.Request[v1p
 		updateMasks[path] = true
 		switch path {
 		case "title":
-			if req.Msg.Issue.Title == "" {
+			trimmed := strings.TrimSpace(req.Msg.Issue.Title)
+			if trimmed == "" {
 				return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("title cannot be empty"))
 			}
+			if trimmed == issue.Title {
+				// No-op update — skip both the patch and the audit comment so we
+				// don't pollute the timeline with "changed name from X to X".
+				continue
+			}
 
-			patch.Title = &req.Msg.Issue.Title
+			patch.Title = &trimmed
 
 			issueCommentCreates = append(issueCommentCreates, &store.IssueCommentMessage{
 				IssueUID: issue.UID,
@@ -906,13 +1010,16 @@ func (s *IssueService) UpdateIssue(ctx context.Context, req *connect.Request[v1p
 					Event: &storepb.IssueCommentPayload_IssueUpdate_{
 						IssueUpdate: &storepb.IssueCommentPayload_IssueUpdate{
 							FromTitle: &issue.Title,
-							ToTitle:   &req.Msg.Issue.Title,
+							ToTitle:   &trimmed,
 						},
 					},
 				},
 			})
 
 		case "description":
+			if req.Msg.Issue.Description == issue.Description {
+				continue
+			}
 			patch.Description = &req.Msg.Issue.Description
 
 			issueCommentCreates = append(issueCommentCreates, &store.IssueCommentMessage{
@@ -928,6 +1035,9 @@ func (s *IssueService) UpdateIssue(ctx context.Context, req *connect.Request[v1p
 			})
 
 		case "labels":
+			if slices.Equal(issue.Payload.Labels, req.Msg.Issue.Labels) {
+				continue
+			}
 			if len(req.Msg.Issue.Labels) == 0 {
 				patch.RemoveLabels = true
 			} else {
@@ -1027,7 +1137,6 @@ func (s *IssueService) BatchUpdateIssuesStatus(ctx context.Context, req *connect
 	// Batch create issue comments.
 	issueComments := make([]*store.IssueCommentMessage, 0, len(issueUIDs))
 	for _, issueUID := range issueUIDs {
-		oldStatus := oldIssueStatuses[issueUID]
 		issueComments = append(issueComments, &store.IssueCommentMessage{
 			ProjectID: projectID,
 			IssueUID:  issueUID,
@@ -1035,7 +1144,7 @@ func (s *IssueService) BatchUpdateIssuesStatus(ctx context.Context, req *connect
 				Comment: req.Msg.Reason,
 				Event: &storepb.IssueCommentPayload_IssueUpdate_{
 					IssueUpdate: &storepb.IssueCommentPayload_IssueUpdate{
-						FromStatus: &oldStatus,
+						FromStatus: new(oldIssueStatuses[issueUID]),
 						ToStatus:   &newStatus,
 					},
 				},
@@ -1058,6 +1167,7 @@ func (s *IssueService) ListIssueComments(ctx context.Context, req *connect.Reque
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("%v", err.Error()))
 	}
 	issue, err := s.store.GetIssue(ctx, &store.FindIssueMessage{
+		Workspace:  common.GetWorkspaceIDFromContext(ctx),
 		UID:        &issueUID,
 		ProjectIDs: []string{projectID},
 	})
@@ -1213,6 +1323,7 @@ func (s *IssueService) getIssueMessage(ctx context.Context, name string) (*store
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	issue, err := s.store.GetIssue(ctx, &store.FindIssueMessage{
+		Workspace:  common.GetWorkspaceIDFromContext(ctx),
 		UID:        &issueUID,
 		ProjectIDs: []string{projectID},
 	})

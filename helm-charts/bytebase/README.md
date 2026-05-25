@@ -19,6 +19,15 @@ install <RELEASE_NAME> bytebase-repo/bytebase
 - Kubernetes 1.24+
 - Helm 3.9.0+
 
+## High availability note
+
+The bundled Helm chart currently deploys Bytebase as a single-replica StatefulSet. It does not expose a Helm value for running multiple Bytebase application replicas.
+
+If you are preparing an HA deployment, treat the multi-replica topology as operator-managed outside this chart. Each HA replica must still start with `--ha` and the same shared external PostgreSQL `PG_URL`; review the operator runbook before proceeding:
+
+- [High availability runbook](../../docs/operations/high-availability.md)
+- [Upgrade guidance](../../docs/operations/upgrade.md)
+
 ## Installing the Chart
 
 ```bash
@@ -57,6 +66,11 @@ helm delete --namespace <YOUR_NAMESPACE> <RELEASE_NAME>
 
 Use `helm upgrade` command to upgrade the bytebase version or configuration.
 
+For HA-aware operations, note that this chart still renders `replicas: 1`. A `helm upgrade` does not enable a multi-replica topology by itself. If you operate multiple Bytebase servers outside this chart, keep `--ha` and the shared external PostgreSQL `PG_URL` consistent on every replica and follow the operator runbook and upgrade guidance here:
+
+- [High availability runbook](../../docs/operations/high-availability.md)
+- [Upgrade guidance](../../docs/operations/upgrade.md)
+
 ```bash
 helm -n <YOUR_NAMESPACE> \
 --set "bytebase.option.port"={NEW_PORT} \
@@ -89,6 +103,8 @@ upgrade bytebase-release bytebase-repo/bytebase
 |  `bytebase.option.externalPg.existingPgPasswordSecret`   |                                                                       The name of Secret that stores the existing PostgreSQL password for Bytebase metadata storage.                                                                       |                               ""                               |
 | `bytebase.option.externalPg.existingPgPasswordSecretKey` |                                                   The key of Secret storing the existing PostgreSQL password. Should be used with `bytebase.option.externalPg.existingPgPasswordSecret`.                                                   |                               ""                               |
 |       `bytebase.option.externalPg.escapePassword`        | Controls whether to escape the password in the connection string. `bytebase.option.externalPg.existingPgPasswordSecret` or `bytebase.option.externalPg.pgPassword` should be specified with this value together. **Experimental feature.** |                             false                              |
+|    `bytebase.option.externalPg.awsRdsIam.enabled`        |                                                        Enables AWS RDS IAM authentication for the Bytebase metadata PostgreSQL database when the chart constructs PG_URL from externalPg fields, including `sslmode=verify-full`.                                                        |                             false                              |
+|     `bytebase.option.externalPg.awsRdsIam.region`        |                                                        AWS region used to sign RDS IAM authentication tokens for the Bytebase metadata PostgreSQL database. Required when awsRdsIam.enabled is true.                                                        |                               ""                               |
 |              `bytebase.persistence.enabled`              |                                                                                                  Enable/disable persistence for Bytebase.                                                                                                  |                             false                              |
 |           `bytebase.persistence.existingClaim`           |                                                                                    Name of the existing PersistentVolumeClaim for Bytebase persistence.                                                                                    |                               ""                               |
 |              `bytebase.persistence.storage`              |                                                                                              Size of the persistent volume for Bytebase data.                                                                                              |                             "2Gi"                              |
@@ -102,4 +118,6 @@ upgrade bytebase-release bytebase-repo/bytebase
 
 - Contact <support@bytebase.com>
 - [Bytebase Docs](https://docs.bytebase.com)
+- [High availability runbook](../../docs/operations/high-availability.md)
+- [Upgrade guidance](../../docs/operations/upgrade.md)
 - [Bytebase GitHub Issue Page](https://github.com/bytebase/bytebase/issues/new/choose)

@@ -1,25 +1,25 @@
 <template>
-  <div class="relative h-screen overflow-hidden flex flex-col">
-    <BannersWrapper />
-    <!-- Suspense is experimental, be aware of the potential change -->
-    <Suspense>
-      <template #default>
-        <ProvideDashboardContext>
-          <router-view name="body" />
-        </ProvideDashboardContext>
-      </template>
-    </Suspense>
-    <Suspense v-if="!hideHelp">
-      <HelpDrawer />
-    </Suspense>
-  </div>
+  <ReactPageMount
+    page="DashboardFrameShell"
+    :page-props="{ onReady: handleReady }"
+  />
+
+  <teleport v-if="targets.body" :to="targets.body">
+    <router-view name="body" />
+  </teleport>
 </template>
 
 <script lang="ts" setup>
-import BannersWrapper from "@/components/BannersWrapper.vue";
-import HelpDrawer from "@/components/HelpDrawer";
-import ProvideDashboardContext from "@/components/ProvideDashboardContext.vue";
-import { useAppFeature } from "@/store";
+import { shallowRef } from "vue";
+import type { DashboardFrameShellTargets } from "@/react/dashboard-shell";
+import ReactPageMount from "@/react/ReactPageMount.vue";
 
-const hideHelp = useAppFeature("bb.feature.hide-help");
+const targets = shallowRef<DashboardFrameShellTargets>({
+  banner: null,
+  body: null,
+});
+
+const handleReady = (nextTargets: DashboardFrameShellTargets) => {
+  targets.value = nextTargets;
+};
 </script>

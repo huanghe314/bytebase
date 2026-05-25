@@ -49,7 +49,7 @@ func postCreateIssue(
 		storepb.Issue_ROLE_GRANT,
 		storepb.Issue_DATABASE_EXPORT:
 
-		if err := approval.FindAndApplyApprovalTemplate(ctx, stores, webhookManager, licenseService, issue); err != nil {
+		if err := approval.FindAndApplyApprovalTemplate(ctx, stores, b, webhookManager, licenseService, issue); err != nil {
 			slog.Error("failed to find approval template",
 				slog.String("project", issue.ProjectID), slog.Int64("issue_uid", issue.UID),
 				slog.String("issue_title", issue.Title),
@@ -59,7 +59,7 @@ func postCreateIssue(
 		// Refresh issue to get updated approval payload.
 		uid := issue.UID
 		var err error
-		issue, err = stores.GetIssue(ctx, &store.FindIssueMessage{ProjectIDs: []string{issue.ProjectID}, UID: &uid})
+		issue, err = stores.GetIssue(ctx, &store.FindIssueMessage{Workspace: common.GetWorkspaceIDFromContext(ctx), ProjectIDs: []string{issue.ProjectID}, UID: &uid})
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to refresh issue")
 		}
@@ -109,8 +109,7 @@ func completeAccessRequestIssue(ctx context.Context, stores *store.Store, userEm
 		return issue, nil
 	}
 
-	newStatus := storepb.Issue_DONE
-	updatedIssue, err := stores.UpdateIssue(ctx, issue.ProjectID, issue.UID, &store.UpdateIssueMessage{Status: &newStatus})
+	updatedIssue, err := stores.UpdateIssue(ctx, issue.ProjectID, issue.UID, &store.UpdateIssueMessage{Status: new(storepb.Issue_DONE)})
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to update issue %q's status", issue.Title)
 	}

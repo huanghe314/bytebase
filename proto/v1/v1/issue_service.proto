@@ -13,6 +13,7 @@ import "google/protobuf/timestamp.proto";
 import "google/type/expr.proto";
 import "v1/annotation.proto";
 import "v1/common.proto";
+import "v1/plan_service.proto";
 
 option go_package = "github.com/bytebase/bytebase/backend/generated-go/v1";
 
@@ -148,6 +149,24 @@ service IssueService {
   rpc RequestIssue(RequestIssueRequest) returns (Issue) {
     option (google.api.http) = {
       post: "/v1/{name=projects/*/issues/*}:request"
+      body: "*"
+    };
+    option (bytebase.v1.auth_method) = CUSTOM;
+    option (bytebase.v1.audit) = true;
+  }
+
+  // Re-runs approval-template finding for an issue stuck in CHECKING.
+  // Useful when the synchronous post-create finding errored (e.g. against
+  // a malformed workspace approval rule) and the operator has since
+  // corrected it — without this, the issue would remain in CHECKING
+  // indefinitely because there is no other retry path for non-DATABASE_CHANGE
+  // issue types. Idempotent: returns the existing issue unchanged when
+  // approval-finding has already completed.
+  // Permissions required: None (caller must be the issue creator;
+  // mirrors RequestIssue's authorization model).
+  rpc RetryIssueApproval(RetryIssueApprovalRequest) returns (Issue) {
+    option (google.api.http) = {
+      post: "/v1/{name=projects/*/issues/*}:retryApproval"
       body: "*"
     };
     option (bytebase.v1.auth_method) = CUSTOM;
@@ -364,6 +383,15 @@ message RequestIssueRequest {
   string comment = 2;
 }
 
+message RetryIssueApprovalRequest {
+  // The name of the issue whose approval-finding should be retried.
+  // Format: projects/{project}/issues/{issue}
+  string name = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference) = {type: "bytebase.com/Issue"}
+  ];
+}
+
 message Issue {
   option (google.api.resource) = {
     type: "bytebase.com/Issue"
@@ -444,20 +472,6 @@ message Issue {
   repeated string labels = 17;
 
   // The overall approval status for the issue.
-  enum ApprovalStatus {
-    // Unspecified approval status.
-    APPROVAL_STATUS_UNSPECIFIED = 0;
-    // Approval checks are being evaluated.
-    CHECKING = 1;
-    // Approval is pending.
-    PENDING = 2;
-    // Issue has been approved.
-    APPROVED = 3;
-    // Issue has been rejected.
-    REJECTED = 4;
-    // Approval was skipped.
-    SKIPPED = 5;
-  }
   ApprovalStatus approval_status = 18 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   // The access grant associated with this issue.
@@ -592,8 +606,8 @@ message IssueComment {
     Approval approval = 7;
     // Issue update event.
     IssueUpdate issue_update = 8;
-    // Plan spec update event.
-    PlanSpecUpdate plan_spec_update = 12;
+    // Plan update event.
+    PlanUpdate plan_update = 12;
   }
 
   // Approval event information.
@@ -627,16 +641,10 @@ message IssueComment {
     repeated string to_labels = 8;
   }
 
-  // Plan spec update event information (tracks sheet changes to plan specs).
-  message PlanSpecUpdate {
-    // The spec that was updated.
-    // Format: projects/{project}/plans/{plan}/specs/{spec}
-    string spec = 1;
-    // The previous sheet.
-    // Format: projects/{project}/sheets/{sheet}
-    optional string from_sheet = 2;
-    // The new sheet.
-    // Format: projects/{project}/sheets/{sheet}
-    optional string to_sheet = 3;
+  // Plan update event information (snapshot of plan.config.specs before
+  // and after a PlanService.UpdatePlan call that mutated specs).
+  message PlanUpdate {
+    repeated Plan.Spec from_specs = 1;
+    repeated Plan.Spec to_specs = 2;
   }
 }

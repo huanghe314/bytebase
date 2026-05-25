@@ -37,6 +37,9 @@ type AccessGrantMessage struct {
 
 // FindAccessGrantMessage is the message for finding access grants.
 type FindAccessGrantMessage struct {
+	// Workspace filters access grants by the parent project's workspace.
+	// Empty string skips filtering.
+	Workspace string
 	ID        *string
 	ProjectID *string
 	Creator   *string
@@ -116,6 +119,10 @@ func (s *Store) ListAccessGrants(ctx context.Context, find *FindAccessGrantMessa
 		FROM access_grant
 		WHERE TRUE
 	`)
+
+	if find.Workspace != "" {
+		q.And("project IN (SELECT resource_id FROM project WHERE workspace = ?)", find.Workspace)
+	}
 
 	if filterQ := find.FilterQ; filterQ != nil {
 		q.And("?", filterQ)
@@ -359,7 +366,26 @@ func GetListAccessGrantFilter(filter string) (*qb.Query, error) {
 					if !ok {
 						return nil, errors.Errorf("query value must be a string")
 					}
-					return qb.Q().Space("btrim(access_grant.payload->>'query') = ?", strings.TrimSpace(queryStr)), nil
+					// Trim the same whitespace set on both sides (boundary
+					// only) so the run-time JIT match in preCheckAccess
+					// survives invisible boundary differences — most
+					// commonly a trailing \n that Monaco's getValue() emits
+					// in the request drawer but that the editor's
+					// getActiveStatement() doesn't.
+					//
+					// We deliberately do NOT collapse internal whitespace.
+					// Doing so would let "SELECT * FROM t --\nWHERE x=1"
+					// compare equal to "SELECT * FROM t -- WHERE x=1",
+					// silently authorizing a query with the WHERE clause
+					// commented out — a privilege escalation, not a
+					// usability nit. Internal whitespace differences
+					// (reformatting, CRLF↔LF in the body) intentionally
+					// fall through to the IAM check; users can re-request.
+					//
+					// The contains branch below collapses internal
+					// whitespace; that's safe there because it's used for
+					// search/listing, not authorization.
+					return qb.Q().Space("btrim(access_grant.payload->>'query', E' \\t\\n\\r\\v\\f') = ?", strings.TrimSpace(queryStr)), nil
 				case "issue":
 					issueStr, ok := value.(string)
 					if !ok {
@@ -379,7 +405,7 @@ func GetListAccessGrantFilter(filter string) (*qb.Query, error) {
 				default:
 					return nil, errors.Errorf("unsupported variable %q", variable)
 				}
-			case celoverloads.Matches:
+			case celoverloads.Contains:
 				call := expr.AsCall()
 				target := call.Target()
 				if target.Kind() != celast.IdentKind {

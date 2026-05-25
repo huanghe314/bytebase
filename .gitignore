@@ -26,8 +26,8 @@ bytebase-build
 # IntelliJ (Goland, IDEA) folder
 .idea
 
-# Claude Code configuration
-.claude
+# Claude Code user-specific configuration
+.claude/settings.local.json
 
 # Git worktrees
 .worktrees/
@@ -40,6 +40,11 @@ scripts/azure-marketplace/*.tgz
 scripts/azure-marketplace/*.backup
 /main
 
-# log files
-*.log
-*.pid
+# playwright-cli local session artifacts
+.playwright-cli/
+
+# playwright-mcp local session artifacts (chrome-devtools/playwright-mcp dumps)
+.playwright-mcp/
+
+# superpowers brainstorm sessions (visual companion mockups)
+.superpowers/

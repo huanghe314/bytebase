@@ -52,10 +52,32 @@ type GroupMessage struct {
 	Payload     *storepb.GroupPayload
 }
 
+// GetGroupByName resolves a group by its resource name "groups/{identifier}".
+// The identifier can be an email (contains "@") or an ID.
+// Includes a fallback for legacy SCIM sync where the email was stored as the ID.
+func (s *Store) GetGroupByName(ctx context.Context, workspace, name string) (*GroupMessage, error) {
+	identifier := strings.TrimPrefix(name, "groups/")
+	find := &FindGroupMessage{Workspace: workspace}
+	if strings.Contains(identifier, "@") {
+		find.Email = &identifier
+	} else {
+		find.ID = &identifier
+	}
+	group, err := s.GetGroup(ctx, find)
+	if err != nil {
+		return nil, err
+	}
+	if group == nil && find.ID == nil {
+		// Fallback: legacy SCIM sync may store email as ID.
+		return s.GetGroup(ctx, &FindGroupMessage{Workspace: workspace, ID: &identifier})
+	}
+	return group, nil
+}
+
 // GetGroup gets a group.
 func (s *Store) GetGroup(ctx context.Context, find *FindGroupMessage) (*GroupMessage, error) {
 	if find.Email != nil && find.Workspace != "" {
-		if v, ok := s.groupCache.Get(getGroupCacheKey(find.Workspace, *find.Email)); ok && s.enableCache {
+		if v, ok := s.groupCache.Get(getGroupCacheKey(find.Workspace, &GroupMessage{Email: *find.Email})); ok && s.enableCache {
 			return v, nil
 		}
 	}
@@ -169,7 +191,7 @@ func (s *Store) ListGroups(ctx context.Context, find *FindGroupMessage) ([]*Grou
 	}
 
 	for _, group := range groups {
-		s.groupCache.Add(getGroupCacheKey(group.Workspace, group.Email), group)
+		s.groupCache.Add(getGroupCacheKey(group.Workspace, group), group)
 	}
 	return groups, nil
 }
@@ -211,9 +233,7 @@ func (s *Store) CreateGroup(ctx context.Context, create *GroupMessage) (*GroupMe
 		return nil, err
 	}
 
-	if create.Email != "" {
-		s.groupCache.Add(getGroupCacheKey(create.Workspace, create.Email), create)
-	}
+	s.groupCache.Add(getGroupCacheKey(create.Workspace, create), create)
 	return create, nil
 }
 
@@ -278,10 +298,8 @@ func (s *Store) UpdateGroup(ctx context.Context, patch *UpdateGroupMessage) (*Gr
 	}
 
 	group.Workspace = patch.Workspace
-	if group.Email != "" {
-		s.groupCache.Add(getGroupCacheKey(group.Workspace, group.Email), &group)
-		s.groupMembersCache.Remove(getGroupMembersCacheKey(group.Workspace, "groups/"+group.Email))
-	}
+	s.groupCache.Add(getGroupCacheKey(group.Workspace, &group), &group)
+	s.removeGroupMembersCache(group.Workspace, &group)
 	return &group, nil
 }
 
@@ -298,10 +316,37 @@ func (s *Store) DeleteGroup(ctx context.Context, workspace string, id string) er
 		return err
 	}
 
-	if email.Valid && email.String != "" {
-		s.groupCache.Remove(getGroupCacheKey(workspace, email.String))
-		s.groupMembersCache.Remove(getGroupMembersCacheKey(workspace, "groups/"+email.String))
+	group := &GroupMessage{ID: id, Workspace: workspace}
+	if email.Valid {
+		group.Email = email.String
 	}
+	s.groupCache.Remove(getGroupCacheKey(workspace, group))
+	s.removeGroupMembersCache(workspace, group)
+	return nil
+}
+
+// RemoveMemberFromAllGroups removes a user from all groups in a workspace via a single SQL update.
+// member format is "users/{email}".
+func (s *Store) RemoveMemberFromAllGroups(ctx context.Context, workspaceID string, member string) error {
+	query := `
+		UPDATE user_group
+		SET payload = jsonb_set(
+			payload,
+			'{members}',
+			COALESCE(
+				(SELECT jsonb_agg(m) FROM jsonb_array_elements(payload->'members') m WHERE m->>'member' != $1),
+				'[]'::jsonb
+			)
+		)
+		WHERE workspace = $2
+		AND EXISTS (SELECT 1 FROM jsonb_array_elements(payload->'members') m WHERE m->>'member' = $1)`
+	if _, err := s.GetDB().ExecContext(ctx, query, member, workspaceID); err != nil {
+		return errors.Wrapf(err, "failed to remove member %q from groups in workspace %q", member, workspaceID)
+	}
+	// Purge caches since we can't know which groups were affected.
+	s.groupCache.Purge()
+	s.groupMembersCache.Purge()
+	s.memberGroupsCache.Purge()
 	return nil
 }
 
@@ -336,16 +381,15 @@ func (s *Store) GetUserGroupsSnapshot(ctx context.Context, workspaceID string, u
 }
 
 // GetGroupMembersSnapshot returns group members with snapshot reads (with cache).
-// groupName format is "groups/{email}".
+// groupName format is "groups/{identifier}" where identifier can be an email or an ID.
 // Trades consistency for performance.
 func (s *Store) GetGroupMembersSnapshot(ctx context.Context, workspaceID string, groupName string) (map[string]bool, error) {
-	if v, ok := s.groupMembersCache.Get(getGroupMembersCacheKey(workspaceID, groupName)); ok {
+	cacheKey := getGroupMembersCacheKey(workspaceID, groupName)
+	if v, ok := s.groupMembersCache.Get(cacheKey); ok {
 		return v, nil
 	}
 
-	// Extract email from group name "groups/{email}"
-	email := strings.TrimPrefix(groupName, "groups/")
-	group, err := s.GetGroup(ctx, &FindGroupMessage{Workspace: workspaceID, Email: &email})
+	group, err := s.GetGroupByName(ctx, workspaceID, groupName)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +401,7 @@ func (s *Store) GetGroupMembersSnapshot(ctx context.Context, workspaceID string,
 	for _, m := range group.Payload.GetMembers() {
 		members[m.Member] = true
 	}
-	s.groupMembersCache.Add(getGroupMembersCacheKey(workspaceID, groupName), members)
+	s.groupMembersCache.Add(cacheKey, members)
 	return members, nil
 }
 
@@ -422,7 +466,7 @@ func GetListGroupFilter(find *FindGroupMessage, filter string) (*qb.Query, error
 			case celoperators.Equals:
 				variable, value := getVariableAndValueFromExpr(expr)
 				return parseToSQL(variable, value)
-			case celoverloads.Matches:
+			case celoverloads.Contains:
 				variable := expr.AsCall().Target().AsIdent()
 				args := expr.AsCall().Args()
 				if len(args) != 1 {

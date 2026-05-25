@@ -1,6 +1,6 @@
-import type { RouteRecordRaw } from "vue-router";
-import ProjectSidebarV1 from "@/components/Project/ProjectSidebarV1.vue";
+import type { RouteLocationNormalized, RouteRecordRaw } from "vue-router";
 import { t } from "@/plugins/i18n";
+import ReactProjectSidebarMount from "@/react/ReactProjectSidebarMount.vue";
 import { PROJECT_V1_ROUTE_DASHBOARD } from "./workspaceRoutes";
 
 export const PROJECT_V1_ROUTE_DETAIL = `${PROJECT_V1_ROUTE_DASHBOARD}.detail`;
@@ -29,7 +29,7 @@ export const PROJECT_V1_ROUTE_MEMBERS = `${PROJECT_V1_ROUTE_DASHBOARD}.members`;
 export const PROJECT_V1_ROUTE_SERVICE_ACCOUNTS = `${PROJECT_V1_ROUTE_DASHBOARD}.service-accounts`;
 export const PROJECT_V1_ROUTE_WORKLOAD_IDENTITIES = `${PROJECT_V1_ROUTE_DASHBOARD}.workload-identities`;
 export const PROJECT_V1_ROUTE_SETTINGS = `${PROJECT_V1_ROUTE_DASHBOARD}.settings`;
-export const PROJECT_V1_ROUTE_EXPORT_CENTER = `${PROJECT_V1_ROUTE_DASHBOARD}.export-center`;
+export const PROJECT_V1_ROUTE_DATA_EXPORT = `${PROJECT_V1_ROUTE_DASHBOARD}.data-export`;
 export const PROJECT_V1_ROUTE_RELEASES = `${PROJECT_V1_ROUTE_DASHBOARD}.release`;
 export const PROJECT_V1_ROUTE_RELEASE_DETAIL = `${PROJECT_V1_ROUTE_DASHBOARD}.release.detail`;
 export const PROJECT_V1_ROUTE_ROLLOUTS = `${PROJECT_V1_ROUTE_DASHBOARD}.rollouts`;
@@ -38,88 +38,106 @@ export const PROJECT_V1_ROUTE_PLAN_ROLLOUT_STAGE = `${PROJECT_V1_ROUTE_PLAN_ROLL
 export const PROJECT_V1_ROUTE_PLAN_ROLLOUT_TASK = `${PROJECT_V1_ROUTE_PLAN_ROLLOUT_STAGE}.task`;
 export const PROJECT_V1_ROUTE_GITOPS = `${PROJECT_V1_ROUTE_DASHBOARD}.gitops`;
 
-const issueRoutes: RouteRecordRaw[] = [
+const planDetailComponent = () => import("@/react/ReactPageMount.vue");
+
+const planDetailMeta: RouteRecordRaw["meta"] = {
+  requiredPermissionList: () => [
+    "bb.plans.get",
+    "bb.planCheckRuns.get",
+    "bb.taskRuns.list",
+  ],
+};
+
+// Plan Detail Page — standalone layout, decoupled from Issue
+// All three routes render the same component; route name determines
+// whether changes section is auto-expanded and which spec is selected.
+const planRoutes: RouteRecordRaw[] = [
   {
-    path: "",
-    component: () => import("@/views/project/IssueLayout.vue"),
-    props: true,
-    children: [
-      {
-        path: "plans/:planId",
-        meta: {
-          requiredPermissionList: () => [
-            "bb.plans.get",
-            "bb.planCheckRuns.get",
-            "bb.taskRuns.list",
-          ],
-        },
-        props: true,
-        children: [
-          {
-            path: "",
-            name: PROJECT_V1_ROUTE_PLAN_DETAIL,
-            redirect: {
-              name: PROJECT_V1_ROUTE_PLAN_DETAIL_SPECS,
-            },
-          },
-          {
-            path: "specs",
-            name: PROJECT_V1_ROUTE_PLAN_DETAIL_SPECS,
-            component: () => import("@/views/project/PlanSpecsView.vue"),
-          },
-          {
-            path: "specs/:specId",
-            name: PROJECT_V1_ROUTE_PLAN_DETAIL_SPEC_DETAIL,
-            component: () => import("@/views/project/PlanSpecDetailView.vue"),
-          },
-        ],
-      },
-      {
-        path: "issues/:issueId(\\d+)",
-        name: PROJECT_V1_ROUTE_ISSUE_DETAIL,
-        meta: {
-          requiredPermissionList: () => ["bb.issues.get"],
-        },
-        component: () => import("@/views/project/IssueDetailV1View.vue"),
-        props: true,
-      },
-    ],
+    path: "plans/:planId",
+    name: PROJECT_V1_ROUTE_PLAN_DETAIL,
+    component: planDetailComponent,
+    meta: planDetailMeta,
+    props: (route: RouteLocationNormalized) => ({
+      page: "ProjectPlanDetailPage",
+      routeName: route.name?.toString(),
+      routeQuery: route.query,
+      ...route.params,
+    }),
+  },
+  {
+    path: "plans/:planId/specs",
+    name: PROJECT_V1_ROUTE_PLAN_DETAIL_SPECS,
+    component: planDetailComponent,
+    meta: planDetailMeta,
+    props: (route: RouteLocationNormalized) => ({
+      page: "ProjectPlanDetailPage",
+      routeName: route.name?.toString(),
+      routeQuery: route.query,
+      ...route.params,
+    }),
+  },
+  {
+    path: "plans/:planId/specs/:specId",
+    name: PROJECT_V1_ROUTE_PLAN_DETAIL_SPEC_DETAIL,
+    component: planDetailComponent,
+    meta: planDetailMeta,
+    props: (route: RouteLocationNormalized) => ({
+      page: "ProjectPlanDetailPage",
+      routeName: route.name?.toString(),
+      routeQuery: route.query,
+      ...route.params,
+    }),
   },
 ];
 
-// Rollout routes - nested under plans/:planId/rollout
+// Issue routes
+const issueRoutes: RouteRecordRaw[] = [
+  {
+    path: "issues/:issueId(\\d+)",
+    name: PROJECT_V1_ROUTE_ISSUE_DETAIL,
+    meta: {
+      requiredPermissionList: () => ["bb.issues.get"],
+    },
+    component: () => import("@/react/ReactPageMount.vue"),
+    props: (route: RouteLocationNormalized) => ({
+      page: "ProjectIssueDetailPage",
+      ...route.params,
+    }),
+  },
+];
+
+// Legacy rollout paths → redirect to the canonical Plan Detail deploy view.
 const rolloutRoutes: RouteRecordRaw[] = [
   {
     path: "plans/:planId/rollout",
-    component: () => import("@/views/project/RolloutLayout.vue"),
-    props: true,
-    meta: {
-      title: () => t("common.rollout"),
-      requiredPermissionList: () => ["bb.rollouts.get", "bb.taskRuns.list"],
-    },
-    children: [
-      {
-        path: "",
-        name: PROJECT_V1_ROUTE_PLAN_ROLLOUT,
-        component: () =>
-          import("@/components/RolloutV1/components/Rollout/RolloutView.vue"),
-        props: true,
+    name: PROJECT_V1_ROUTE_PLAN_ROLLOUT,
+    redirect: (to) => ({
+      name: PROJECT_V1_ROUTE_PLAN_DETAIL,
+      params: { projectId: to.params.projectId, planId: to.params.planId },
+      query: { phase: "deploy" },
+    }),
+  },
+  {
+    path: "plans/:planId/rollout/stages/:stageId",
+    name: PROJECT_V1_ROUTE_PLAN_ROLLOUT_STAGE,
+    redirect: (to) => ({
+      name: PROJECT_V1_ROUTE_PLAN_DETAIL,
+      params: { projectId: to.params.projectId, planId: to.params.planId },
+      query: { phase: "deploy", stageId: to.params.stageId },
+    }),
+  },
+  {
+    path: "plans/:planId/rollout/stages/:stageId/tasks/:taskId",
+    name: PROJECT_V1_ROUTE_PLAN_ROLLOUT_TASK,
+    redirect: (to) => ({
+      name: PROJECT_V1_ROUTE_PLAN_DETAIL,
+      params: { projectId: to.params.projectId, planId: to.params.planId },
+      query: {
+        phase: "deploy",
+        stageId: to.params.stageId,
+        taskId: to.params.taskId,
       },
-      {
-        path: "stages/:stageId",
-        name: PROJECT_V1_ROUTE_PLAN_ROLLOUT_STAGE,
-        component: () =>
-          import("@/components/RolloutV1/components/Rollout/RolloutView.vue"),
-        props: true,
-      },
-      {
-        path: "stages/:stageId/tasks/:taskId",
-        name: PROJECT_V1_ROUTE_PLAN_ROLLOUT_TASK,
-        component: () =>
-          import("@/components/RolloutV1/components/Task/TaskView.vue"),
-        props: true,
-      },
-    ],
+    }),
   },
 ];
 
@@ -127,10 +145,18 @@ const projectV1Routes: RouteRecordRaw[] = [
   {
     path: "projects/:projectId",
     components: {
-      content: () => import("@/layouts/ProjectV1Layout.vue"),
-      leftSidebar: ProjectSidebarV1,
+      content: () => import("@/react/ReactRouteShellBridge.vue"),
+      leftSidebar: ReactProjectSidebarMount,
     },
-    props: { content: true, leftSidebar: true },
+    props: {
+      content: (route: RouteLocationNormalized) => ({
+        page: "ProjectRouteShell",
+        pageProps: {
+          projectId: route.params.projectId,
+        },
+      }),
+      leftSidebar: true,
+    },
     meta: {
       requiredPermissionList: () => ["bb.projects.get"],
     },
@@ -138,9 +164,13 @@ const projectV1Routes: RouteRecordRaw[] = [
       {
         path: "",
         name: PROJECT_V1_ROUTE_DETAIL,
-        // We will check user's permission to decide the redirect page.
-        component: () => import("@/views/project/ProjectLandingPage.vue"),
-        props: true,
+        // Redirect to the issues page synchronously via beforeEnter instead
+        // of rendering ProjectLandingPage (which did an async useEffect →
+        // router.replace that raced with ReactPageMount's render queue).
+        redirect: (to) => ({
+          name: PROJECT_V1_ROUTE_ISSUES,
+          params: to.params,
+        }),
       },
       {
         path: "databases",
@@ -149,8 +179,11 @@ const projectV1Routes: RouteRecordRaw[] = [
           title: () => t("common.databases"),
           requiredPermissionList: () => ["bb.databases.list"],
         },
-        component: () => import("@/views/project/ProjectDatabaseDashboard.vue"),
-        props: true,
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: (route: RouteLocationNormalized) => ({
+          page: "ProjectDatabasesPage",
+          ...route.params,
+        }),
       },
       {
         path: "access-grants",
@@ -158,9 +191,11 @@ const projectV1Routes: RouteRecordRaw[] = [
         meta: {
           title: () => t("sql-editor.access-grants"),
         },
-        component: () =>
-          import("@/views/project/ProjectAccessGrantDashboard.vue"),
-        props: true,
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: (route: RouteLocationNormalized) => ({
+          page: "ProjectAccessGrantsPage",
+          ...route.params,
+        }),
       },
       {
         path: "masking-exemption",
@@ -172,9 +207,11 @@ const projectV1Routes: RouteRecordRaw[] = [
           {
             path: "",
             name: PROJECT_V1_ROUTE_MASKING_EXEMPTION,
-            component: () =>
-              import("@/views/project/ProjectMaskingExemption.vue"),
-            props: true,
+            component: () => import("@/react/ReactPageMount.vue"),
+            props: (route: RouteLocationNormalized) => ({
+              page: "ProjectMaskingExemptionPage",
+              ...route.params,
+            }),
             meta: {
               requiredPermissionList: () => [
                 "bb.databases.get",
@@ -185,9 +222,11 @@ const projectV1Routes: RouteRecordRaw[] = [
           {
             path: "create",
             name: PROJECT_V1_ROUTE_MASKING_EXEMPTION_CREATE,
-            component: () =>
-              import("@/views/project/ProjectMaskingExemptionCreate.vue"),
-            props: true,
+            component: () => import("@/react/ReactPageMount.vue"),
+            props: (route: RouteLocationNormalized) => ({
+              page: "ProjectMaskingExemptionCreatePage",
+              ...route.params,
+            }),
             meta: {
               requiredPermissionList: () => [
                 "bb.policies.createMaskingExemptionPolicy",
@@ -209,9 +248,11 @@ const projectV1Routes: RouteRecordRaw[] = [
           {
             path: "",
             name: PROJECT_V1_ROUTE_DATABASE_GROUPS,
-            component: () =>
-              import("@/views/project/ProjectDatabaseGroupDashboard.vue"),
-            props: true,
+            component: () => import("@/react/ReactPageMount.vue"),
+            props: (route: RouteLocationNormalized) => ({
+              page: "ProjectDatabaseGroupsPage",
+              ...route.params,
+            }),
             meta: {
               requiredPermissionList: () => ["bb.databaseGroups.list"],
             },
@@ -225,16 +266,20 @@ const projectV1Routes: RouteRecordRaw[] = [
                 "bb.databases.list",
               ],
             },
-            component: () =>
-              import("@/views/project/ProjectDatabaseGroupCreate.vue"),
-            props: true,
+            component: () => import("@/react/ReactPageMount.vue"),
+            props: (route: RouteLocationNormalized) => ({
+              page: "ProjectDatabaseGroupCreatePage",
+              ...route.params,
+            }),
           },
           {
             path: ":databaseGroupName",
             name: PROJECT_V1_ROUTE_DATABASE_GROUP_DETAIL,
-            component: () =>
-              import("@/views/project/ProjectDatabaseGroupDetail.vue"),
-            props: true,
+            component: () => import("@/react/ReactPageMount.vue"),
+            props: (route: RouteLocationNormalized) => ({
+              page: "ProjectDatabaseGroupDetailPage",
+              ...route.params,
+            }),
             meta: {
               requiredPermissionList: () => [
                 "bb.databaseGroups.get",
@@ -251,8 +296,11 @@ const projectV1Routes: RouteRecordRaw[] = [
           title: () => t("common.issues"),
           requiredPermissionList: () => ["bb.issues.list"],
         },
-        component: () => import("@/views/project/ProjectIssueDashboard.vue"),
-        props: true,
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: (route: RouteLocationNormalized) => ({
+          page: "ProjectIssueDashboardPage",
+          ...route.params,
+        }),
       },
       {
         path: "plans",
@@ -261,18 +309,11 @@ const projectV1Routes: RouteRecordRaw[] = [
           title: () => t("plan.plans"),
           requiredPermissionList: () => ["bb.databases.list", "bb.plans.list"],
         },
-        component: () => import("@/views/project/ProjectPlanDashboard.vue"),
-        props: true,
-      },
-      {
-        path: "rollouts",
-        name: PROJECT_V1_ROUTE_ROLLOUTS,
-        meta: {
-          title: () => t("rollout.rollouts"),
-          requiredPermissionList: () => ["bb.rollouts.list"],
-        },
-        component: () => import("@/views/project/ProjectRolloutDashboard.vue"),
-        props: true,
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: (route: RouteLocationNormalized) => ({
+          page: "ProjectPlanDashboardPage",
+          ...route.params,
+        }),
       },
       {
         path: "sync-schema",
@@ -287,9 +328,11 @@ const projectV1Routes: RouteRecordRaw[] = [
             "bb.changelogs.get",
           ],
         },
-        component: () =>
-          import("@/views/project/ProjectSyncDatabasePanelV1.vue"),
-        props: true,
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: (route: RouteLocationNormalized) => ({
+          page: "ProjectSyncSchemaPage",
+          ...route.params,
+        }),
       },
       {
         path: "audit-logs",
@@ -298,22 +341,26 @@ const projectV1Routes: RouteRecordRaw[] = [
           title: () => t("settings.sidebar.audit-log"),
           requiredPermissionList: () => ["bb.auditLogs.search"],
         },
-        component: () => import("@/views/project/ProjectAuditLogDashboard.vue"),
-        props: true,
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: (route: RouteLocationNormalized) => ({
+          page: "ProjectAuditLogPage",
+          ...route.params,
+        }),
       },
       {
         path: "webhooks",
         meta: {
           title: () => t("common.webhooks"),
         },
-        props: true,
         children: [
           {
             path: "",
             name: PROJECT_V1_ROUTE_WEBHOOKS,
-            component: () =>
-              import("@/views/project/ProjectWebhookDashboard.vue"),
-            props: true,
+            component: () => import("@/react/ReactPageMount.vue"),
+            props: (route: RouteLocationNormalized) => ({
+              page: "ProjectWebhooksPage",
+              ...route.params,
+            }),
           },
           {
             path: "new",
@@ -322,14 +369,20 @@ const projectV1Routes: RouteRecordRaw[] = [
               title: () => t("project.webhook.create-webhook"),
               requiredPermissionList: () => ["bb.projects.update"],
             },
-            component: () => import("@/views/project/ProjectWebhookCreate.vue"),
-            props: true,
+            component: () => import("@/react/ReactPageMount.vue"),
+            props: (route: RouteLocationNormalized) => ({
+              page: "ProjectWebhookCreatePage",
+              ...route.params,
+            }),
           },
           {
-            path: ":projectWebhookSlug",
+            path: ":webhookResourceId",
             name: PROJECT_V1_ROUTE_WEBHOOK_DETAIL,
-            component: () => import("@/views/project/ProjectWebhookDetail.vue"),
-            props: true,
+            component: () => import("@/react/ReactPageMount.vue"),
+            props: (route: RouteLocationNormalized) => ({
+              page: "ProjectWebhookDetailPage",
+              ...route.params,
+            }),
           },
         ],
       },
@@ -340,8 +393,11 @@ const projectV1Routes: RouteRecordRaw[] = [
           title: () => t("common.members", 2 /* multiply*/),
           requiredPermissionList: () => ["bb.projects.getIamPolicy"],
         },
-        component: () => import("@/views/project/ProjectMemberDashboard.vue"),
-        props: true,
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: (route: RouteLocationNormalized) => ({
+          page: "MembersPage",
+          ...route.params,
+        }),
       },
       {
         path: "service-accounts",
@@ -350,9 +406,11 @@ const projectV1Routes: RouteRecordRaw[] = [
           title: () => t("settings.members.service-accounts"),
           requiredPermissionList: () => ["bb.serviceAccounts.list"],
         },
-        component: () =>
-          import("@/components/User/Settings/ServiceAccountPanel.vue"),
-        props: true,
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: (route: RouteLocationNormalized) => ({
+          page: "ServiceAccountsPage",
+          ...route.params,
+        }),
       },
       {
         path: "workload-identities",
@@ -361,9 +419,11 @@ const projectV1Routes: RouteRecordRaw[] = [
           title: () => t("settings.members.workload-identities"),
           requiredPermissionList: () => ["bb.workloadIdentities.list"],
         },
-        component: () =>
-          import("@/components/User/Settings/WorkloadIdentityPanel.vue"),
-        props: true,
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: (route: RouteLocationNormalized) => ({
+          page: "WorkloadIdentitiesPage",
+          ...route.params,
+        }),
       },
       {
         path: "settings",
@@ -371,70 +431,73 @@ const projectV1Routes: RouteRecordRaw[] = [
         meta: {
           title: () => t("common.settings"),
         },
-        component: () => import("@/views/project/ProjectSettingPanel.vue"),
-        props: true,
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: () => ({ page: "ProjectSettingsPage" }),
       },
       {
         path: "instances/:instanceId/databases/:databaseName",
+        name: PROJECT_V1_ROUTE_DATABASE_DETAIL,
         meta: {
           title: () => t("common.database"),
           requiredPermissionList: () => ["bb.databases.get"],
         },
-        component: () => import("@/views/project/ProjectDatabaseLayout.vue"),
-        props: { content: true, leftSidebar: true },
-        children: [
-          {
-            path: "",
-            name: PROJECT_V1_ROUTE_DATABASE_DETAIL,
-            component: () => import("@/views/DatabaseDetail"),
-            props: true,
-          },
-          {
-            path: "changelogs/:changelogId",
-            name: PROJECT_V1_ROUTE_DATABASE_CHANGELOG_DETAIL,
-            meta: {
-              requiredPermissionList: () => [
-                "bb.databases.get",
-                "bb.changelogs.get",
-              ],
-            },
-            component: () =>
-              import("@/views/DatabaseDetail/ChangelogDetail.vue"),
-            props: (route) => ({
-              ...route.params,
-              project: `projects/${route.params.projectId}`,
-              instance: `instances/${route.params.instanceId}`,
-              database: `instances/${route.params.instanceId}/databases/${route.params.databaseName}`,
-              changelogId: route.params.changelogId,
-            }),
-          },
-          {
-            path: "revisions/:revisionId",
-            name: PROJECT_V1_ROUTE_DATABASE_REVISION_DETAIL,
-            meta: {
-              requiredPermissionList: () => ["bb.databases.get"],
-            },
-            component: () =>
-              import("@/views/DatabaseDetail/RevisionDetail.vue"),
-            props: (route) => ({
-              ...route.params,
-              project: `projects/${route.params.projectId}`,
-              instance: `instances/${route.params.instanceId}`,
-              database: `instances/${route.params.instanceId}/databases/${route.params.databaseName}`,
-              revisionId: route.params.revisionId,
-            }),
-          },
-        ],
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: (route: RouteLocationNormalized) => ({
+          page: "ProjectDatabaseDetailPage",
+          ...route.params,
+          hash: route.hash,
+          query: route.query,
+        }),
       },
       {
-        path: "export-center",
-        name: PROJECT_V1_ROUTE_EXPORT_CENTER,
+        path: "instances/:instanceId/databases/:databaseName/changelogs/:changelogId",
+        name: PROJECT_V1_ROUTE_DATABASE_CHANGELOG_DETAIL,
+        meta: {
+          title: () => t("common.database"),
+          requiredPermissionList: () => [
+            "bb.databases.get",
+            "bb.changelogs.get",
+          ],
+        },
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: (route: RouteLocationNormalized) => ({
+          page: "DatabaseChangelogDetailPage",
+          ...route.params,
+          project: `projects/${route.params.projectId}`,
+          instance: `instances/${route.params.instanceId}`,
+          database: `instances/${route.params.instanceId}/databases/${route.params.databaseName}`,
+          changelogId: route.params.changelogId,
+        }),
+      },
+      {
+        path: "instances/:instanceId/databases/:databaseName/revisions/:revisionId",
+        name: PROJECT_V1_ROUTE_DATABASE_REVISION_DETAIL,
+        meta: {
+          title: () => t("common.database"),
+          requiredPermissionList: () => ["bb.databases.get"],
+        },
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: (route: RouteLocationNormalized) => ({
+          page: "DatabaseRevisionDetailPage",
+          ...route.params,
+          project: `projects/${route.params.projectId}`,
+          instance: `instances/${route.params.instanceId}`,
+          database: `instances/${route.params.instanceId}/databases/${route.params.databaseName}`,
+          revisionId: route.params.revisionId,
+        }),
+      },
+      {
+        path: "data-export",
+        name: PROJECT_V1_ROUTE_DATA_EXPORT,
         meta: {
           title: () => t("export-center.self"),
           requiredPermissionList: () => ["bb.issues.list", "bb.databases.list"],
         },
-        component: () => import("@/views/ExportCenter/index.vue"),
-        props: true,
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: (route) => ({
+          page: "ProjectDataExportPage",
+          ...route.params,
+        }),
       },
       {
         path: "releases",
@@ -449,9 +512,11 @@ const projectV1Routes: RouteRecordRaw[] = [
             meta: {
               requiredPermissionList: () => ["bb.releases.list"],
             },
-            component: () =>
-              import("@/views/project/ProjectReleaseDashboard.vue"),
-            props: true,
+            component: () => import("@/react/ReactPageMount.vue"),
+            props: (route: RouteLocationNormalized) => ({
+              page: "ProjectReleaseDashboardPage",
+              ...route.params,
+            }),
           },
           {
             path: ":releaseId",
@@ -459,8 +524,11 @@ const projectV1Routes: RouteRecordRaw[] = [
             meta: {
               requiredPermissionList: () => ["bb.releases.get"],
             },
-            component: () => import("@/components/Release/ReleaseDetail/"),
-            props: true,
+            component: () => import("@/react/ReactPageMount.vue"),
+            props: (route: RouteLocationNormalized) => ({
+              page: "ProjectReleaseDetailPage",
+              ...route.params,
+            }),
           },
         ],
       },
@@ -474,9 +542,13 @@ const projectV1Routes: RouteRecordRaw[] = [
             "bb.databases.list",
           ],
         },
-        component: () => import("@/views/project/ProjectGitOpsDashboard.vue"),
-        props: true,
+        component: () => import("@/react/ReactPageMount.vue"),
+        props: (route: RouteLocationNormalized) => ({
+          page: "ProjectGitOpsPage",
+          ...route.params,
+        }),
       },
+      ...planRoutes,
       ...issueRoutes,
       ...rolloutRoutes,
     ],

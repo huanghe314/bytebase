@@ -12,7 +12,6 @@
 <p align="center">
   <a href="https://docs.bytebase.com/get-started/self-host-vs-cloud" target="_blank">⚙️ Install</a> •
   <a href="https://docs.bytebase.com">📚 Docs</a> •
-  <a href="https://demo.bytebase.com">🎮 Demo</a> •
   <a href="https://discord.gg/huyw7gRsyA">💬 Discord</a> •
   <a href="https://www.bytebase.com/request-demo/">🙋‍♀️ Book Demo</a>
 </p>
@@ -156,13 +155,10 @@ alias y="pnpm --dir frontend i && pnpm --dir frontend dev"
 - [Bytebase vs Navicat](https://www.bytebase.com/blog/bytebase-vs-navicat/)
 - [Bytebase vs CloudBeaver](https://www.bytebase.com/blog/bytebase-vs-cloudbeaver/)
 
-<a href="https://star-history.com/#bytebase/bytebase&liquibase/liquibase&flyway/flyway&dbeaver/cloudbeaver&Date">
-  <img src="https://api.star-history.com/svg?repos=bytebase/bytebase,liquibase/liquibase,flyway/flyway,dbeaver/cloudbeaver&type=Date" alt="Star History Chart">
+<a href="https://www.star-history.com/?repos=bytebase%2Fbytebase%2Cliquibase%2Fliquibase%2Cflyway%2Fflyway%2Cdbeaver%2Fcloudbeaver&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=bytebase/bytebase%2Cliquibase/liquibase%2Cflyway/flyway%2Cdbeaver/cloudbeaver&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=bytebase/bytebase%2Cliquibase/liquibase%2Cflyway/flyway%2Cdbeaver/cloudbeaver&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=bytebase/bytebase%2Cliquibase/liquibase%2Cflyway/flyway%2Cdbeaver/cloudbeaver&type=date&legend=top-left" />
+ </picture>
 </a>
-
----
-
-<p align="center">
-  <b>Join us in revolutionizing database management!</b><br>
-  <a href="https://cal.com/bytebase/product-walkthrough">Book a demo</a>
-</p>

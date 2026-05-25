@@ -11,8 +11,6 @@ import (
 )
 
 // OmniAST wraps an omni AST node and implements the base.AST interface.
-// During migration, it also carries an optional ANTLR AST for backward compatibility
-// with advisors that still use ANTLR parse trees.
 type OmniAST struct {
 	// Node is the omni AST node (e.g. *ast.SelectStmt, *ast.CreateStmt).
 	Node ast.Node
@@ -20,22 +18,11 @@ type OmniAST struct {
 	Text string
 	// StartPosition is the 1-based position where this statement starts.
 	StartPosition *storepb.Position
-	// antlrAST is the legacy ANTLR parse tree, populated during migration for
-	// backward compatibility with advisors. Will be removed once all advisors migrate to omni.
-	antlrAST *base.ANTLRAST
 }
 
 // ASTStartPosition implements base.AST.
 func (a *OmniAST) ASTStartPosition() *storepb.Position {
 	return a.StartPosition
-}
-
-// AsANTLRAST implements base.AntlrASTProvider, returning the legacy ANTLR AST if available.
-func (a *OmniAST) AsANTLRAST() (*base.ANTLRAST, bool) {
-	if a.antlrAST == nil {
-		return nil, false
-	}
-	return a.antlrAST, true
 }
 
 // ParsePg parses SQL using omni's parser and returns omni Statement objects directly.
@@ -57,9 +44,9 @@ func GetOmniNode(a base.AST) (ast.Node, bool) {
 	return omniAST.Node, true
 }
 
-// byteOffsetToRunePosition converts a byte offset in sql to a 1-based line:column
+// ByteOffsetToRunePosition converts a byte offset in sql to a 1-based line:column
 // where column is measured in Unicode code points (runes), matching storepb.Position semantics.
-func byteOffsetToRunePosition(sql string, byteOffset int) *storepb.Position {
+func ByteOffsetToRunePosition(sql string, byteOffset int) *storepb.Position {
 	if byteOffset > len(sql) {
 		byteOffset = len(sql)
 	}

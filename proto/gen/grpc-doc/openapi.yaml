@@ -24,8 +24,26 @@ paths:
       summary: GetActuatorInfo
       description: |-
         Gets system information and health status of the Bytebase instance.
+         When `name` is provided (or the workspace-scoped binding is used), the
+         response includes workspace-scoped fields for that workspace.
          Permissions required: None
       operationId: ActuatorService_GetActuatorInfo
+      parameters:
+        - name: name
+          in: query
+          description: |-
+            Optional. The workspace to scope the response to.
+             Format: workspaces/{workspace}
+             When unset, the workspace is resolved from the request context (self-hosted)
+             or no workspace-scoped fields are returned (SaaS).
+          schema:
+            type: string
+            title: name
+            description: |-
+              Optional. The workspace to scope the response to.
+               Format: workspaces/{workspace}
+               When unset, the workspace is resolved from the request context (self-hosted)
+               or no workspace-scoped fields are returned (SaaS).
       responses:
         "200":
           description: Success
@@ -33,34 +51,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/bytebase.v1.ActuatorInfo'
-  /v1/actuator/resources:
-    get:
-      tags:
-        - ActuatorService
-      summary: GetResourcePackage
-      description: |-
-        Gets custom branding resources such as logos.
-         Permissions required: None
-      operationId: ActuatorService_GetResourcePackage
-      parameters:
-        - name: name
-          in: query
-          description: |-
-            Optional workspace name, format: workspaces/{workspace}.
-             Set when using the workspace-scoped URL pattern.
-          schema:
-            type: string
-            title: name
-            description: |-
-              Optional workspace name, format: workspaces/{workspace}.
-               Set when using the workspace-scoped URL pattern.
-      responses:
-        "200":
-          description: Success
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/bytebase.v1.ResourcePackage'
   /v1/actuator:setupSample:
     post:
       tags:
@@ -256,6 +246,96 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/bytebase.v1.ExchangeTokenResponse'
+  /v1/auth:requestPasswordReset:
+    post:
+      tags:
+        - AuthService
+      summary: RequestPasswordReset
+      description: |-
+        Requests a password reset email for the given email address.
+         Always returns success to avoid leaking whether the email exists.
+         Permissions required: None
+      operationId: AuthService_RequestPasswordReset
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/bytebase.v1.RequestPasswordResetRequest'
+        required: true
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.protobuf.Empty'
+  /v1/auth:resetPassword:
+    post:
+      tags:
+        - AuthService
+      summary: ResetPassword
+      description: |-
+        Resets the user's password using a password reset token from email.
+         Permissions required: None (validates via token)
+      operationId: AuthService_ResetPassword
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/bytebase.v1.ResetPasswordRequest'
+        required: true
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.protobuf.Empty'
+  /v1/auth:sendEmailLoginCode:
+    post:
+      tags:
+        - AuthService
+      summary: SendEmailLoginCode
+      description: |-
+        Sends a 6-digit verification code to the email for login/signup.
+         Always returns success (no email enumeration). Enforces 60-sec resend cooldown.
+         Permissions required: None
+      operationId: AuthService_SendEmailLoginCode
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/bytebase.v1.SendEmailLoginCodeRequest'
+        required: true
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.protobuf.Empty'
+  /v1/auth:switchWorkspace:
+    post:
+      tags:
+        - AuthService
+      summary: SwitchWorkspace
+      description: |-
+        Switches the current user's active workspace and issues new tokens.
+         The user must be a member of the target workspace.
+      operationId: AuthService_SwitchWorkspace
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/bytebase.v1.SwitchWorkspaceRequest'
+        required: true
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bytebase.v1.LoginResponse'
   /v1/cel/batchDeparse:
     post:
       tags:
@@ -751,18 +831,18 @@ paths:
              The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
              Supported filter:
-             - title: the group title, support "==" and ".matches()" operator.
-             - email: the group email, support "==" and ".matches()" operator.
+             - title: the group title, support "==" and ".contains()" operator.
+             - email: the group email, support "==" and ".contains()" operator.
              - project: the project full name in "projects/{id}" format, support "==" operator.
 
              For example:
              title == "dba"
              email == "dba@bytebase.com"
-             title.matches("dba")
-             email.matches("dba")
+             title.contains("dba")
+             email.contains("dba")
              project == "projects/sample-project"
              You can combine filter conditions like:
-             title.matches("dba") || email.matches("dba")
+             title.contains("dba") || email.contains("dba")
           schema:
             type: string
             title: filter
@@ -771,18 +851,18 @@ paths:
                The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
                Supported filter:
-               - title: the group title, support "==" and ".matches()" operator.
-               - email: the group email, support "==" and ".matches()" operator.
+               - title: the group title, support "==" and ".contains()" operator.
+               - email: the group email, support "==" and ".contains()" operator.
                - project: the project full name in "projects/{id}" format, support "==" operator.
 
                For example:
                title == "dba"
                email == "dba@bytebase.com"
-               title.matches("dba")
-               email.matches("dba")
+               title.contains("dba")
+               email.contains("dba")
                project == "projects/sample-project"
                You can combine filter conditions like:
-               title.matches("dba") || email.matches("dba")
+               title.contains("dba") || email.contains("dba")
       responses:
         "200":
           description: Success
@@ -1168,6 +1248,20 @@ paths:
         Lists all configured identity providers (public endpoint for login page).
          Permissions required: None
       operationId: IdentityProviderService_ListIdentityProviders
+      parameters:
+        - name: parent
+          in: query
+          description: |-
+            The parent workspace whose identity providers should be listed.
+             Format: workspaces/{workspace}
+             When unset, the workspace is resolved from the request context.
+          schema:
+            type: string
+            title: parent
+            description: |-
+              The parent workspace whose identity providers should be listed.
+               Format: workspaces/{workspace}
+               When unset, the workspace is resolved from the request context.
       responses:
         "200":
           description: Success
@@ -1602,21 +1696,21 @@ paths:
              The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
              Supported filters:
-             - name: the instance name, support "==" and ".matches()" operator.
-             - resource_id: the instance id, support "==" and ".matches()" operator.
+             - name: the instance name, support "==" and ".contains()" operator.
+             - resource_id: the instance id, support "==" and ".contains()" operator.
              - environment: the environment full name in "environments/{id}" format, support "==" operator.
              - state: the instance state, check State enum for values, support "==" operator.
              - engine: the instance engine, check Engine enum for values. Support "==", "in [xx]", "!(in [xx])" operator.
-             - host: the instance host, support "==" and ".matches()" operator.
-             - port: the instance port, support "==" and ".matches()" operator.
+             - host: the instance host, support "==" and ".contains()" operator.
+             - port: the instance port, support "==" and ".contains()" operator.
              - project: the project full name in "projects/{id}" format, support "==" operator.
              - labels.{key}: the instance label, support "==" and "in" operators.
 
              For example:
              name == "sample instance"
-             name.matches("sample")
+             name.contains("sample")
              resource_id == "sample-instance"
-             resource_id.matches("sample")
+             resource_id.contains("sample")
              state == "DELETED"
              environment == "environments/test"
              environment == "" (find instances which environment is not set)
@@ -1624,14 +1718,14 @@ paths:
              engine in ["MYSQL", "POSTGRES"]
              !(engine in ["MYSQL", "POSTGRES"])
              host == "127.0.0.1"
-             host.matches("127.0")
+             host.contains("127.0")
              port == "54321"
-             port.matches("543")
+             port.contains("543")
              labels.org_group == "infrastructure"
              labels.environment in ["prod", "production"]
              project == "projects/sample-project"
              You can combine filter conditions like:
-             name.matches("sample") && environment == "environments/test"
+             name.contains("sample") && environment == "environments/test"
              host == "127.0.0.1" && port == "54321"
           schema:
             type: string
@@ -1641,21 +1735,21 @@ paths:
                The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
                Supported filters:
-               - name: the instance name, support "==" and ".matches()" operator.
-               - resource_id: the instance id, support "==" and ".matches()" operator.
+               - name: the instance name, support "==" and ".contains()" operator.
+               - resource_id: the instance id, support "==" and ".contains()" operator.
                - environment: the environment full name in "environments/{id}" format, support "==" operator.
                - state: the instance state, check State enum for values, support "==" operator.
                - engine: the instance engine, check Engine enum for values. Support "==", "in [xx]", "!(in [xx])" operator.
-               - host: the instance host, support "==" and ".matches()" operator.
-               - port: the instance port, support "==" and ".matches()" operator.
+               - host: the instance host, support "==" and ".contains()" operator.
+               - port: the instance port, support "==" and ".contains()" operator.
                - project: the project full name in "projects/{id}" format, support "==" operator.
                - labels.{key}: the instance label, support "==" and "in" operators.
 
                For example:
                name == "sample instance"
-               name.matches("sample")
+               name.contains("sample")
                resource_id == "sample-instance"
-               resource_id.matches("sample")
+               resource_id.contains("sample")
                state == "DELETED"
                environment == "environments/test"
                environment == "" (find instances which environment is not set)
@@ -1663,14 +1757,14 @@ paths:
                engine in ["MYSQL", "POSTGRES"]
                !(engine in ["MYSQL", "POSTGRES"])
                host == "127.0.0.1"
-               host.matches("127.0")
+               host.contains("127.0")
                port == "54321"
-               port.matches("543")
+               port.contains("543")
                labels.org_group == "infrastructure"
                labels.environment in ["prod", "production"]
                project == "projects/sample-project"
                You can combine filter conditions like:
-               name.matches("sample") && environment == "environments/test"
+               name.contains("sample") && environment == "environments/test"
                host == "127.0.0.1" && port == "54321"
         - name: orderBy
           in: query
@@ -2124,12 +2218,12 @@ paths:
 
              Supported filter:
              - environment: the environment full name in "environments/{id}" format, support "==" operator.
-             - name: the database name, support ".matches()" operator.
+             - name: the database name, support ".contains()" operator.
              - project: the project full name in "projects/{id}" format, support "==" operator.
              - instance: the instance full name in "instances/{id}" format, support "==" operator.
              - engine: the database engine, check Engine enum for values. Support "==", "in [xx]", "!(in [xx])" operator.
              - exclude_unassigned: should be "true" or "false", will not show unassigned databases if it's true, support "==" operator.
-             - table: filter by the database table, support "==" and ".matches()" operator.
+             - table: filter by the database table, support "==" and ".contains()" operator.
              - labels.{key}: the database label, support "==" and "in" operators.
 
              For example:
@@ -2137,19 +2231,19 @@ paths:
              environment == "" (find databases which environment is not set)
              project == "projects/{project resource id}"
              instance == "instances/{instance resource id}"
-             name.matches("database name")
+             name.contains("database name")
              engine == "MYSQL"
              engine in ["MYSQL", "POSTGRES"]
              !(engine in ["MYSQL", "POSTGRES"])
              exclude_unassigned == true
              table == "sample"
-             table.matches("sam")
+             table.contains("sam")
              labels.environment == "production"
              labels.region == "asia"
              labels.region in ["asia", "europe"]
 
              You can combine filter conditions like:
-             environment == "environments/prod" && name.matches("employee")
+             environment == "environments/prod" && name.contains("employee")
           schema:
             type: string
             title: filter
@@ -2159,12 +2253,12 @@ paths:
 
                Supported filter:
                - environment: the environment full name in "environments/{id}" format, support "==" operator.
-               - name: the database name, support ".matches()" operator.
+               - name: the database name, support ".contains()" operator.
                - project: the project full name in "projects/{id}" format, support "==" operator.
                - instance: the instance full name in "instances/{id}" format, support "==" operator.
                - engine: the database engine, check Engine enum for values. Support "==", "in [xx]", "!(in [xx])" operator.
                - exclude_unassigned: should be "true" or "false", will not show unassigned databases if it's true, support "==" operator.
-               - table: filter by the database table, support "==" and ".matches()" operator.
+               - table: filter by the database table, support "==" and ".contains()" operator.
                - labels.{key}: the database label, support "==" and "in" operators.
 
                For example:
@@ -2172,19 +2266,19 @@ paths:
                environment == "" (find databases which environment is not set)
                project == "projects/{project resource id}"
                instance == "instances/{instance resource id}"
-               name.matches("database name")
+               name.contains("database name")
                engine == "MYSQL"
                engine in ["MYSQL", "POSTGRES"]
                !(engine in ["MYSQL", "POSTGRES"])
                exclude_unassigned == true
                table == "sample"
-               table.matches("sam")
+               table.contains("sam")
                labels.environment == "production"
                labels.region == "asia"
                labels.region in ["asia", "europe"]
 
                You can combine filter conditions like:
-               environment == "environments/prod" && name.matches("employee")
+               environment == "environments/prod" && name.contains("employee")
         - name: showDeleted
           in: query
           description: Show deleted database if specified.
@@ -2822,14 +2916,14 @@ paths:
 
              Supported filter:
              - schema: the schema name, support "==" operator.
-             - table: the table name, support "==" and ".matches()" operator.
+             - table: the table name, support "==" and ".contains()" operator.
 
              For example:
              schema == "schema-a"
              table == "table-a"
-             table.matches("table-a")
-             schema == "schema-a" && table.matches("sample")
-             The filter used to search table with wildcard "sample" in the schema "schemas/schema-a".
+             table.contains("table-a")
+             schema == "schema-a" && table.contains("sample")
+             The filter is used to search for tables containing "sample" in the schema "schemas/schema-a".
              The column masking level will only be returned when a table filter is used.
           schema:
             type: string
@@ -2840,14 +2934,14 @@ paths:
 
                Supported filter:
                - schema: the schema name, support "==" operator.
-               - table: the table name, support "==" and ".matches()" operator.
+               - table: the table name, support "==" and ".contains()" operator.
 
                For example:
                schema == "schema-a"
                table == "table-a"
-               table.matches("table-a")
-               schema == "schema-a" && table.matches("sample")
-               The filter used to search table with wildcard "sample" in the schema "schemas/schema-a".
+               table.contains("table-a")
+               schema == "schema-a" && table.contains("sample")
+               The filter is used to search for tables containing "sample" in the schema "schemas/schema-a".
                The column masking level will only be returned when a table filter is used.
         - name: limit
           in: query
@@ -5247,9 +5341,10 @@ paths:
                   title: data_source_id
                   description: |-
                     The id of data source.
-                     It is used for querying admin data source even if the instance has
-                     read-only data sources. Or it can be used to query a specific read-only
-                     data source.
+                     If omitted, Export resolves the data source server-side by using the
+                     single read-only data source when exactly one exists, or the admin data
+                     source otherwise. It can also be set explicitly to export from the admin
+                     data source or a specific read-only data source.
                 schema:
                   type:
                     - string
@@ -5310,9 +5405,10 @@ paths:
                   title: data_source_id
                   description: |-
                     The id of data source.
-                     It is used for querying admin data source even if the instance has
-                     read-only data sources. Or it can be used to query a specific read-only
-                     data source.
+                     If omitted, Query resolves the data source server-side by using the single
+                     read-only data source when exactly one exists, or the admin data source
+                     otherwise. It can also be set explicitly to query the admin data source or
+                     a specific read-only data source.
                 explain:
                   type: boolean
                   title: explain
@@ -5337,8 +5433,6 @@ paths:
                     Container is the container name to execute the query against, used for
                      CosmosDB only.
               title: QueryRequest
-              required:
-                - dataSourceId
               additionalProperties: false
         required: true
       responses:
@@ -7756,12 +7850,12 @@ paths:
 
              Supported filter:
              - environment: the environment full name in "environments/{id}" format, support "==" operator.
-             - name: the database name, support ".matches()" operator.
+             - name: the database name, support ".contains()" operator.
              - project: the project full name in "projects/{id}" format, support "==" operator.
              - instance: the instance full name in "instances/{id}" format, support "==" operator.
              - engine: the database engine, check Engine enum for values. Support "==", "in [xx]", "!(in [xx])" operator.
              - exclude_unassigned: should be "true" or "false", will not show unassigned databases if it's true, support "==" operator.
-             - table: filter by the database table, support "==" and ".matches()" operator.
+             - table: filter by the database table, support "==" and ".contains()" operator.
              - labels.{key}: the database label, support "==" and "in" operators.
 
              For example:
@@ -7769,19 +7863,19 @@ paths:
              environment == "" (find databases which environment is not set)
              project == "projects/{project resource id}"
              instance == "instances/{instance resource id}"
-             name.matches("database name")
+             name.contains("database name")
              engine == "MYSQL"
              engine in ["MYSQL", "POSTGRES"]
              !(engine in ["MYSQL", "POSTGRES"])
              exclude_unassigned == true
              table == "sample"
-             table.matches("sam")
+             table.contains("sam")
              labels.environment == "production"
              labels.region == "asia"
              labels.region in ["asia", "europe"]
 
              You can combine filter conditions like:
-             environment == "environments/prod" && name.matches("employee")
+             environment == "environments/prod" && name.contains("employee")
           schema:
             type: string
             title: filter
@@ -7791,12 +7885,12 @@ paths:
 
                Supported filter:
                - environment: the environment full name in "environments/{id}" format, support "==" operator.
-               - name: the database name, support ".matches()" operator.
+               - name: the database name, support ".contains()" operator.
                - project: the project full name in "projects/{id}" format, support "==" operator.
                - instance: the instance full name in "instances/{id}" format, support "==" operator.
                - engine: the database engine, check Engine enum for values. Support "==", "in [xx]", "!(in [xx])" operator.
                - exclude_unassigned: should be "true" or "false", will not show unassigned databases if it's true, support "==" operator.
-               - table: filter by the database table, support "==" and ".matches()" operator.
+               - table: filter by the database table, support "==" and ".contains()" operator.
                - labels.{key}: the database label, support "==" and "in" operators.
 
                For example:
@@ -7804,19 +7898,19 @@ paths:
                environment == "" (find databases which environment is not set)
                project == "projects/{project resource id}"
                instance == "instances/{instance resource id}"
-               name.matches("database name")
+               name.contains("database name")
                engine == "MYSQL"
                engine in ["MYSQL", "POSTGRES"]
                !(engine in ["MYSQL", "POSTGRES"])
                exclude_unassigned == true
                table == "sample"
-               table.matches("sam")
+               table.contains("sam")
                labels.environment == "production"
                labels.region == "asia"
                labels.region in ["asia", "europe"]
 
                You can combine filter conditions like:
-               environment == "environments/prod" && name.matches("employee")
+               environment == "environments/prod" && name.contains("employee")
         - name: showDeleted
           in: query
           description: Show deleted database if specified.
@@ -8819,6 +8913,42 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/bytebase.v1.Issue'
+  /v1/projects/{project}/issues/{issue}:retryApproval:
+    post:
+      tags:
+        - IssueService
+      summary: RetryIssueApproval
+      description: |-
+        Re-runs approval-template finding for an issue stuck in CHECKING.
+         Useful when the synchronous post-create finding errored (e.g. against
+         a malformed workspace approval rule) and the operator has since
+         corrected it — without this, the issue would remain in CHECKING
+         indefinitely because there is no other retry path for non-DATABASE_CHANGE
+         issue types. Idempotent: returns the existing issue unchanged when
+         approval-finding has already completed.
+         Permissions required: None (caller must be the issue creator;
+         mirrors RequestIssue's authorization model).
+      operationId: IssueService_RetryIssueApproval
+      parameters:
+        - name: project
+          in: path
+          description: The project id.
+          required: true
+          schema:
+            type: string
+        - name: issue
+          in: path
+          description: The issue id.
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bytebase.v1.Issue'
   /v1/projects/{project}/issues:batchUpdateStatus:
     post:
       tags:
@@ -8999,7 +9129,7 @@ paths:
              - create_time: the plan create time in "2006-01-02T15:04:05Z07:00" format, support ">=" or "<=" operator.
              - has_rollout: whether the plan has rollout, support "==" operator, the value should be "true" or "false".
              - has_issue: the plan has issue or not, support "==" operator, the value should be "true" or "false".
-             - title: the plan title, support "==" operator for exact match and ".matches()" operator for case-insensitive substring match.
+             - title: the plan title, support "==" operator for exact match and ".contains()" operator for case-insensitive substring match.
              - spec_type: the plan spec config type, support "==" operator, the value should be "create_database_config", "change_database_config", or "export_data_config".
              - state: the plan state, support "==" operator, the value should be "ACTIVE" or "DELETED".
 
@@ -9007,7 +9137,7 @@ paths:
              creator == "users/ed@bytebase.com" && create_time >= "2025-01-02T15:04:05Z07:00"
              has_rollout == false && has_issue == true
              title == "My Plan"
-             title.matches("database migration")
+             title.contains("database migration")
              spec_type == "change_database_config"
              state == "ACTIVE"
           schema:
@@ -9022,7 +9152,7 @@ paths:
                - create_time: the plan create time in "2006-01-02T15:04:05Z07:00" format, support ">=" or "<=" operator.
                - has_rollout: whether the plan has rollout, support "==" operator, the value should be "true" or "false".
                - has_issue: the plan has issue or not, support "==" operator, the value should be "true" or "false".
-               - title: the plan title, support "==" operator for exact match and ".matches()" operator for case-insensitive substring match.
+               - title: the plan title, support "==" operator for exact match and ".contains()" operator for case-insensitive substring match.
                - spec_type: the plan spec config type, support "==" operator, the value should be "create_database_config", "change_database_config", or "export_data_config".
                - state: the plan state, support "==" operator, the value should be "ACTIVE" or "DELETED".
 
@@ -9030,7 +9160,7 @@ paths:
                creator == "users/ed@bytebase.com" && create_time >= "2025-01-02T15:04:05Z07:00"
                has_rollout == false && has_issue == true
                title == "My Plan"
-               title.matches("database migration")
+               title.contains("database migration")
                spec_type == "change_database_config"
                state == "ACTIVE"
       responses:
@@ -9730,7 +9860,10 @@ paths:
         - RolloutService
       summary: BatchCancelTaskRuns
       description: |-
-        Cancels multiple running task executions.
+        Cancels multiple task runs.
+         PENDING and AVAILABLE task runs are moved to CANCELED synchronously. RUNNING task runs receive
+         a best-effort cancellation request and may continue running if the request is missed or the
+         executor does not stop. The response does not report which task runs were actually canceled.
          Permissions required: bb.taskRuns.create (or issue creator for data export issues, or user with rollout policy role for the environment)
       operationId: RolloutService_BatchCancelTaskRuns
       parameters:
@@ -9963,9 +10096,10 @@ paths:
                   title: data_source_id
                   description: |-
                     The id of data source.
-                     It is used for querying admin data source even if the instance has
-                     read-only data sources. Or it can be used to query a specific read-only
-                     data source.
+                     If omitted, Export resolves the data source server-side by using the
+                     single read-only data source when exactly one exists, or the admin data
+                     source otherwise. It can also be set explicitly to export from the admin
+                     data source or a specific read-only data source.
                 schema:
                   type:
                     - string
@@ -10040,9 +10174,10 @@ paths:
                   title: data_source_id
                   description: |-
                     The id of data source.
-                     It is used for querying admin data source even if the instance has
-                     read-only data sources. Or it can be used to query a specific read-only
-                     data source.
+                     If omitted, Export resolves the data source server-side by using the
+                     single read-only data source when exactly one exists, or the admin data
+                     source otherwise. It can also be set explicitly to export from the admin
+                     data source or a specific read-only data source.
                 schema:
                   type:
                     - string
@@ -11206,16 +11341,16 @@ paths:
              The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
              Supported filter:
-             - name: the service account name, support "==" and ".matches()" operator.
-             - email: the service account email, support "==" and ".matches()" operator.
+             - name: the service account name, support "==" and ".contains()" operator.
+             - email: the service account email, support "==" and ".contains()" operator.
              - state: check State enum for values, support "==" operator.
 
              For example:
              name == "ed"
-             name.matches("ed")
+             name.contains("ed")
              state == "DELETED"
              email == "ed@service.bytebase.com"
-             email.matches("ed")
+             email.contains("ed")
           schema:
             type: string
             title: filter
@@ -11224,16 +11359,16 @@ paths:
                The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
                Supported filter:
-               - name: the service account name, support "==" and ".matches()" operator.
-               - email: the service account email, support "==" and ".matches()" operator.
+               - name: the service account name, support "==" and ".contains()" operator.
+               - email: the service account email, support "==" and ".contains()" operator.
                - state: check State enum for values, support "==" operator.
 
                For example:
                name == "ed"
-               name.matches("ed")
+               name.contains("ed")
                state == "DELETED"
                email == "ed@service.bytebase.com"
-               email.matches("ed")
+               email.contains("ed")
       responses:
         "200":
           description: Success
@@ -11753,16 +11888,16 @@ paths:
              The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
              Supported filter:
-             - name: the workload identity name, support "==" and ".matches()" operator.
-             - email: the workload identity email, support "==" and ".matches()" operator.
+             - name: the workload identity name, support "==" and ".contains()" operator.
+             - email: the workload identity email, support "==" and ".contains()" operator.
              - state: check State enum for values, support "==" operator.
 
              For example:
              name == "ed"
-             name.matches("ed")
+             name.contains("ed")
              state == "DELETED"
              email == "ed@workload.bytebase.com"
-             email.matches("ed")
+             email.contains("ed")
           schema:
             type: string
             title: filter
@@ -11771,16 +11906,16 @@ paths:
                The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
                Supported filter:
-               - name: the workload identity name, support "==" and ".matches()" operator.
-               - email: the workload identity email, support "==" and ".matches()" operator.
+               - name: the workload identity name, support "==" and ".contains()" operator.
+               - email: the workload identity email, support "==" and ".contains()" operator.
                - state: check State enum for values, support "==" operator.
 
                For example:
                name == "ed"
-               name.matches("ed")
+               name.contains("ed")
                state == "DELETED"
                email == "ed@workload.bytebase.com"
-               email.matches("ed")
+               email.contains("ed")
       responses:
         "200":
           description: Success
@@ -14109,7 +14244,6 @@ paths:
         GetSubscription returns the current subscription.
          If there is no license, we will return a free plan subscription without expiration time.
          If there is expired license, we will return a free plan subscription with the expiration time of the expired license.
-         Permissions required: None
       operationId: SubscriptionService_GetSubscription
       responses:
         "200":
@@ -14118,32 +14252,40 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/bytebase.v1.Subscription'
+  /v1/subscription/checkoutSession/{session_id}:
+    get:
+      tags:
+        - SubscriptionService
+      summary: VerifyCheckoutSession
+      description: VerifyCheckoutSession verifies a Stripe Checkout Session status (SaaS only).
+      operationId: SubscriptionService_VerifyCheckoutSession
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            title: session_id
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bytebase.v1.VerifyCheckoutSessionResponse'
+  /v1/subscription/license:
     patch:
       tags:
         - SubscriptionService
-      summary: UpdateSubscription
-      description: |-
-        Updates the enterprise license subscription.
-         Permissions required: bb.settings.set
-      operationId: SubscriptionService_UpdateSubscription
-      parameters:
-        - name: allowMissing
-          in: query
-          description: |-
-            If set to true, and the subscription is not found, a new subscription will be created.
-             In this situation, `update_mask` is ignored.
-          schema:
-            type: boolean
-            title: allow_missing
-            description: |-
-              If set to true, and the subscription is not found, a new subscription will be created.
-               In this situation, `update_mask` is ignored.
+      summary: UploadLicense
+      description: Uploads an enterprise license (self-hosted only).
+      operationId: SubscriptionService_UploadLicense
       requestBody:
         content:
           application/json:
             schema:
-              type: string
-              title: license
+              $ref: '#/components/schemas/bytebase.v1.UploadLicenseRequest'
+        required: true
       responses:
         "200":
           description: Success
@@ -14151,6 +14293,98 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/bytebase.v1.Subscription'
+  /v1/subscription/paymentInfo:
+    get:
+      tags:
+        - SubscriptionService
+      summary: GetPaymentInfo
+      description: GetPaymentInfo returns payment details for the current subscription (SaaS only).
+      operationId: SubscriptionService_GetPaymentInfo
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bytebase.v1.PaymentInfo'
+  /v1/subscription/plans:
+    get:
+      tags:
+        - SubscriptionService
+      summary: ListPurchasePlans
+      description: ListPurchasePlans returns available plans for self-service purchase.
+      operationId: SubscriptionService_ListPurchasePlans
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bytebase.v1.ListPurchasePlansResponse'
+  /v1/subscription:cancelPurchase:
+    post:
+      tags:
+        - SubscriptionService
+      summary: CancelPurchase
+      description: CancelPurchase cancels an active subscription (SaaS only).
+      operationId: SubscriptionService_CancelPurchase
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/bytebase.v1.CancelPurchaseRequest'
+        required: true
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bytebase.v1.PurchaseResponse'
+  /v1/subscription:purchase:
+    post:
+      tags:
+        - SubscriptionService
+      summary: CreatePurchase
+      description: |-
+        CreatePurchase creates a new subscription purchase (SaaS only).
+         Returns a Stripe Checkout URL for the user to complete payment.
+      operationId: SubscriptionService_CreatePurchase
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/bytebase.v1.CreatePurchaseRequest'
+        required: true
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bytebase.v1.PurchaseResponse'
+  /v1/subscription:updatePurchase:
+    post:
+      tags:
+        - SubscriptionService
+      summary: UpdatePurchase
+      description: |-
+        UpdatePurchase updates an existing subscription (SaaS only).
+         May return a Stripe Checkout URL if payment method change is needed.
+      operationId: SubscriptionService_UpdatePurchase
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/bytebase.v1.UpdatePurchaseRequest'
+        required: true
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bytebase.v1.PurchaseResponse'
   /v1/users:
     get:
       tags:
@@ -14209,20 +14443,20 @@ paths:
              The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
              Supported filter:
-             - name: the user name, support "==" and ".matches()" operator.
-             - email: the user email, support "==" and ".matches()" operator.
+             - name: the user name, support "==" and ".contains()" operator.
+             - email: the user email, support "==" and ".contains()" operator.
              - state: check State enum for values, support "==" operator.
              - project: the project full name in "projects/{id}" format, support "==" operator.
 
              For example:
              name == "ed"
-             name.matches("ed")
+             name.contains("ed")
              email == "ed@bytebase.com"
-             email.matches("ed")
+             email.contains("ed")
              state == "DELETED"
              project == "projects/sample-project"
              You can combine filter conditions like:
-             name.matches("ed") && project == "projects/sample-project"
+             name.contains("ed") && project == "projects/sample-project"
              (name == "ed" || email == "ed@bytebase.com") && project == "projects/sample-project"
           schema:
             type: string
@@ -14232,20 +14466,20 @@ paths:
                The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
                Supported filter:
-               - name: the user name, support "==" and ".matches()" operator.
-               - email: the user email, support "==" and ".matches()" operator.
+               - name: the user name, support "==" and ".contains()" operator.
+               - email: the user email, support "==" and ".contains()" operator.
                - state: check State enum for values, support "==" operator.
                - project: the project full name in "projects/{id}" format, support "==" operator.
 
                For example:
                name == "ed"
-               name.matches("ed")
+               name.contains("ed")
                email == "ed@bytebase.com"
-               email.matches("ed")
+               email.contains("ed")
                state == "DELETED"
                project == "projects/sample-project"
                You can combine filter conditions like:
-               name.matches("ed") && project == "projects/sample-project"
+               name.contains("ed") && project == "projects/sample-project"
                (name == "ed" || email == "ed@bytebase.com") && project == "projects/sample-project"
       responses:
         "200":
@@ -15049,13 +15283,117 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/bytebase.v1.BatchUpdateWorksheetOrganizerResponse'
+  /v1/workspaces:
+    get:
+      tags:
+        - WorkspaceService
+      summary: ListWorkspaces
+      description: Lists all workspaces the current user is a member of.
+      operationId: WorkspaceService_ListWorkspaces
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bytebase.v1.ListWorkspacesResponse'
+  /v1/workspaces/{workspace}:
+    get:
+      tags:
+        - WorkspaceService
+      summary: GetWorkspace
+      description: |-
+        Gets a workspace by name.
+         Supports "workspaces/-" to resolve the current workspace:
+         - Authenticated: uses the workspace from JWT context
+         - Self-hosted unauthenticated: returns the single workspace
+         - SaaS unauthenticated: returns minimal response
+      operationId: WorkspaceService_GetWorkspace
+      parameters:
+        - name: workspace
+          in: path
+          description: The workspace id.
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bytebase.v1.Workspace'
+    delete:
+      tags:
+        - WorkspaceService
+      summary: DeleteWorkspace
+      description: |-
+        Deletes a workspace. SaaS only. Cancels any active subscription and
+         soft-deletes the workspace so all associated data becomes inaccessible.
+         Requires workspace admin permission.
+      operationId: WorkspaceService_DeleteWorkspace
+      parameters:
+        - name: workspace
+          in: path
+          description: The workspace id.
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bytebase.v1.LoginResponse'
+    patch:
+      tags:
+        - WorkspaceService
+      summary: UpdateWorkspace
+      description: Updates a workspace. Currently only title can be updated.
+      operationId: WorkspaceService_UpdateWorkspace
+      parameters:
+        - name: workspace
+          in: path
+          description: The workspace id.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                workspace:
+                  title: workspace
+                  $ref: '#/components/schemas/bytebase.v1.Workspace'
+                updateMask:
+                  title: update_mask
+                  $ref: '#/components/schemas/google.protobuf.FieldMask'
+              title: UpdateWorkspaceRequest
+              required:
+                - workspace
+              additionalProperties: false
+        required: true
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bytebase.v1.Workspace'
   /v1/workspaces/{workspace}/actuator/info:
     get:
       tags:
         - ActuatorService
-      summary: GetWorkspaceActuatorInfo
-      description: Gets workspace-scoped actuator info. Requires authentication.
-      operationId: ActuatorService_GetWorkspaceActuatorInfo
+      summary: GetActuatorInfo
+      description: |-
+        Gets system information and health status of the Bytebase instance.
+         When `name` is provided (or the workspace-scoped binding is used), the
+         response includes workspace-scoped fields for that workspace.
+         Permissions required: None
+      operationId: ActuatorService_GetActuatorInfo2
       parameters:
         - name: workspace
           in: path
@@ -15070,29 +15408,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/bytebase.v1.ActuatorInfo'
-  /v1/workspaces/{workspace}/actuator/resources:
-    get:
-      tags:
-        - ActuatorService
-      summary: GetResourcePackage
-      description: |-
-        Gets custom branding resources such as logos.
-         Permissions required: None
-      operationId: ActuatorService_GetResourcePackage2
-      parameters:
-        - name: workspace
-          in: path
-          description: The workspace id.
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Success
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/bytebase.v1.ResourcePackage'
   /v1/workspaces/{workspace}/databases:
     get:
       tags:
@@ -15150,12 +15465,12 @@ paths:
 
              Supported filter:
              - environment: the environment full name in "environments/{id}" format, support "==" operator.
-             - name: the database name, support ".matches()" operator.
+             - name: the database name, support ".contains()" operator.
              - project: the project full name in "projects/{id}" format, support "==" operator.
              - instance: the instance full name in "instances/{id}" format, support "==" operator.
              - engine: the database engine, check Engine enum for values. Support "==", "in [xx]", "!(in [xx])" operator.
              - exclude_unassigned: should be "true" or "false", will not show unassigned databases if it's true, support "==" operator.
-             - table: filter by the database table, support "==" and ".matches()" operator.
+             - table: filter by the database table, support "==" and ".contains()" operator.
              - labels.{key}: the database label, support "==" and "in" operators.
 
              For example:
@@ -15163,19 +15478,19 @@ paths:
              environment == "" (find databases which environment is not set)
              project == "projects/{project resource id}"
              instance == "instances/{instance resource id}"
-             name.matches("database name")
+             name.contains("database name")
              engine == "MYSQL"
              engine in ["MYSQL", "POSTGRES"]
              !(engine in ["MYSQL", "POSTGRES"])
              exclude_unassigned == true
              table == "sample"
-             table.matches("sam")
+             table.contains("sam")
              labels.environment == "production"
              labels.region == "asia"
              labels.region in ["asia", "europe"]
 
              You can combine filter conditions like:
-             environment == "environments/prod" && name.matches("employee")
+             environment == "environments/prod" && name.contains("employee")
           schema:
             type: string
             title: filter
@@ -15185,12 +15500,12 @@ paths:
 
                Supported filter:
                - environment: the environment full name in "environments/{id}" format, support "==" operator.
-               - name: the database name, support ".matches()" operator.
+               - name: the database name, support ".contains()" operator.
                - project: the project full name in "projects/{id}" format, support "==" operator.
                - instance: the instance full name in "instances/{id}" format, support "==" operator.
                - engine: the database engine, check Engine enum for values. Support "==", "in [xx]", "!(in [xx])" operator.
                - exclude_unassigned: should be "true" or "false", will not show unassigned databases if it's true, support "==" operator.
-               - table: filter by the database table, support "==" and ".matches()" operator.
+               - table: filter by the database table, support "==" and ".contains()" operator.
                - labels.{key}: the database label, support "==" and "in" operators.
 
                For example:
@@ -15198,19 +15513,19 @@ paths:
                environment == "" (find databases which environment is not set)
                project == "projects/{project resource id}"
                instance == "instances/{instance resource id}"
-               name.matches("database name")
+               name.contains("database name")
                engine == "MYSQL"
                engine in ["MYSQL", "POSTGRES"]
                !(engine in ["MYSQL", "POSTGRES"])
                exclude_unassigned == true
                table == "sample"
-               table.matches("sam")
+               table.contains("sam")
                labels.environment == "production"
                labels.region == "asia"
                labels.region in ["asia", "europe"]
 
                You can combine filter conditions like:
-               environment == "environments/prod" && name.matches("employee")
+               environment == "environments/prod" && name.contains("employee")
         - name: showDeleted
           in: query
           description: Show deleted database if specified.
@@ -15244,6 +15559,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/bytebase.v1.ListDatabasesResponse'
+  /v1/workspaces/{workspace}/idps:
+    get:
+      tags:
+        - IdentityProviderService
+      summary: ListIdentityProviders
+      description: |-
+        Lists all configured identity providers (public endpoint for login page).
+         Permissions required: None
+      operationId: IdentityProviderService_ListIdentityProviders2
+      parameters:
+        - name: workspace
+          in: path
+          description: The workspace id.
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bytebase.v1.ListIdentityProvidersResponse'
   /v1/workspaces/{workspace}/policies:
     get:
       tags:
@@ -15709,16 +16047,16 @@ paths:
              The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
              Supported filter:
-             - name: the service account name, support "==" and ".matches()" operator.
-             - email: the service account email, support "==" and ".matches()" operator.
+             - name: the service account name, support "==" and ".contains()" operator.
+             - email: the service account email, support "==" and ".contains()" operator.
              - state: check State enum for values, support "==" operator.
 
              For example:
              name == "ed"
-             name.matches("ed")
+             name.contains("ed")
              state == "DELETED"
              email == "ed@service.bytebase.com"
-             email.matches("ed")
+             email.contains("ed")
           schema:
             type: string
             title: filter
@@ -15727,16 +16065,16 @@ paths:
                The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
                Supported filter:
-               - name: the service account name, support "==" and ".matches()" operator.
-               - email: the service account email, support "==" and ".matches()" operator.
+               - name: the service account name, support "==" and ".contains()" operator.
+               - email: the service account email, support "==" and ".contains()" operator.
                - state: check State enum for values, support "==" operator.
 
                For example:
                name == "ed"
-               name.matches("ed")
+               name.contains("ed")
                state == "DELETED"
                email == "ed@service.bytebase.com"
-               email.matches("ed")
+               email.contains("ed")
       responses:
         "200":
           description: Success
@@ -15789,6 +16127,47 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/bytebase.v1.ServiceAccount'
+  /v1/workspaces/{workspace}/settings/EMAIL:test:
+    post:
+      tags:
+        - SettingService
+      summary: TestEmailSetting
+      description: |-
+        Sends a test email using the provided config (without persisting).
+         Permissions required: bb.settings.set
+      operationId: SettingService_TestEmailSetting
+      parameters:
+        - name: workspace
+          in: path
+          description: The workspace id.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                emailSetting:
+                  title: email_setting
+                  $ref: '#/components/schemas/bytebase.v1.EmailSetting'
+                to:
+                  type: string
+                  title: to
+              title: TestEmailSettingRequest
+              required:
+                - emailSetting
+                - to
+              additionalProperties: false
+        required: true
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bytebase.v1.TestEmailSettingResponse'
   /v1/workspaces/{workspace}/workloadIdentities:
     get:
       tags:
@@ -15853,16 +16232,16 @@ paths:
              The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
              Supported filter:
-             - name: the workload identity name, support "==" and ".matches()" operator.
-             - email: the workload identity email, support "==" and ".matches()" operator.
+             - name: the workload identity name, support "==" and ".contains()" operator.
+             - email: the workload identity email, support "==" and ".contains()" operator.
              - state: check State enum for values, support "==" operator.
 
              For example:
              name == "ed"
-             name.matches("ed")
+             name.contains("ed")
              state == "DELETED"
              email == "ed@workload.bytebase.com"
-             email.matches("ed")
+             email.contains("ed")
           schema:
             type: string
             title: filter
@@ -15871,16 +16250,16 @@ paths:
                The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
                Supported filter:
-               - name: the workload identity name, support "==" and ".matches()" operator.
-               - email: the workload identity email, support "==" and ".matches()" operator.
+               - name: the workload identity name, support "==" and ".contains()" operator.
+               - email: the workload identity email, support "==" and ".contains()" operator.
                - state: check State enum for values, support "==" operator.
 
                For example:
                name == "ed"
-               name.matches("ed")
+               name.contains("ed")
                state == "DELETED"
                email == "ed@workload.bytebase.com"
-               email.matches("ed")
+               email.contains("ed")
       responses:
         "200":
           description: Success
@@ -15956,6 +16335,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/bytebase.v1.IamPolicy'
+  /v1/workspaces/{workspace}:leave:
+    post:
+      tags:
+        - WorkspaceService
+      summary: LeaveWorkspace
+      description: |-
+        Removes the calling user from a workspace and switches to the next
+         available workspace. Available to any workspace member. Fails if the
+         caller is the last workspace admin.
+      operationId: WorkspaceService_LeaveWorkspace
+      parameters:
+        - name: workspace
+          in: path
+          description: The workspace id.
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bytebase.v1.LoginResponse'
   /v1/workspaces/{workspace}:setIamPolicy:
     post:
       tags:
@@ -16137,6 +16540,12 @@ components:
             $ref: '#/components/schemas/bytebase.v1.AIChatToolCall'
           title: tool_calls
           description: Tool calls the AI wants to make.
+        usage:
+          oneOf:
+            - $ref: '#/components/schemas/bytebase.v1.AIChatUsage'
+            - type: "null"
+          title: usage
+          description: Token usage for this provider call, when available.
       title: AIChatResponse
       additionalProperties: false
       description: Response message for AIService.Chat.
@@ -16184,6 +16593,17 @@ components:
       title: AIChatToolDefinition
       additionalProperties: false
       description: A tool definition that the AI can invoke.
+    bytebase.v1.AIChatUsage:
+      type: object
+      properties:
+        totalTokens:
+          type: integer
+          title: total_tokens
+          format: int32
+          description: Total tokens used by the provider call.
+      title: AIChatUsage
+      additionalProperties: false
+      description: Token usage for a single AI provider call.
     bytebase.v1.AICompletionRequest:
       type: object
       properties:
@@ -16402,6 +16822,7 @@ components:
         - ISSUE_SENT_BACK
         - PIPELINE_FAILED
         - PIPELINE_COMPLETED
+        - ISSUE_APPROVED
       description: Activity type enumeration.
     bytebase.v1.ActuatorInfo:
       type: object
@@ -16426,11 +16847,6 @@ components:
           title: saas
           description: Whether the Bytebase instance is running in SaaS mode where some features cannot be edited by users.
           readOnly: true
-        demo:
-          type: boolean
-          title: demo
-          description: Whether the Bytebase instance is running in demo mode.
-          readOnly: true
         host:
           type: string
           title: host
@@ -16445,11 +16861,6 @@ components:
           type: string
           title: external_url
           description: The external URL where users or webhook callbacks access Bytebase.
-          readOnly: true
-        needAdminSetup:
-          type: boolean
-          title: need_admin_setup
-          description: Whether the Bytebase instance requires initial admin setup.
           readOnly: true
         lastActiveTime:
           title: last_active_time
@@ -16520,6 +16931,12 @@ components:
           description: |-
             The default project for unassigned databases.
              Format: projects/{id}
+          readOnly: true
+        userCountInIam:
+          type: integer
+          title: user_count_in_iam
+          format: int32
+          description: The number of users in the workspace IAM (for seat limit display).
           readOnly: true
       title: ActuatorInfo
       additionalProperties: false
@@ -16983,6 +17400,20 @@ components:
           description: The roles required for approval in order.
       title: ApprovalFlow
       additionalProperties: false
+    bytebase.v1.ApprovalStatus:
+      type: string
+      title: ApprovalStatus
+      enum:
+        - APPROVAL_STATUS_UNSPECIFIED
+        - CHECKING
+        - PENDING
+        - APPROVED
+        - REJECTED
+        - SKIPPED
+      description: |-
+        Approval workflow status for an issue or a plan.
+         Lives at the top level so both plan_service.proto and issue_service.proto
+         can reference it without a circular import.
     bytebase.v1.ApprovalTemplate:
       type: object
       properties:
@@ -17611,6 +18042,13 @@ components:
           title: worksheet_organizers
       title: BatchUpdateWorksheetOrganizerResponse
       additionalProperties: false
+    bytebase.v1.BillingInterval:
+      type: string
+      title: BillingInterval
+      enum:
+        - BILLING_INTERVAL_UNSPECIFIED
+        - MONTH
+        - YEAR
     bytebase.v1.Binding:
       type: object
       properties:
@@ -17734,6 +18172,23 @@ components:
     bytebase.v1.CancelPlanCheckRunResponse:
       type: object
       title: CancelPlanCheckRunResponse
+      additionalProperties: false
+    bytebase.v1.CancelPurchaseRequest:
+      type: object
+      properties:
+        feedback:
+          type: string
+          title: feedback
+          description: |-
+            Reason the customer is canceling. Maps to Stripe's cancellation_details.feedback.
+             Valid Stripe values: "customer_service", "low_quality", "missing_features",
+             "switched_service", "too_complex", "too_expensive", "unused", "other".
+             Required.
+        comment:
+          type: string
+          title: comment
+          description: Optional free-form comment. Max 500 chars (Stripe limit).
+      title: CancelPurchaseRequest
       additionalProperties: false
     bytebase.v1.Changelog:
       type: object
@@ -18257,6 +18712,21 @@ components:
       required:
         - project
       additionalProperties: false
+    bytebase.v1.CreatePurchaseRequest:
+      type: object
+      properties:
+        plan:
+          title: plan
+          $ref: '#/components/schemas/bytebase.v1.PlanType'
+        interval:
+          title: interval
+          $ref: '#/components/schemas/bytebase.v1.BillingInterval'
+        seats:
+          type: integer
+          title: seats
+          format: int32
+      title: CreatePurchaseRequest
+      additionalProperties: false
     bytebase.v1.CreateReleaseRequest:
       type: object
       properties:
@@ -18483,9 +18953,7 @@ components:
           items:
             $ref: '#/components/schemas/bytebase.v1.DataClassificationSetting.DataClassificationConfig.Level'
           title: levels
-          description: |-
-            levels is user defined level list for classification.
-             The order for the level decides its priority.
+          description: levels is user defined level list for classification.
         classification:
           type: object
           title: classification
@@ -18518,28 +18986,26 @@ components:
         title:
           type: string
           title: title
-        description:
-          type: string
-          title: description
-        levelId:
+        level:
           type:
-            - string
+            - integer
             - "null"
-          title: level_id
+          title: level
+          format: int32
+          description: The sensitivity level. Maps to Level.level.
       title: DataClassification
       additionalProperties: false
     bytebase.v1.DataClassificationSetting.DataClassificationConfig.Level:
       type: object
       properties:
-        id:
-          type: string
-          title: id
         title:
           type: string
           title: title
-        description:
-          type: string
-          title: description
+        level:
+          type: integer
+          title: level
+          format: int32
+          description: The numeric level for ordering. Higher = more sensitive.
       title: Level
       additionalProperties: false
     bytebase.v1.DataSource:
@@ -18582,6 +19048,51 @@ components:
               title: ssl_key
               description: The SSL client private key.
               writeOnly: true
+            sslCaPath:
+              type: string
+              title: ssl_ca_path
+              description: The local filesystem path to the SSL certificate authority certificate.
+              writeOnly: true
+            sslCertPath:
+              type: string
+              title: ssl_cert_path
+              description: The local filesystem path to the SSL client certificate.
+              writeOnly: true
+            sslKeyPath:
+              type: string
+              title: ssl_key_path
+              description: The local filesystem path to the SSL client private key.
+              writeOnly: true
+            sslCaSet:
+              type: boolean
+              title: ssl_ca_set
+              description: Whether an SSL certificate authority certificate has been configured.
+              readOnly: true
+            sslCertSet:
+              type: boolean
+              title: ssl_cert_set
+              description: Whether an SSL client certificate has been configured.
+              readOnly: true
+            sslKeySet:
+              type: boolean
+              title: ssl_key_set
+              description: Whether an SSL client private key has been configured.
+              readOnly: true
+            sslCaPathSet:
+              type: boolean
+              title: ssl_ca_path_set
+              description: Whether an SSL certificate authority path has been configured.
+              readOnly: true
+            sslCertPathSet:
+              type: boolean
+              title: ssl_cert_path_set
+              description: Whether an SSL client certificate path has been configured.
+              readOnly: true
+            sslKeyPathSet:
+              type: boolean
+              title: ssl_key_path_set
+              description: Whether an SSL client private key path has been configured.
+              readOnly: true
             verifyTlsCertificate:
               type: boolean
               title: verify_tls_certificate
@@ -19439,6 +19950,17 @@ components:
       required:
         - name
       additionalProperties: false
+    bytebase.v1.DeleteWorkspaceRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          title: name
+          description: 'Format: workspaces/{workspace}'
+      title: DeleteWorkspaceRequest
+      required:
+        - name
+      additionalProperties: false
     bytebase.v1.DependencyColumn:
       type: object
       properties:
@@ -19596,6 +20118,78 @@ components:
       title: DimensionalConfig
       additionalProperties: false
       description: DimensionalConfig defines dimensional and constraint parameters for spatial indexes.
+    bytebase.v1.EmailSetting:
+      type: object
+      allOf:
+        - properties:
+            from:
+              type: string
+              title: from
+            fromName:
+              type: string
+              title: from_name
+            type:
+              title: type
+              $ref: '#/components/schemas/bytebase.v1.EmailSetting.Type'
+        - oneOf:
+            - type: object
+              properties:
+                smtp:
+                  title: smtp
+                  $ref: '#/components/schemas/bytebase.v1.EmailSetting.SMTPConfig'
+              title: smtp
+              required:
+                - smtp
+      title: EmailSetting
+      additionalProperties: false
+    bytebase.v1.EmailSetting.SMTPConfig:
+      type: object
+      properties:
+        host:
+          type: string
+          title: host
+        port:
+          type: integer
+          title: port
+          format: int32
+        username:
+          type: string
+          title: username
+        password:
+          type: string
+          title: password
+          writeOnly: true
+        encryption:
+          title: encryption
+          $ref: '#/components/schemas/bytebase.v1.EmailSetting.SMTPConfig.Encryption'
+        authentication:
+          title: authentication
+          $ref: '#/components/schemas/bytebase.v1.EmailSetting.SMTPConfig.Authentication'
+      title: SMTPConfig
+      additionalProperties: false
+    bytebase.v1.EmailSetting.SMTPConfig.Authentication:
+      type: string
+      title: Authentication
+      enum:
+        - AUTHENTICATION_UNSPECIFIED
+        - AUTHENTICATION_NONE
+        - PLAIN
+        - LOGIN
+        - CRAM_MD5
+    bytebase.v1.EmailSetting.SMTPConfig.Encryption:
+      type: string
+      title: Encryption
+      enum:
+        - ENCRYPTION_UNSPECIFIED
+        - ENCRYPTION_NONE
+        - STARTTLS
+        - SSL_TLS
+    bytebase.v1.EmailSetting.Type:
+      type: string
+      title: Type
+      enum:
+        - TYPE_UNSPECIFIED
+        - SMTP
     bytebase.v1.Engine:
       type: string
       title: Engine
@@ -19874,9 +20468,10 @@ components:
           title: data_source_id
           description: |-
             The id of data source.
-             It is used for querying admin data source even if the instance has
-             read-only data sources. Or it can be used to query a specific read-only
-             data source.
+             If omitted, Export resolves the data source server-side by using the
+             single read-only data source when exactly one exists, or the admin data
+             source otherwise. It can also be set explicitly to export from the admin
+             data source or a specific read-only data source.
         schema:
           type:
             - string
@@ -20100,6 +20695,15 @@ components:
       additionalProperties: false
     bytebase.v1.GetActuatorInfoRequest:
       type: object
+      properties:
+        name:
+          type: string
+          title: name
+          description: |-
+            Optional. The workspace to scope the response to.
+             Format: workspaces/{workspace}
+             When unset, the workspace is resolved from the request context (self-hosted)
+             or no workspace-scoped fields are returned (SaaS).
       title: GetActuatorInfoRequest
       additionalProperties: false
       description: Request message for getting actuator information.
@@ -20169,14 +20773,14 @@ components:
 
              Supported filter:
              - schema: the schema name, support "==" operator.
-             - table: the table name, support "==" and ".matches()" operator.
+             - table: the table name, support "==" and ".contains()" operator.
 
              For example:
              schema == "schema-a"
              table == "table-a"
-             table.matches("table-a")
-             schema == "schema-a" && table.matches("sample")
-             The filter used to search table with wildcard "sample" in the schema "schemas/schema-a".
+             table.contains("table-a")
+             schema == "schema-a" && table.contains("sample")
+             The filter is used to search for tables containing "sample" in the schema "schemas/schema-a".
              The column masking level will only be returned when a table filter is used.
         limit:
           type: integer
@@ -20314,6 +20918,10 @@ components:
       required:
         - name
       additionalProperties: false
+    bytebase.v1.GetPaymentInfoRequest:
+      type: object
+      title: GetPaymentInfoRequest
+      additionalProperties: false
     bytebase.v1.GetPlanCheckRunRequest:
       type: object
       properties:
@@ -20377,18 +20985,6 @@ components:
       required:
         - name
       additionalProperties: false
-    bytebase.v1.GetResourcePackageRequest:
-      type: object
-      properties:
-        name:
-          type: string
-          title: name
-          description: |-
-            Optional workspace name, format: workspaces/{workspace}.
-             Set when using the workspace-scoped URL pattern.
-      title: GetResourcePackageRequest
-      additionalProperties: false
-      description: Request message for getting branding resources.
     bytebase.v1.GetReviewConfigRequest:
       type: object
       properties:
@@ -20622,18 +21218,17 @@ components:
       required:
         - name
       additionalProperties: false
-    bytebase.v1.GetWorkspaceActuatorInfoRequest:
+    bytebase.v1.GetWorkspaceRequest:
       type: object
       properties:
         name:
           type: string
           title: name
-          description: 'The workspace name, format: workspaces/{workspace}.'
-      title: GetWorkspaceActuatorInfoRequest
-      required:
-        - name
+          description: |-
+            The workspace name, format: workspaces/{workspace}.
+             Use "workspaces/-" to get the current/default workspace.
+      title: GetWorkspaceRequest
       additionalProperties: false
-      description: Request message for getting workspace-scoped actuator information.
     bytebase.v1.GridLevel:
       type: object
       properties:
@@ -21176,8 +21771,9 @@ components:
           description: Labels attached to the issue for categorization and filtering.
         approvalStatus:
           title: approval_status
+          description: The overall approval status for the issue.
           readOnly: true
-          $ref: '#/components/schemas/bytebase.v1.Issue.ApprovalStatus'
+          $ref: '#/components/schemas/bytebase.v1.ApprovalStatus'
         accessGrant:
           type: string
           title: access_grant
@@ -21187,17 +21783,6 @@ components:
           readOnly: true
       title: Issue
       additionalProperties: false
-    bytebase.v1.Issue.ApprovalStatus:
-      type: string
-      title: ApprovalStatus
-      enum:
-        - APPROVAL_STATUS_UNSPECIFIED
-        - CHECKING
-        - PENDING
-        - APPROVED
-        - REJECTED
-        - SKIPPED
-      description: The overall approval status for the issue.
     bytebase.v1.Issue.Approver:
       type: object
       properties:
@@ -21282,13 +21867,13 @@ components:
                 - issueUpdate
             - type: object
               properties:
-                planSpecUpdate:
-                  title: plan_spec_update
-                  description: Plan spec update event.
-                  $ref: '#/components/schemas/bytebase.v1.IssueComment.PlanSpecUpdate'
-              title: plan_spec_update
+                planUpdate:
+                  title: plan_update
+                  description: Plan update event.
+                  $ref: '#/components/schemas/bytebase.v1.IssueComment.PlanUpdate'
+              title: plan_update
               required:
-                - planSpecUpdate
+                - planUpdate
       title: IssueComment
       additionalProperties: false
       description: A comment on an issue.
@@ -21357,34 +21942,24 @@ components:
       title: IssueUpdate
       additionalProperties: false
       description: Issue update event information.
-    bytebase.v1.IssueComment.PlanSpecUpdate:
+    bytebase.v1.IssueComment.PlanUpdate:
       type: object
       properties:
-        spec:
-          type: string
-          title: spec
-          description: |-
-            The spec that was updated.
-             Format: projects/{project}/plans/{plan}/specs/{spec}
-        fromSheet:
-          type:
-            - string
-            - "null"
-          title: from_sheet
-          description: |-
-            The previous sheet.
-             Format: projects/{project}/sheets/{sheet}
-        toSheet:
-          type:
-            - string
-            - "null"
-          title: to_sheet
-          description: |-
-            The new sheet.
-             Format: projects/{project}/sheets/{sheet}
-      title: PlanSpecUpdate
+        fromSpecs:
+          type: array
+          items:
+            $ref: '#/components/schemas/bytebase.v1.Plan.Spec'
+          title: from_specs
+        toSpecs:
+          type: array
+          items:
+            $ref: '#/components/schemas/bytebase.v1.Plan.Spec'
+          title: to_specs
+      title: PlanUpdate
       additionalProperties: false
-      description: Plan spec update event information (tracks sheet changes to plan specs).
+      description: |-
+        Plan update event information (snapshot of plan.config.specs before
+         and after a PlanService.UpdatePlan call that mutated specs).
     bytebase.v1.IssueStatus:
       type: string
       title: IssueStatus
@@ -21507,6 +22082,17 @@ components:
       title: Label
       additionalProperties: false
       description: A label for categorizing and organizing issues.
+    bytebase.v1.LeaveWorkspaceRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          title: name
+          description: 'Format: workspaces/{workspace}'
+      title: LeaveWorkspaceRequest
+      required:
+        - name
+      additionalProperties: false
     bytebase.v1.ListAccessGrantsRequest:
       type: object
       properties:
@@ -21711,12 +22297,12 @@ components:
 
              Supported filter:
              - environment: the environment full name in "environments/{id}" format, support "==" operator.
-             - name: the database name, support ".matches()" operator.
+             - name: the database name, support ".contains()" operator.
              - project: the project full name in "projects/{id}" format, support "==" operator.
              - instance: the instance full name in "instances/{id}" format, support "==" operator.
              - engine: the database engine, check Engine enum for values. Support "==", "in [xx]", "!(in [xx])" operator.
              - exclude_unassigned: should be "true" or "false", will not show unassigned databases if it's true, support "==" operator.
-             - table: filter by the database table, support "==" and ".matches()" operator.
+             - table: filter by the database table, support "==" and ".contains()" operator.
              - labels.{key}: the database label, support "==" and "in" operators.
 
              For example:
@@ -21724,19 +22310,19 @@ components:
              environment == "" (find databases which environment is not set)
              project == "projects/{project resource id}"
              instance == "instances/{instance resource id}"
-             name.matches("database name")
+             name.contains("database name")
              engine == "MYSQL"
              engine in ["MYSQL", "POSTGRES"]
              !(engine in ["MYSQL", "POSTGRES"])
              exclude_unassigned == true
              table == "sample"
-             table.matches("sam")
+             table.contains("sam")
              labels.environment == "production"
              labels.region == "asia"
              labels.region in ["asia", "europe"]
 
              You can combine filter conditions like:
-             environment == "environments/prod" && name.matches("employee")
+             environment == "environments/prod" && name.contains("employee")
         showDeleted:
           type: boolean
           title: show_deleted
@@ -21801,18 +22387,18 @@ components:
              The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
              Supported filter:
-             - title: the group title, support "==" and ".matches()" operator.
-             - email: the group email, support "==" and ".matches()" operator.
+             - title: the group title, support "==" and ".contains()" operator.
+             - email: the group email, support "==" and ".contains()" operator.
              - project: the project full name in "projects/{id}" format, support "==" operator.
 
              For example:
              title == "dba"
              email == "dba@bytebase.com"
-             title.matches("dba")
-             email.matches("dba")
+             title.contains("dba")
+             email.contains("dba")
              project == "projects/sample-project"
              You can combine filter conditions like:
-             title.matches("dba") || email.matches("dba")
+             title.contains("dba") || email.contains("dba")
       title: ListGroupsRequest
       additionalProperties: false
       description: Request message for listing groups.
@@ -21836,6 +22422,14 @@ components:
       description: Response message for listing groups.
     bytebase.v1.ListIdentityProvidersRequest:
       type: object
+      properties:
+        parent:
+          type: string
+          title: parent
+          description: |-
+            The parent workspace whose identity providers should be listed.
+             Format: workspaces/{workspace}
+             When unset, the workspace is resolved from the request context.
       title: ListIdentityProvidersRequest
       additionalProperties: false
     bytebase.v1.ListIdentityProvidersResponse:
@@ -21967,21 +22561,21 @@ components:
              The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
              Supported filters:
-             - name: the instance name, support "==" and ".matches()" operator.
-             - resource_id: the instance id, support "==" and ".matches()" operator.
+             - name: the instance name, support "==" and ".contains()" operator.
+             - resource_id: the instance id, support "==" and ".contains()" operator.
              - environment: the environment full name in "environments/{id}" format, support "==" operator.
              - state: the instance state, check State enum for values, support "==" operator.
              - engine: the instance engine, check Engine enum for values. Support "==", "in [xx]", "!(in [xx])" operator.
-             - host: the instance host, support "==" and ".matches()" operator.
-             - port: the instance port, support "==" and ".matches()" operator.
+             - host: the instance host, support "==" and ".contains()" operator.
+             - port: the instance port, support "==" and ".contains()" operator.
              - project: the project full name in "projects/{id}" format, support "==" operator.
              - labels.{key}: the instance label, support "==" and "in" operators.
 
              For example:
              name == "sample instance"
-             name.matches("sample")
+             name.contains("sample")
              resource_id == "sample-instance"
-             resource_id.matches("sample")
+             resource_id.contains("sample")
              state == "DELETED"
              environment == "environments/test"
              environment == "" (find instances which environment is not set)
@@ -21989,14 +22583,14 @@ components:
              engine in ["MYSQL", "POSTGRES"]
              !(engine in ["MYSQL", "POSTGRES"])
              host == "127.0.0.1"
-             host.matches("127.0")
+             host.contains("127.0")
              port == "54321"
-             port.matches("543")
+             port.contains("543")
              labels.org_group == "infrastructure"
              labels.environment in ["prod", "production"]
              project == "projects/sample-project"
              You can combine filter conditions like:
-             name.matches("sample") && environment == "environments/test"
+             name.contains("sample") && environment == "environments/test"
              host == "127.0.0.1" && port == "54321"
         orderBy:
           type: string
@@ -22200,7 +22794,7 @@ components:
              - create_time: the plan create time in "2006-01-02T15:04:05Z07:00" format, support ">=" or "<=" operator.
              - has_rollout: whether the plan has rollout, support "==" operator, the value should be "true" or "false".
              - has_issue: the plan has issue or not, support "==" operator, the value should be "true" or "false".
-             - title: the plan title, support "==" operator for exact match and ".matches()" operator for case-insensitive substring match.
+             - title: the plan title, support "==" operator for exact match and ".contains()" operator for case-insensitive substring match.
              - spec_type: the plan spec config type, support "==" operator, the value should be "create_database_config", "change_database_config", or "export_data_config".
              - state: the plan state, support "==" operator, the value should be "ACTIVE" or "DELETED".
 
@@ -22208,7 +22802,7 @@ components:
              creator == "users/ed@bytebase.com" && create_time >= "2025-01-02T15:04:05Z07:00"
              has_rollout == false && has_issue == true
              title == "My Plan"
-             title.matches("database migration")
+             title.contains("database migration")
              spec_type == "change_database_config"
              state == "ACTIVE"
       title: ListPlansRequest
@@ -22326,6 +22920,20 @@ components:
             A token, which can be sent as `page_token` to retrieve the next page.
              If this field is omitted, there are no subsequent pages.
       title: ListProjectsResponse
+      additionalProperties: false
+    bytebase.v1.ListPurchasePlansRequest:
+      type: object
+      title: ListPurchasePlansRequest
+      additionalProperties: false
+    bytebase.v1.ListPurchasePlansResponse:
+      type: object
+      properties:
+        plans:
+          type: array
+          items:
+            $ref: '#/components/schemas/bytebase.v1.PurchasePlan'
+          title: plans
+      title: ListPurchasePlansResponse
       additionalProperties: false
     bytebase.v1.ListReleaseCategoriesRequest:
       type: object
@@ -22593,16 +23201,16 @@ components:
              The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
              Supported filter:
-             - name: the service account name, support "==" and ".matches()" operator.
-             - email: the service account email, support "==" and ".matches()" operator.
+             - name: the service account name, support "==" and ".contains()" operator.
+             - email: the service account email, support "==" and ".contains()" operator.
              - state: check State enum for values, support "==" operator.
 
              For example:
              name == "ed"
-             name.matches("ed")
+             name.contains("ed")
              state == "DELETED"
              email == "ed@service.bytebase.com"
-             email.matches("ed")
+             email.contains("ed")
       title: ListServiceAccountsRequest
       additionalProperties: false
       description: Request message for listing service accounts.
@@ -22697,20 +23305,20 @@ components:
              The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
              Supported filter:
-             - name: the user name, support "==" and ".matches()" operator.
-             - email: the user email, support "==" and ".matches()" operator.
+             - name: the user name, support "==" and ".contains()" operator.
+             - email: the user email, support "==" and ".contains()" operator.
              - state: check State enum for values, support "==" operator.
              - project: the project full name in "projects/{id}" format, support "==" operator.
 
              For example:
              name == "ed"
-             name.matches("ed")
+             name.contains("ed")
              email == "ed@bytebase.com"
-             email.matches("ed")
+             email.contains("ed")
              state == "DELETED"
              project == "projects/sample-project"
              You can combine filter conditions like:
-             name.matches("ed") && project == "projects/sample-project"
+             name.contains("ed") && project == "projects/sample-project"
              (name == "ed" || email == "ed@bytebase.com") && project == "projects/sample-project"
       title: ListUsersRequest
       additionalProperties: false
@@ -22770,16 +23378,16 @@ components:
              The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
              Supported filter:
-             - name: the workload identity name, support "==" and ".matches()" operator.
-             - email: the workload identity email, support "==" and ".matches()" operator.
+             - name: the workload identity name, support "==" and ".contains()" operator.
+             - email: the workload identity email, support "==" and ".contains()" operator.
              - state: check State enum for values, support "==" operator.
 
              For example:
              name == "ed"
-             name.matches("ed")
+             name.contains("ed")
              state == "DELETED"
              email == "ed@workload.bytebase.com"
-             email.matches("ed")
+             email.contains("ed")
       title: ListWorkloadIdentitiesRequest
       additionalProperties: false
       description: Request message for listing workload identities.
@@ -22801,6 +23409,20 @@ components:
       title: ListWorkloadIdentitiesResponse
       additionalProperties: false
       description: Response message for listing workload identities.
+    bytebase.v1.ListWorkspacesRequest:
+      type: object
+      title: ListWorkspacesRequest
+      additionalProperties: false
+    bytebase.v1.ListWorkspacesResponse:
+      type: object
+      properties:
+        workspaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/bytebase.v1.Workspace'
+          title: workspaces
+      title: ListWorkspacesResponse
+      additionalProperties: false
     bytebase.v1.LoginRequest:
       type: object
       properties:
@@ -22846,6 +23468,25 @@ components:
             - "null"
           title: mfa_temp_token
           description: The mfa_temp_token is used to verify the user's identity by MFA.
+        emailCode:
+          type:
+            - string
+            - "null"
+          title: email_code
+          description: |-
+            6-digit code from email for passwordless login/signup.
+             Pairs with `email`. Mutually exclusive with `password` and `idp_name`.
+        workspace:
+          type:
+            - string
+            - "null"
+          title: workspace
+          description: |-
+            Preferred workspace to land in after login. If the user is a member of this
+             workspace, the token is issued for it; otherwise falls back to the default
+             resolution (last login workspace → first membership). Typically populated
+             from the ?workspace= query parameter in invite links.
+             Format: workspaces/{workspace}
       title: LoginRequest
       additionalProperties: false
     bytebase.v1.LoginResponse:
@@ -22949,9 +23590,10 @@ components:
           title: context
           description: 'Additional context (e.g., "Matched global rule: PII Protection").'
         classificationLevel:
-          type: string
+          type: integer
           title: classification_level
-          description: Whether masking was due to classification level.
+          format: int32
+          description: The classification level that triggered masking.
         semanticTypeIcon:
           type: string
           title: semantic_type_icon
@@ -22990,13 +23632,14 @@ components:
              resource.database_name: the database name.
              resource.table_name: the table name.
              resource.column_name: the column name.
-             resource.classification_level: the classification level.
+             resource.classification_level: the classification level (integer).
 
              Each variable support following operations:
              ==: the value equals the target.
              !=: the value not equals the target.
              in: the value matches one of the targets.
              !(in): the value not matches any of the targets.
+             <, <=, >, >=: numeric comparison (classification_level only).
 
              For example:
              resource.environment_id == "test" && resource.project_id == "sample-project"
@@ -23279,6 +23922,31 @@ components:
       title: PackageMetadata
       additionalProperties: false
       description: PackageMetadata is the metadata for packages.
+    bytebase.v1.PaymentInfo:
+      type: object
+      properties:
+        totalPrice:
+          type: string
+          title: total_price
+        currency:
+          type: string
+          title: currency
+        periodStart:
+          type: string
+          title: period_start
+        periodEnd:
+          type: string
+          title: period_end
+        invoiceUrl:
+          type: string
+          title: invoice_url
+          description: Stripe Billing Portal URL for invoice management.
+        cancelAtPeriodEnd:
+          type: boolean
+          title: cancel_at_period_end
+          description: Whether the subscription is scheduled to cancel at the end of the current billing period.
+      title: PaymentInfo
+      additionalProperties: false
     bytebase.v1.PermissionDeniedDetail:
       type: object
       properties:
@@ -23373,6 +24041,22 @@ components:
           type: boolean
           title: has_rollout
           description: Whether the plan has started the rollout.
+          readOnly: true
+        approvalStatus:
+          title: approval_status
+          description: |-
+            The approval status of the linked issue.
+             Unspecified when no linked issue exists.
+          readOnly: true
+          $ref: '#/components/schemas/bytebase.v1.ApprovalStatus'
+        rolloutStageSummaries:
+          type: array
+          items:
+            $ref: '#/components/schemas/bytebase.v1.Plan.RolloutStageSummary'
+          title: rollout_stage_summaries
+          description: |-
+            Per-stage rollout status summary.
+             Ordered by environment deployment order. Empty when no rollout exists.
           readOnly: true
       title: Plan
       additionalProperties: false
@@ -23496,6 +24180,23 @@ components:
           format: int32
       title: PlanCheckRunStatusCountEntry
       additionalProperties: false
+    bytebase.v1.Plan.RolloutStageSummary:
+      type: object
+      properties:
+        stage:
+          type: string
+          title: stage
+          description: |-
+            The stage resource name.
+             Format: projects/{project}/plans/{plan}/rollout/stages/{stage}
+        taskStatusCounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/bytebase.v1.Plan.TaskStatusCount'
+          title: task_status_counts
+          description: Task status counts for this stage.
+      title: RolloutStageSummary
+      additionalProperties: false
     bytebase.v1.Plan.Spec:
       type: object
       allOf:
@@ -23530,6 +24231,20 @@ components:
               required:
                 - exportDataConfig
       title: Spec
+      additionalProperties: false
+    bytebase.v1.Plan.TaskStatusCount:
+      type: object
+      properties:
+        status:
+          title: status
+          description: The task status.
+          $ref: '#/components/schemas/bytebase.v1.Task.Status'
+        count:
+          type: integer
+          title: count
+          format: int32
+          description: The number of tasks in the status.
+      title: TaskStatusCount
       additionalProperties: false
     bytebase.v1.PlanCheckRun:
       type: object
@@ -24090,6 +24805,105 @@ components:
           title: value
       title: LabelsEntry
       additionalProperties: false
+    bytebase.v1.PurchaseBillingMethod:
+      type: object
+      properties:
+        interval:
+          title: interval
+          $ref: '#/components/schemas/bytebase.v1.BillingInterval'
+        discount:
+          title: discount
+          $ref: '#/components/schemas/bytebase.v1.PurchaseDiscount'
+      title: PurchaseBillingMethod
+      additionalProperties: false
+    bytebase.v1.PurchaseDiscount:
+      type: object
+      properties:
+        type:
+          title: type
+          $ref: '#/components/schemas/bytebase.v1.PurchaseDiscount.Type'
+        value:
+          type: integer
+          title: value
+          format: int32
+      title: PurchaseDiscount
+      additionalProperties: false
+    bytebase.v1.PurchaseDiscount.Type:
+      type: string
+      title: Type
+      enum:
+        - TYPE_UNSPECIFIED
+        - PERCENTAGE_OFF
+        - FIXED_MONTH_OFF
+        - FIXED_PRICE_OFF
+    bytebase.v1.PurchasePlan:
+      type: object
+      properties:
+        type:
+          title: type
+          $ref: '#/components/schemas/bytebase.v1.PlanType'
+        selfServicePurchase:
+          type: boolean
+          title: self_service_purchase
+        additionals:
+          type: array
+          items:
+            $ref: '#/components/schemas/bytebase.v1.PurchasePlanAdditional'
+          title: additionals
+        billingMethods:
+          type: array
+          items:
+            $ref: '#/components/schemas/bytebase.v1.PurchaseBillingMethod'
+          title: billing_methods
+      title: PurchasePlan
+      additionalProperties: false
+    bytebase.v1.PurchasePlanAdditional:
+      type: object
+      properties:
+        type:
+          title: type
+          $ref: '#/components/schemas/bytebase.v1.PurchasePlanAdditional.Type'
+        unitPrice:
+          type: integer
+          title: unit_price
+          format: int32
+          description: Price in USD cents per month.
+        freeCount:
+          type: integer
+          title: free_count
+          format: int32
+        minimumCount:
+          type: integer
+          title: minimum_count
+          format: int32
+        maximumCount:
+          type: integer
+          title: maximum_count
+          format: int32
+          description: -1 means unlimited.
+      title: PurchasePlanAdditional
+      additionalProperties: false
+    bytebase.v1.PurchasePlanAdditional.Type:
+      type: string
+      title: Type
+      enum:
+        - TYPE_UNSPECIFIED
+        - USER
+    bytebase.v1.PurchaseResponse:
+      type: object
+      properties:
+        paymentUrl:
+          type: string
+          title: payment_url
+          description: |-
+            If set, redirect to this Stripe Checkout URL.
+             If empty, the update was applied directly using the existing payment method.
+        sessionId:
+          type: string
+          title: session_id
+          description: Stripe Checkout Session ID. Used to verify the session after redirect.
+      title: PurchaseResponse
+      additionalProperties: false
     bytebase.v1.QueryDataPolicy:
       type: object
       properties:
@@ -24225,9 +25039,10 @@ components:
           title: data_source_id
           description: |-
             The id of data source.
-             It is used for querying admin data source even if the instance has
-             read-only data sources. Or it can be used to query a specific read-only
-             data source.
+             If omitted, Query resolves the data source server-side by using the single
+             read-only data source when exactly one exists, or the admin data source
+             otherwise. It can also be set explicitly to query the admin data source or
+             a specific read-only data source.
         explain:
           type: boolean
           title: explain
@@ -24254,7 +25069,6 @@ components:
       title: QueryRequest
       required:
         - name
-        - dataSourceId
       additionalProperties: false
     bytebase.v1.QueryResponse:
       type: object
@@ -24693,17 +25507,42 @@ components:
       title: RequestMetadata
       additionalProperties: false
       description: Metadata about the incoming request.
-    bytebase.v1.ResourcePackage:
+    bytebase.v1.RequestPasswordResetRequest:
       type: object
       properties:
-        logo:
+        email:
           type: string
-          title: logo
-          format: byte
-          description: The branding logo.
-      title: ResourcePackage
+          title: email
+          description: The email address of the account to reset.
+        workspace:
+          type:
+            - string
+            - "null"
+          title: workspace
+          description: |-
+            Optional workspace context captured at send time, used to locate the EMAIL setting,
+             and later (at verify time) for signup gate checks and workspace assignment.
+             Unset for SaaS brand-new signup (no workspace exists yet).
+             Format: workspaces/{workspace}
+      title: RequestPasswordResetRequest
       additionalProperties: false
-      description: Custom branding resources for the Bytebase instance.
+    bytebase.v1.ResetPasswordRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          title: email
+          description: The email address of the account.
+        code:
+          type: string
+          title: code
+          description: The 6-digit code from the reset email.
+        newPassword:
+          type: string
+          title: new_password
+          description: The new password to set.
+      title: ResetPasswordRequest
+      additionalProperties: false
     bytebase.v1.Restriction:
       type: object
       properties:
@@ -24722,7 +25561,32 @@ components:
           description: Password complexity and restriction requirements.
           readOnly: true
           $ref: '#/components/schemas/bytebase.v1.WorkspaceProfileSetting.PasswordRestriction'
+        allowEmailCodeSignin:
+          type: boolean
+          title: allow_email_code_signin
+          description: Whether email + 6-digit code signin is enabled for this workspace.
+          readOnly: true
+        passwordResetEnabled:
+          type: boolean
+          title: password_reset_enabled
+          description: |-
+            Whether password reset via email is available for this workspace.
+             True when the workspace (or deployment) has an email setting configured.
+          readOnly: true
       title: Restriction
+      additionalProperties: false
+    bytebase.v1.RetryIssueApprovalRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          title: name
+          description: |-
+            The name of the issue whose approval-finding should be retried.
+             Format: projects/{project}/issues/{issue}
+      title: RetryIssueApprovalRequest
+      required:
+        - name
       additionalProperties: false
     bytebase.v1.ReviewConfig:
       type: object
@@ -24792,7 +25656,8 @@ components:
           type: string
           title: file
           description: |-
-            Format: projects/{project}/releases/{release}/files/{id}
+            Format: projects/{project}/releases/{release}/files/{file_path}
+             The file_path segment is URL-encoded since file paths may contain "/".
              Can be empty.
         version:
           type: string
@@ -25422,6 +26287,7 @@ components:
         - ADVICE_ONLINE_MIGRATION
         - BUILTIN_PRIOR_BACKUP_CHECK
         - BUILTIN_WALK_THROUGH_CHECK
+        - STATEMENT_DISALLOW_TRUNCATE
     bytebase.v1.SchemaCatalog:
       type: object
       properties:
@@ -25744,25 +26610,25 @@ components:
              The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
              Supported filters:
-             - name: the project name, support "==" and ".matches()" operator.
-             - resource_id: the project id, support "==" and ".matches()" operator.
+             - name: the project name, support "==" and ".contains()" operator.
+             - resource_id: the project id, support "==" and ".contains()" operator.
              - exclude_default: if not include the default project, should be "true" or "false", support "==" operator.
              - state: check the State enum for the values, support "==" operator.
              - labels.{key}: the project label, support "==" and "in" operators.
 
              For example:
              name == "project name"
-             name.matches("project name")
+             name.contains("project name")
              resource_id == "project id"
-             resource_id.matches("project id")
+             resource_id.contains("project id")
              exclude_default == true
              state == "DELETED"
              labels.environment == "production"
              labels.tier == "critical"
              labels.environment in ["staging", "prod"]
              You can combine filter conditions like:
-             name == "project name" && resource_id.matches("project id")
-             name.matches("project name") || resource_id == "project id"
+             name == "project name" && resource_id.contains("project id")
+             name.contains("project name") || resource_id == "project id"
              labels.environment == "production" && labels.tier == "critical"
         pageSize:
           type: integer
@@ -25841,7 +26707,7 @@ components:
              - database: the database full name in "instances/{id}/databases/{name}" format, support "==" operator.
              - instance: the instance full name in "instances/{id}" format, support "==" operator.
              - type: the type, should be "QUERY" or "EXPORT", support "==" operator.
-             - statement: the SQL statement, support ".matches()" operator.
+             - statement: the SQL statement, support ".contains()" operator.
 
              For example:
              project == "projects/{project}"
@@ -25849,8 +26715,8 @@ components:
              instance == "instances/{instance}"
              type == "QUERY"
              type == "EXPORT"
-             statement.matches("select")
-             type == "QUERY" && statement.matches("select")
+             statement.contains("select")
+             type == "QUERY" && statement.contains("select")
       title: SearchQueryHistoriesRequest
       additionalProperties: false
     bytebase.v1.SearchQueryHistoriesResponse:
@@ -25948,6 +26814,25 @@ components:
           title: icon
           description: icon is the icon for semantic type, it can be emoji or base64 encoded image.
       title: SemanticType
+      additionalProperties: false
+    bytebase.v1.SendEmailLoginCodeRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          title: email
+          description: The email address to send the code to.
+        workspace:
+          type:
+            - string
+            - "null"
+          title: workspace
+          description: |-
+            Optional workspace context captured at send time, used to locate the EMAIL setting,
+             and later (at verify time) for signup gate checks and workspace assignment.
+             Unset for SaaS brand-new signup (no workspace exists yet).
+             Format: workspaces/{workspace}
+      title: SendEmailLoginCodeRequest
       additionalProperties: false
     bytebase.v1.SequenceMetadata:
       type: object
@@ -26100,6 +26985,7 @@ components:
         - DATA_CLASSIFICATION
         - SEMANTIC_TYPES
         - ENVIRONMENT
+        - EMAIL
     bytebase.v1.SettingValue:
       type: object
       oneOf:
@@ -26127,6 +27013,14 @@ components:
           title: data_classification
           required:
             - dataClassification
+        - type: object
+          properties:
+            email:
+              title: email
+              $ref: '#/components/schemas/bytebase.v1.EmailSetting'
+          title: email
+          required:
+            - email
         - type: object
           properties:
             environment:
@@ -26470,7 +27364,45 @@ components:
           title: ha
           description: Whether high availability (multiple replicas) is enabled.
           readOnly: true
+        etag:
+          type: string
+          title: etag
+          description: Etag for optimistic concurrency on purchase updates. Only set in SaaS mode.
+          readOnly: true
       title: Subscription
+      additionalProperties: false
+    bytebase.v1.SwitchWorkspaceRequest:
+      type: object
+      properties:
+        workspace:
+          type: string
+          title: workspace
+          description: |-
+            The target workspace to switch to.
+             Format: workspaces/{workspace}
+        web:
+          type: boolean
+          title: web
+          description: If true, sets tokens as HTTP-only cookies (browser clients).
+        otpCode:
+          type:
+            - string
+            - "null"
+          title: otp_code
+          description: OTP code for MFA verification. Required if the target workspace enforces MFA.
+        recoveryCode:
+          type:
+            - string
+            - "null"
+          title: recovery_code
+          description: Recovery code for MFA verification (alternative to otp_code).
+        mfaTempToken:
+          type:
+            - string
+            - "null"
+          title: mfa_temp_token
+          description: Temporary MFA token from a previous SwitchWorkspace call that returned mfa_temp_token.
+      title: SwitchWorkspaceRequest
       additionalProperties: false
     bytebase.v1.SyncDatabaseRequest:
       type: object
@@ -27171,6 +28103,10 @@ components:
           title: release_file_execute
           description: Release file execution details (if type is RELEASE_FILE_EXECUTE).
           $ref: '#/components/schemas/bytebase.v1.TaskRunLogEntry.ReleaseFileExecute'
+        ghostMigration:
+          title: ghost_migration
+          description: gh-ost migration details (if type is GHOST_MIGRATION).
+          $ref: '#/components/schemas/bytebase.v1.TaskRunLogEntry.GhostMigration'
       title: TaskRunLogEntry
       additionalProperties: false
     bytebase.v1.TaskRunLogEntry.CommandExecute:
@@ -27266,6 +28202,24 @@ components:
       title: DatabaseSync
       additionalProperties: false
       description: Database synchronization details.
+    bytebase.v1.TaskRunLogEntry.GhostMigration:
+      type: object
+      properties:
+        startTime:
+          title: start_time
+          description: When the gh-ost migration started.
+          $ref: '#/components/schemas/google.protobuf.Timestamp'
+        endTime:
+          title: end_time
+          description: When the gh-ost migration ended.
+          $ref: '#/components/schemas/google.protobuf.Timestamp'
+        error:
+          type: string
+          title: error
+          description: Error message if the gh-ost migration failed.
+      title: GhostMigration
+      additionalProperties: false
+      description: gh-ost migration details.
     bytebase.v1.TaskRunLogEntry.PriorBackup:
       type: object
       properties:
@@ -27430,6 +28384,7 @@ components:
         - RETRY_INFO
         - COMPUTE_DIFF
         - RELEASE_FILE_EXECUTE
+        - GHOST_MIGRATION
       description: The type of log entry.
     bytebase.v1.TaskRunSession:
       type: object
@@ -27580,6 +28535,35 @@ components:
       title: TessellationConfig
       additionalProperties: false
       description: TessellationConfig defines tessellation parameters for spatial indexes.
+    bytebase.v1.TestEmailSettingRequest:
+      type: object
+      properties:
+        parent:
+          type: string
+          title: parent
+        emailSetting:
+          title: email_setting
+          $ref: '#/components/schemas/bytebase.v1.EmailSetting'
+        to:
+          type: string
+          title: to
+      title: TestEmailSettingRequest
+      required:
+        - parent
+        - emailSetting
+        - to
+      additionalProperties: false
+    bytebase.v1.TestEmailSettingResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          title: success
+        error:
+          type: string
+          title: error
+      title: TestEmailSettingResponse
+      additionalProperties: false
     bytebase.v1.TestIdentityProviderRequest:
       type: object
       allOf:
@@ -28133,6 +29117,24 @@ components:
       required:
         - project
       additionalProperties: false
+    bytebase.v1.UpdatePurchaseRequest:
+      type: object
+      properties:
+        plan:
+          title: plan
+          $ref: '#/components/schemas/bytebase.v1.PlanType'
+        interval:
+          title: interval
+          $ref: '#/components/schemas/bytebase.v1.BillingInterval'
+        seats:
+          type: integer
+          title: seats
+          format: int32
+        etag:
+          type: string
+          title: etag
+      title: UpdatePurchaseRequest
+      additionalProperties: false
     bytebase.v1.UpdateReleaseRequest:
       type: object
       properties:
@@ -28239,20 +29241,6 @@ components:
         - setting
       additionalProperties: false
       description: The request message for updating or creating a setting.
-    bytebase.v1.UpdateSubscriptionRequest:
-      type: object
-      properties:
-        license:
-          type: string
-          title: license
-        allowMissing:
-          type: boolean
-          title: allow_missing
-          description: |-
-            If set to true, and the subscription is not found, a new subscription will be created.
-             In this situation, `update_mask` is ignored.
-      title: UpdateSubscriptionRequest
-      additionalProperties: false
     bytebase.v1.UpdateUserRequest:
       type: object
       properties:
@@ -28393,6 +29381,27 @@ components:
       required:
         - worksheet
       additionalProperties: false
+    bytebase.v1.UpdateWorkspaceRequest:
+      type: object
+      properties:
+        workspace:
+          title: workspace
+          $ref: '#/components/schemas/bytebase.v1.Workspace'
+        updateMask:
+          title: update_mask
+          $ref: '#/components/schemas/google.protobuf.FieldMask'
+      title: UpdateWorkspaceRequest
+      required:
+        - workspace
+      additionalProperties: false
+    bytebase.v1.UploadLicenseRequest:
+      type: object
+      properties:
+        license:
+          type: string
+          title: license
+      title: UploadLicenseRequest
+      additionalProperties: false
     bytebase.v1.User:
       type: object
       properties:
@@ -28499,6 +29508,23 @@ components:
         - BITBUCKET
         - AZURE_DEVOPS
       description: Version control system type.
+    bytebase.v1.VerifyCheckoutSessionRequest:
+      type: object
+      properties:
+        sessionId:
+          type: string
+          title: session_id
+      title: VerifyCheckoutSessionRequest
+      additionalProperties: false
+    bytebase.v1.VerifyCheckoutSessionResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          title: status
+          description: 'Stripe Checkout Session status: "complete", "expired", or "open".'
+      title: VerifyCheckoutSessionResponse
+      additionalProperties: false
     bytebase.v1.ViewMetadata:
       type: object
       properties:
@@ -28580,6 +29606,7 @@ components:
              - ISSUE_CREATED
              - ISSUE_APPROVAL_REQUESTED
              - ISSUE_SENT_BACK
+             - ISSUE_APPROVED
              - PIPELINE_FAILED
              - PIPELINE_COMPLETED
       title: Webhook
@@ -28600,6 +29627,7 @@ components:
         - FEISHU
         - WECOM
         - LARK
+        - GOOGLE_CHAT
       description: Webhook integration type.
     bytebase.v1.WorkloadIdentity:
       type: object
@@ -28786,6 +29814,22 @@ components:
       required:
         - worksheet
       additionalProperties: false
+    bytebase.v1.Workspace:
+      type: object
+      properties:
+        name:
+          type: string
+          title: name
+          description: 'Format: workspaces/{workspace}'
+        title:
+          type: string
+          title: title
+        logo:
+          type: string
+          title: logo
+          description: The branding logo.
+      title: Workspace
+      additionalProperties: false
     bytebase.v1.WorkspaceApprovalSetting:
       type: object
       properties:
@@ -28860,10 +29904,10 @@ components:
           type: boolean
           title: disallow_signup
           description: Disallow self-service signup, users can only be invited by the owner.
-        require2fa:
+        requireMfa:
           type: boolean
-          title: require_2fa
-          description: Require 2FA for all users.
+          title: require_mfa
+          description: Require MFA for all users.
         refreshTokenDuration:
           title: refresh_token_duration
           description: The duration for refresh token. Default is 7 days.
@@ -28918,10 +29962,6 @@ components:
           type: string
           title: directory_sync_token
           description: The token for directory sync authentication.
-        brandingLogo:
-          type: string
-          title: branding_logo
-          description: The branding logo as a data URI (e.g. data:image/png;base64,...).
         passwordRestriction:
           title: password_restriction
           description: Password restriction settings.
@@ -28947,6 +29987,12 @@ components:
           title: query_timeout
           description: The query timeout duration for query and export, works for the SQL Editor and Export Center.
           $ref: '#/components/schemas/google.protobuf.Duration'
+        allowEmailCodeSignin:
+          type: boolean
+          title: allow_email_code_signin
+          description: |-
+            Allow signin/signup using email + a 6-digit one-time verification code.
+             Requires the EMAIL setting to be configured on the workspace.
       title: WorkspaceProfileSetting
       additionalProperties: false
     bytebase.v1.WorkspaceProfileSetting.PasswordRestriction:
@@ -30026,6 +31072,18 @@ security: []
 tags:
   - name: AccessGrantService
     description: AccessGrantService manages temporary access grants within projects.
+  - name: RolloutService
+    description: RolloutService manages the execution of deployment plans.
+  - name: InstanceRoleService
+    description: InstanceRoleService manages database roles within instances.
+  - name: InstanceService
+    description: InstanceService manages database instances and their connections.
+  - name: DatabaseService
+    description: DatabaseService manages databases and their schemas.
+  - name: SQLService
+    description: SQLService executes SQL queries and manages query operations.
+  - name: PlanService
+    description: PlanService manages deployment plans for database changes.
   - name: IssueService
     description: IssueService manages issues for tracking database changes and tasks.
   - name: SettingService
@@ -30046,22 +31104,12 @@ tags:
     description: DatabaseCatalogService manages database schema metadata and classification.
   - name: DatabaseGroupService
     description: DatabaseGroupService manages database groups for organizing databases by criteria.
-  - name: InstanceRoleService
-    description: InstanceRoleService manages database roles within instances.
-  - name: InstanceService
-    description: InstanceService manages database instances and their connections.
-  - name: DatabaseService
-    description: DatabaseService manages databases and their schemas.
   - name: GroupService
     description: GroupService manages user groups for organizing users and permissions.
   - name: IdentityProviderService
     description: IdentityProviderService manages external identity providers for SSO authentication.
   - name: OrgPolicyService
     description: OrgPolicyService manages organizational policies at various resource levels.
-  - name: SQLService
-    description: SQLService executes SQL queries and manages query operations.
-  - name: PlanService
-    description: PlanService manages deployment plans for database changes.
   - name: ProjectService
     description: ProjectService manages projects that group databases and changes.
   - name: ReleaseService
@@ -30072,8 +31120,6 @@ tags:
     description: RevisionService manages schema revision history.
   - name: RoleService
     description: RoleService manages workspace roles and permissions.
-  - name: RolloutService
-    description: RolloutService manages the execution of deployment plans.
   - name: ServiceAccountService
     description: ServiceAccountService manages service accounts for API integrations.
   - name: SheetService

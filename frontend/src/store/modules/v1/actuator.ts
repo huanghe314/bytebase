@@ -3,44 +3,22 @@ import { defineStore } from "pinia";
 import semver from "semver";
 import { computed, ref } from "vue";
 import { actuatorServiceClientConnect } from "@/connect";
-import {
-  type AppFeatures,
-  type AppProfile,
-  defaultAppProfile,
-  type Release,
-  type ReleaseInfo,
-} from "@/types";
-import type {
-  ActuatorInfo,
-  ResourcePackage,
-} from "@/types/proto-es/v1/actuator_service_pb";
-import {
-  STORAGE_KEY_ONBOARDING,
-  STORAGE_KEY_RELEASE,
-  semverCompare,
-} from "@/utils";
+import { type AppFeatures, type AppProfile, defaultAppProfile } from "@/types";
+import type { ActuatorInfo } from "@/types/proto-es/v1/actuator_service_pb";
+import { STORAGE_KEY_ONBOARDING } from "@/utils";
 
 const EXTERNAL_URL_PLACEHOLDER =
   "https://docs.bytebase.com/get-started/self-host/external-url";
-const GITHUB_API_LIST_BYTEBASE_RELEASE =
-  "https://api.github.com/repos/bytebase/bytebase/releases";
 
 export const useActuatorV1Store = defineStore("actuator_v1", () => {
   // State
   const initialized = ref(false);
   const serverInfo = ref<ActuatorInfo | undefined>(undefined);
   const serverInfoTs = ref(0);
-  const resourcePackage = ref<ResourcePackage | undefined>(undefined);
-  const releaseInfo = useLocalStorage<ReleaseInfo>(STORAGE_KEY_RELEASE, {
-    ignoreRemindModalTillNextRelease: false,
-    nextCheckTs: 0,
-  });
   const appProfile = ref<AppProfile>(defaultAppProfile());
   const onboardingState = useLocalStorage<{
-    isOnboarding: boolean;
     consumed: string[];
   }>(STORAGE_KEY_ONBOARDING, {
-    isOnboarding: false,
     consumed: [],
   });
 
@@ -55,13 +33,6 @@ export const useActuatorV1Store = defineStore("actuator_v1", () => {
 
   const info = computed(() => serverInfo.value);
 
-  const brandingLogo = computed(() => {
-    if (!resourcePackage.value?.logo) {
-      return "";
-    }
-    return new TextDecoder().decode(resourcePackage.value?.logo);
-  });
-
   const version = computed(() => serverInfo.value?.version || "");
 
   const gitCommitBE = computed(() => {
@@ -74,8 +45,6 @@ export const useActuatorV1Store = defineStore("actuator_v1", () => {
     return commit === "" ? "unknown" : commit;
   });
 
-  const isDemo = computed(() => serverInfo.value?.demo);
-
   const isDocker = computed(() => serverInfo.value?.docker || false);
 
   const isSaaSMode = computed(() => serverInfo.value?.saas || false);
@@ -84,25 +53,10 @@ export const useActuatorV1Store = defineStore("actuator_v1", () => {
     () => serverInfo.value?.workspace ?? ""
   );
 
-  const needAdminSetup = computed(
-    () => serverInfo.value?.needAdminSetup || false
-  );
-
   const needConfigureExternalUrl = computed(() => {
     if (!serverInfo.value) return false;
     const url = serverInfo.value?.externalUrl ?? "";
     return url === "" || url === EXTERNAL_URL_PLACEHOLDER;
-  });
-
-  const hasNewRelease = computed(() => {
-    return (
-      (serverInfo.value?.version === "development" &&
-        !!releaseInfo.value.latest?.tag_name) ||
-      semverCompare(
-        releaseInfo.value.latest?.tag_name ?? "",
-        serverInfo.value?.version ?? ""
-      )
-    );
   });
 
   const activatedInstanceCount = computed(
@@ -118,6 +72,12 @@ export const useActuatorV1Store = defineStore("actuator_v1", () => {
   const activeUserCount = computed(
     () => serverInfo.value?.activatedUserCount ?? 0
   );
+
+  const userCountInIam = computed(() => serverInfo.value?.userCountInIam ?? 0);
+
+  const enableOnboarding = computed(() => {
+    return activeUserCount.value === 1 && !isSaaSMode.value;
+  });
 
   const updateUserStat = (count: number) => {
     if (!serverInfo.value) {
@@ -142,85 +102,21 @@ export const useActuatorV1Store = defineStore("actuator_v1", () => {
     return activeUserCount.value <= 1;
   });
 
-  const setLogo = (logo: string) => {
-    if (resourcePackage.value) {
-      resourcePackage.value.logo = new TextEncoder().encode(logo);
-    }
-  };
-
   const setServerInfo = (info: ActuatorInfo) => {
     serverInfo.value = info;
     serverInfoTs.value = Date.now();
   };
 
   const fetchActuatorInfo = async (workspace?: string) => {
-    if (!workspace) {
-      return actuatorServiceClientConnect.getActuatorInfo({});
-    }
-    return actuatorServiceClientConnect.getWorkspaceActuatorInfo({
-      name: workspace,
+    return actuatorServiceClientConnect.getActuatorInfo({
+      name: workspace ?? "",
     });
   };
 
   const fetchServerInfo = async (workspace?: string) => {
-    const [info, pkg] = await Promise.all([
-      fetchActuatorInfo(workspace),
-      actuatorServiceClientConnect.getResourcePackage({
-        name: workspace,
-      }),
-    ]);
+    const info = await fetchActuatorInfo(workspace);
     setServerInfo(info);
-    resourcePackage.value = pkg;
     return info;
-  };
-
-  const fetchLatestRelease = async (): Promise<Release | undefined> => {
-    try {
-      const response = await fetch(
-        `${GITHUB_API_LIST_BYTEBASE_RELEASE}?per_page=1`
-      );
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const releaseList = (await response.json()) as Release[];
-      return releaseList[0];
-    } catch {
-      return;
-    }
-  };
-
-  const tryToRemindRelease = async (): Promise<boolean> => {
-    if (serverInfo.value?.saas ?? false) {
-      return false;
-    }
-    if (!releaseInfo.value.latest) {
-      const release = await fetchLatestRelease();
-      releaseInfo.value.latest = release;
-    }
-    if (!releaseInfo.value.latest) {
-      return false;
-    }
-
-    if (Date.now() >= releaseInfo.value.nextCheckTs) {
-      const release = await fetchLatestRelease();
-      if (!release) {
-        return false;
-      }
-
-      releaseInfo.value.nextCheckTs = Date.now() + 24 * 60 * 60 * 1000;
-
-      if (semverCompare(release.tag_name, releaseInfo.value.latest.tag_name)) {
-        releaseInfo.value.ignoreRemindModalTillNextRelease = false;
-      }
-
-      releaseInfo.value.latest = release;
-    }
-
-    if (releaseInfo.value.ignoreRemindModalTillNextRelease) {
-      return false;
-    }
-
-    return hasNewRelease.value;
   };
 
   const tryToRemindRefresh = async (): Promise<boolean> => {
@@ -246,36 +142,29 @@ export const useActuatorV1Store = defineStore("actuator_v1", () => {
     initialized,
     serverInfo,
     serverInfoTs,
-    resourcePackage,
-    releaseInfo,
     appProfile,
     onboardingState,
     // Getters
     changelogURL,
     info,
-    brandingLogo,
     version,
     gitCommitBE,
     gitCommitFE,
-    isDemo,
     isDocker,
     isSaaSMode,
     workspaceResourceName,
-    needAdminSetup,
     needConfigureExternalUrl,
-    hasNewRelease,
     activatedInstanceCount,
     totalInstanceCount,
     replicaCount,
     quickStartEnabled,
-    // Actions
+    enableOnboarding,
     activeUserCount,
+    userCountInIam,
+    // Actions
     updateUserStat,
-    setLogo,
     setServerInfo,
     fetchServerInfo,
-    fetchLatestRelease,
-    tryToRemindRelease,
     tryToRemindRefresh,
     setupSample,
     overrideAppFeatures,

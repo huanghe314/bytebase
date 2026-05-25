@@ -10,15 +10,22 @@ import { router } from "@/router";
 import {
   AUTH_MFA_MODULE,
   AUTH_PASSWORD_RESET_MODULE,
+  AUTH_PROFILE_SETUP_MODULE,
   AUTH_SIGNIN_MODULE,
 } from "@/router/auth";
 import { SETUP_MODULE } from "@/router/setup";
 import { SQL_EDITOR_HOME_MODULE } from "@/router/sqlEditor";
-import { useActuatorV1Store, useAppFeature, useUserStore } from "@/store";
+import {
+  useActuatorV1Store,
+  useAppFeature,
+  useUserStore,
+  useWorkspaceV1Store,
+} from "@/store";
 import { UNKNOWN_USER_NAME, unknownUser } from "@/types";
 import {
   type LoginRequest,
   LoginRequestSchema,
+  SendEmailLoginCodeRequestSchema,
   SignupRequestSchema,
 } from "@/types/proto-es/v1/auth_service_pb";
 import { DatabaseChangeMode } from "@/types/proto-es/v1/setting_service_pb";
@@ -117,6 +124,10 @@ export const useAuthStore = defineStore("auth_v1", () => {
 
     setRequireResetPassword(resp.requireResetPassword);
     await actuatorStore.fetchServerInfo(user?.workspace);
+    // Re-fetch the current workspace now that we're authenticated — the
+    // workspace store watcher may have tried (and failed) pre-login when
+    // workspaceResourceName was already set from the signin page's actuator fetch.
+    await useWorkspaceV1Store().fetchCurrentWorkspace();
 
     // After user login, we need to reset the auth session key.
     authSessionKey.value = uniqueId();
@@ -131,6 +142,14 @@ export const useAuthStore = defineStore("auth_v1", () => {
     if (resp.requireResetPassword) {
       return router.push({
         name: AUTH_PASSWORD_RESET_MODULE,
+        query: {
+          redirect: nextPage,
+        },
+      });
+    }
+    if (actuatorStore.isSaaSMode && resp.user && needsProfileSetup(resp.user)) {
+      return router.push({
+        name: AUTH_PROFILE_SETUP_MODULE,
         query: {
           redirect: nextPage,
         },
@@ -161,8 +180,7 @@ export const useAuthStore = defineStore("auth_v1", () => {
     await actuatorStore.fetchServerInfo(user?.workspace);
     authSessionKey.value = uniqueId();
 
-    if (actuatorStore.needAdminSetup) {
-      actuatorStore.onboardingState.isOnboarding = true;
+    if (actuatorStore.enableOnboarding) {
       return router.replace({ name: SETUP_MODULE });
     }
 
@@ -174,25 +192,12 @@ export const useAuthStore = defineStore("auth_v1", () => {
     router.replace(nextPage);
   };
 
-  const cleanupUserStorage = (email: string) => {
-    if (!email) return;
-    const keysToRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.endsWith(`.${email}`)) {
-        keysToRemove.push(key);
-      }
-    }
-    keysToRemove.forEach((key) => localStorage.removeItem(key));
-  };
-
   const logout = async () => {
     try {
       await authServiceClientConnect.logout({});
     } catch {
       // nothing
     } finally {
-      cleanupUserStorage(currentUserEmail.value);
       unauthenticatedOccurred.value = false;
       const pathname = location.pathname;
       // Replace and reload the page to clear frontend state directly.
@@ -217,6 +222,12 @@ export const useAuthStore = defineStore("auth_v1", () => {
     }
   };
 
+  const sendEmailLoginCode = async (email: string, workspace?: string) => {
+    await authServiceClientConnect.sendEmailLoginCode(
+      create(SendEmailLoginCodeRequestSchema, { email, workspace })
+    );
+  };
+
   // Update currentUserName after self email change.
   // Sets flag to suppress "logged in as another user" notification.
   const updateCurrentUserNameForEmailChange = (newName: string) => {
@@ -236,6 +247,7 @@ export const useAuthStore = defineStore("auth_v1", () => {
     logout,
     fetchCurrentUser,
     setRequireResetPassword,
+    sendEmailLoginCode,
     updateCurrentUserNameForEmailChange,
   };
 });
@@ -249,3 +261,20 @@ export const useCurrentUserV1 = () => {
       unknownUser()
   );
 };
+
+/**
+ * Returns true if the user should be prompted to set up their profile.
+ * First-time login with an auto-generated name (email local-part or full email).
+ */
+function needsProfileSetup(user: User): boolean {
+  // Only prompt on first login (lastLoginTime is not set yet).
+  if (user.profile?.lastLoginTime) return false;
+  const name = user.title;
+  const email = user.email;
+  if (!name || !email) return false;
+  // Name matches full email or email local-part → auto-generated.
+  if (name === email) return true;
+  const atIndex = email.indexOf("@");
+  if (atIndex > 0 && name === email.substring(0, atIndex)) return true;
+  return false;
+}

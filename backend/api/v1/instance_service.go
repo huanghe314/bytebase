@@ -2,7 +2,14 @@ package v1
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"log/slog"
+	"path/filepath"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -54,7 +61,7 @@ func (s *InstanceService) GetInstance(ctx context.Context, req *connect.Request[
 	if err != nil {
 		return nil, err
 	}
-	result := convertToV1Instance(instance)
+	result := s.convertToV1Instance(ctx, instance)
 	return connect.NewResponse(result), nil
 }
 
@@ -104,8 +111,9 @@ func (s *InstanceService) ListInstances(ctx context.Context, req *connect.Reques
 	response := &v1pb.ListInstancesResponse{
 		NextPageToken: nextPageToken,
 	}
+	workspaceID := common.GetWorkspaceIDFromContext(ctx)
 	for _, instance := range instances {
-		ins := convertToV1Instance(instance)
+		ins := convertToV1Instance(instance, s.licenseService.IsInstanceEffectivelyActivated(ctx, workspaceID, instance))
 		response.Instances = append(response.Instances, ins)
 	}
 	return connect.NewResponse(response), nil
@@ -165,6 +173,19 @@ func (s *InstanceService) CreateInstance(ctx context.Context, req *connect.Reque
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	// Set the workspace ID early so that workspace-scoped license checks
+	// (e.g. EXTERNAL_SECRET_MANAGER) work during the ValidateOnly test
+	// connection below, before the instance is persisted.
+	workspaceID := common.GetWorkspaceIDFromContext(ctx)
+	instanceMessage.Workspace = workspaceID
+	for _, ds := range instanceMessage.Metadata.GetDataSources() {
+		if err := validateAndSanitizeDataSourceTLS(ds); err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+	}
+	if err := s.checkInstanceDataSources(ctx, instanceMessage, instanceMessage.Metadata.GetDataSources()); err != nil {
+		return nil, err
+	}
 
 	// Test connection.
 	if req.Msg.ValidateOnly {
@@ -190,29 +211,19 @@ func (s *InstanceService) CreateInstance(ctx context.Context, req *connect.Reque
 			}
 		}
 
-		result := convertToV1Instance(instanceMessage)
+		result := s.convertToV1Instance(ctx, instanceMessage)
 		return connect.NewResponse(result), nil
 	}
 
-	workspaceID := common.GetWorkspaceIDFromContext(ctx)
-	activatedInstanceLimit := s.licenseService.GetActivatedInstanceLimit(ctx, workspaceID)
-	if instanceMessage.Metadata.GetActivation() {
-		count, err := s.store.GetActivatedInstanceCount(ctx, workspaceID)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
-		}
-		if count >= activatedInstanceLimit {
-			return nil, connect.NewError(connect.CodeResourceExhausted, errors.Errorf(instanceExceededError, activatedInstanceLimit))
-		}
-	}
-
-	if err := s.checkInstanceDataSources(ctx, instanceMessage, instanceMessage.Metadata.GetDataSources()); err != nil {
+	if err := s.checkActivationLimit(ctx, workspaceID, instanceMessage.Metadata.GetActivation()); err != nil {
 		return nil, err
 	}
 
-	instanceMessage.Workspace = workspaceID
 	instance, err := s.store.CreateInstance(ctx, instanceMessage)
 	if err != nil {
+		if strings.Contains(err.Error(), "duplicate key") {
+			return nil, connect.NewError(connect.CodeAlreadyExists, errors.Errorf("instance ID %q already exists", req.Msg.InstanceId))
+		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 
@@ -231,26 +242,174 @@ func (s *InstanceService) CreateInstance(ctx context.Context, req *connect.Reque
 		s.schemaSyncer.SyncAllDatabases(ctx, instance)
 	}
 
-	result := convertToV1Instance(instance)
+	result := s.convertToV1Instance(ctx, instance)
 	return connect.NewResponse(result), nil
 }
 
+func instanceWithMetadata(instance *store.InstanceMessage, metadata *storepb.Instance) *store.InstanceMessage {
+	candidate := *instance
+	candidate.Metadata = metadata
+	return &candidate
+}
+
+func (s *InstanceService) convertToV1Instance(ctx context.Context, instance *store.InstanceMessage) *v1pb.Instance {
+	return convertToV1Instance(instance, s.licenseService.IsInstanceEffectivelyActivated(ctx, common.GetWorkspaceIDFromContext(ctx), instance))
+}
+
 func (s *InstanceService) checkInstanceDataSources(ctx context.Context, instance *store.InstanceMessage, dataSources []*storepb.DataSource) error {
-	dsIDMap := map[string]bool{}
 	for _, ds := range dataSources {
 		if err := s.checkDataSource(ctx, instance, ds); err != nil {
 			return err
 		}
-		if dsIDMap[ds.GetId()] {
-			return connect.NewError(connect.CodeInvalidArgument, errors.Errorf(`duplicate data source id "%s"`, ds.GetId()))
-		}
-		dsIDMap[ds.GetId()] = true
 	}
-
+	if err := store.ValidateDataSources(dataSources); err != nil {
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
 	return nil
 }
 
+func validateAndSanitizeDataSourceTLS(ds *storepb.DataSource) error {
+	if !ds.GetUseSsl() {
+		ds.SslCa = ""
+		ds.SslCert = ""
+		ds.SslKey = ""
+		ds.SslCaPath = ""
+		ds.SslCertPath = ""
+		ds.SslKeyPath = ""
+		return nil
+	}
+	for _, conflict := range []struct {
+		inlineField string
+		pathField   string
+		inlineValue string
+		pathValue   string
+	}{
+		{"ssl_ca", "ssl_ca_path", ds.GetSslCa(), ds.GetSslCaPath()},
+		{"ssl_cert", "ssl_cert_path", ds.GetSslCert(), ds.GetSslCertPath()},
+		{"ssl_key", "ssl_key_path", ds.GetSslKey(), ds.GetSslKeyPath()},
+	} {
+		if conflict.inlineValue != "" && conflict.pathValue != "" {
+			return errors.Errorf("cannot set both %s and %s; clear one of them by including the field in the update_mask with an empty value when switching TLS material source", conflict.inlineField, conflict.pathField)
+		}
+	}
+	for _, pathField := range []struct {
+		field string
+		path  string
+	}{
+		{"ssl_ca_path", ds.GetSslCaPath()},
+		{"ssl_cert_path", ds.GetSslCertPath()},
+		{"ssl_key_path", ds.GetSslKeyPath()},
+	} {
+		if pathField.path != "" && !filepath.IsAbs(pathField.path) {
+			return errors.Errorf("%s must be an absolute path", pathField.field)
+		}
+	}
+	if ds.GetSslCa() != "" {
+		if err := validateInlineCAPEM([]byte(ds.GetSslCa())); err != nil {
+			return errors.Wrap(err, "invalid ssl_ca PEM")
+		}
+	}
+	certSet := ds.GetSslCert() != "" || ds.GetSslCertPath() != ""
+	keySet := ds.GetSslKey() != "" || ds.GetSslKeyPath() != ""
+	if certSet != keySet {
+		return errors.New("ssl_cert and ssl_key must be both set or unset")
+	}
+	if ds.GetSslCert() != "" && ds.GetSslKey() != "" {
+		if _, err := tls.X509KeyPair([]byte(ds.GetSslCert()), []byte(ds.GetSslKey())); err != nil {
+			return errors.Wrap(err, "invalid ssl_cert or ssl_key PEM")
+		}
+	}
+	if ds.GetSslCert() != "" && ds.GetSslKey() == "" {
+		if err := validateInlineCertPEM([]byte(ds.GetSslCert())); err != nil {
+			return errors.Wrap(err, "invalid ssl_cert PEM")
+		}
+	}
+	if ds.GetSslKey() != "" && ds.GetSslCert() == "" {
+		if err := validateInlineKeyPEM([]byte(ds.GetSslKey())); err != nil {
+			return errors.Wrap(err, "invalid ssl_key PEM")
+		}
+	}
+	return nil
+}
+
+func validateInlineCAPEM(data []byte) error {
+	pool := x509.NewCertPool()
+	if ok := pool.AppendCertsFromPEM(data); !ok {
+		return errors.New("no valid CERTIFICATE PEM block found")
+	}
+	return nil
+}
+
+func validateInlineCertPEM(data []byte) error {
+	var certs [][]byte
+	for {
+		var block *pem.Block
+		block, data = pem.Decode(data)
+		if block == nil {
+			break
+		}
+		if block.Type == "CERTIFICATE" {
+			certs = append(certs, block.Bytes)
+		}
+	}
+	if len(certs) == 0 {
+		return errors.New("no CERTIFICATE PEM block found")
+	}
+	if _, err := x509.ParseCertificate(certs[0]); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateInlineKeyPEM(data []byte) error {
+	var block *pem.Block
+	for {
+		block, data = pem.Decode(data)
+		if block == nil {
+			return errors.New("no PRIVATE KEY PEM block found")
+		}
+		if block.Type == "PRIVATE KEY" || strings.HasSuffix(block.Type, " PRIVATE KEY") {
+			break
+		}
+	}
+	_, err := parseInlinePrivateKey(block.Bytes)
+	return err
+}
+
+func parseInlinePrivateKey(der []byte) (any, error) {
+	if key, err := x509.ParsePKCS1PrivateKey(der); err == nil {
+		return key, nil
+	}
+	if key, err := x509.ParsePKCS8PrivateKey(der); err == nil {
+		switch key := key.(type) {
+		case *rsa.PrivateKey, *ecdsa.PrivateKey, ed25519.PrivateKey:
+			return key, nil
+		default:
+			return nil, errors.Errorf("unsupported private key type %T", key)
+		}
+	}
+	if key, err := x509.ParseECPrivateKey(der); err == nil {
+		return key, nil
+	}
+	return nil, errors.New("failed to parse private key")
+}
+
 const instanceExceededError = "activation instance count has reached the limit (%v)"
+
+func (s *InstanceService) checkActivationLimit(ctx context.Context, workspaceID string, activating bool) error {
+	if !activating || s.licenseService.IsUnifiedInstanceLicense(ctx, workspaceID) {
+		return nil
+	}
+	activatedInstanceLimit := s.licenseService.GetActivatedInstanceLimit(ctx, workspaceID)
+	count, err := s.store.GetActivatedInstanceCount(ctx, workspaceID)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, err)
+	}
+	if count >= activatedInstanceLimit {
+		return connect.NewError(connect.CodeResourceExhausted, errors.Errorf(instanceExceededError, activatedInstanceLimit))
+	}
+	return nil
+}
 
 func (s *InstanceService) checkDataSource(ctx context.Context, instance *store.InstanceMessage, dataSource *storepb.DataSource) error {
 	if dataSource.GetId() == "" {
@@ -270,7 +429,7 @@ func (s *InstanceService) checkDataSource(ctx context.Context, instance *store.I
 		return nil
 	}
 
-	// Validate extra connection parameters for MySQL-based engines
+	// Validate extra connection parameters for MySQL-compatible engines
 	if err := validateExtraConnectionParameters(instance.Metadata.GetEngine(), dataSource.GetExtraConnectionParameters()); err != nil {
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	}
@@ -349,8 +508,7 @@ func (s *InstanceService) UpdateInstance(ctx context.Context, req *connect.Reque
 		case "environment":
 			if req.Msg.Instance.Environment == nil || *req.Msg.Instance.Environment == "" {
 				// Clear the environment if null or empty string is provided
-				emptyStr := ""
-				patch.EnvironmentID = &emptyStr
+				patch.EnvironmentID = new("")
 			} else {
 				envID, err := common.GetEnvironmentID(*req.Msg.Instance.Environment)
 				if err != nil {
@@ -371,6 +529,11 @@ func (s *InstanceService) UpdateInstance(ctx context.Context, req *connect.Reque
 			dataSources, err := convertV1DataSources(req.Msg.Instance.DataSources)
 			if err != nil {
 				return nil, connect.NewError(connect.CodeInvalidArgument, err)
+			}
+			for _, ds := range dataSources {
+				if err := validateAndSanitizeDataSourceTLS(ds); err != nil {
+					return nil, connect.NewError(connect.CodeInvalidArgument, err)
+				}
 			}
 			if err := s.checkInstanceDataSources(ctx, instance, dataSources); err != nil {
 				return nil, err
@@ -407,22 +570,15 @@ func (s *InstanceService) UpdateInstance(ctx context.Context, req *connect.Reque
 	}
 
 	workspaceID := common.GetWorkspaceIDFromContext(ctx)
-	activatedInstanceLimit := s.licenseService.GetActivatedInstanceLimit(ctx, workspaceID)
-	if updateActivation {
-		count, err := s.store.GetActivatedInstanceCount(ctx, workspaceID)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
-		}
-		if count >= activatedInstanceLimit {
-			return nil, connect.NewError(connect.CodeResourceExhausted, errors.Errorf(instanceExceededError, activatedInstanceLimit))
-		}
+	if err := s.checkActivationLimit(ctx, workspaceID, updateActivation); err != nil {
+		return nil, err
 	}
 
 	ins, err := s.store.UpdateInstance(ctx, patch)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	result := convertToV1Instance(ins)
+	result := s.convertToV1Instance(ctx, ins)
 	return connect.NewResponse(result), nil
 }
 
@@ -437,7 +593,7 @@ func (s *InstanceService) DeleteInstance(ctx context.Context, req *connect.Reque
 	if req.Msg.Purge {
 		// Following AIP-165, purge only works on already soft-deleted instances
 		if !instance.Deleted {
-			return nil, connect.NewError(connect.CodeFailedPrecondition, errors.Errorf("instance %q must be soft-deleted before it can be purged", req.Msg.Name))
+			return nil, connect.NewError(connect.CodeFailedPrecondition, errors.Errorf("instance %q must be archived before it can be deleted", req.Msg.Name))
 		}
 
 		// Permanently delete the instance and all related resources
@@ -454,7 +610,7 @@ func (s *InstanceService) DeleteInstance(ctx context.Context, req *connect.Reque
 		return connect.NewResponse(&emptypb.Empty{}), nil
 	}
 
-	databases, err := s.store.ListDatabases(ctx, &store.FindDatabaseMessage{InstanceID: &instance.ResourceID})
+	databases, err := s.store.ListDatabases(ctx, &store.FindDatabaseMessage{Workspace: common.GetWorkspaceIDFromContext(ctx), InstanceID: &instance.ResourceID})
 	if err != nil {
 		return nil, err
 	}
@@ -464,7 +620,7 @@ func (s *InstanceService) DeleteInstance(ctx context.Context, req *connect.Reque
 			if err != nil {
 				return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to get default project ID"))
 			}
-			if err := s.store.BatchUpdateDatabases(ctx, databases, &store.BatchUpdateDatabases{ProjectID: &defaultProjectID}); err != nil {
+			if err := s.store.BatchUpdateDatabases(ctx, databases, &store.BatchUpdateDatabases{Workspace: common.GetWorkspaceIDFromContext(ctx), ProjectID: &defaultProjectID}); err != nil {
 				return nil, connect.NewError(connect.CodeInternal, err)
 			}
 		}
@@ -509,7 +665,7 @@ func (s *InstanceService) UndeleteInstance(ctx context.Context, req *connect.Req
 	}
 	// Idempotent: if already active, return the instance
 	if !instance.Deleted {
-		result := convertToV1Instance(instance)
+		result := s.convertToV1Instance(ctx, instance)
 		return connect.NewResponse(result), nil
 	}
 	if err := s.instanceCountGuard(ctx); err != nil {
@@ -532,7 +688,7 @@ func (s *InstanceService) UndeleteInstance(ctx context.Context, req *connect.Req
 		}
 	}
 
-	result := convertToV1Instance(ins)
+	result := s.convertToV1Instance(ctx, ins)
 	return connect.NewResponse(result), nil
 }
 
@@ -633,6 +789,18 @@ func (s *InstanceService) AddDataSource(ctx context.Context, req *connect.Reques
 	if err := s.checkDataSource(ctx, instance, dataSource); err != nil {
 		return nil, err
 	}
+	if err := validateAndSanitizeDataSourceTLS(dataSource); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	metadata := proto.CloneOf(instance.Metadata)
+	metadata.DataSources = append(metadata.DataSources, dataSource)
+	if err := s.checkInstanceDataSources(ctx, instance, metadata.GetDataSources()); err != nil {
+		return nil, err
+	}
+
+	if err := s.licenseService.IsFeatureEnabledForInstance(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_INSTANCE_READ_ONLY_CONNECTION, instance); err != nil {
+		return nil, connect.NewError(connect.CodePermissionDenied, err)
+	}
 
 	// Test connection.
 	if req.Msg.ValidateOnly {
@@ -655,19 +823,14 @@ func (s *InstanceService) AddDataSource(ctx context.Context, req *connect.Reques
 		if err != nil {
 			return nil, err
 		}
-		result := convertToV1Instance(instance)
+		result := s.convertToV1Instance(ctx, instanceWithMetadata(instance, metadata))
 		return connect.NewResponse(result), nil
 	}
 
 	if dataSource.GetType() != storepb.DataSourceType_READ_ONLY {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("only read-only data source can be added"))
 	}
-	if err := s.licenseService.IsFeatureEnabledForInstance(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_INSTANCE_READ_ONLY_CONNECTION, instance); err != nil {
-		return nil, connect.NewError(connect.CodePermissionDenied, err)
-	}
 
-	metadata := proto.CloneOf(instance.Metadata)
-	metadata.DataSources = append(metadata.DataSources, dataSource)
 	instance, err = s.store.UpdateInstance(ctx, &store.UpdateInstanceMessage{
 		ResourceID: &instance.ResourceID,
 		Workspace:  instance.Workspace,
@@ -677,7 +840,7 @@ func (s *InstanceService) AddDataSource(ctx context.Context, req *connect.Reques
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 
-	result := convertToV1Instance(instance)
+	result := s.convertToV1Instance(ctx, instance)
 	return connect.NewResponse(result), nil
 }
 
@@ -708,8 +871,9 @@ func (s *InstanceService) UpdateDataSource(ctx context.Context, req *connect.Req
 	if dataSource == nil {
 		if req.Msg.AllowMissing {
 			return s.AddDataSource(ctx, connect.NewRequest(&v1pb.AddDataSourceRequest{
-				Name:       req.Msg.Name,
-				DataSource: req.Msg.DataSource,
+				Name:         req.Msg.Name,
+				DataSource:   req.Msg.DataSource,
+				ValidateOnly: req.Msg.ValidateOnly,
 			}))
 		}
 		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf(`cannot found data source "%s"`, req.Msg.DataSource.Id))
@@ -729,10 +893,16 @@ func (s *InstanceService) UpdateDataSource(ctx context.Context, req *connect.Req
 			dataSource.Password = req.Msg.DataSource.Password
 		case "ssl_ca":
 			dataSource.SslCa = req.Msg.DataSource.SslCa
+		case "ssl_ca_path":
+			dataSource.SslCaPath = req.Msg.DataSource.SslCaPath
 		case "ssl_cert":
 			dataSource.SslCert = req.Msg.DataSource.SslCert
+		case "ssl_cert_path":
+			dataSource.SslCertPath = req.Msg.DataSource.SslCertPath
 		case "ssl_key":
 			dataSource.SslKey = req.Msg.DataSource.SslKey
+		case "ssl_key_path":
+			dataSource.SslKeyPath = req.Msg.DataSource.SslKeyPath
 		case "host":
 			dataSource.Host = req.Msg.DataSource.Host
 		case "port":
@@ -844,8 +1014,11 @@ func (s *InstanceService) UpdateDataSource(ctx context.Context, req *connect.Req
 	}
 
 	clearDataSourceAuthentication(dataSource)
+	if err := validateAndSanitizeDataSourceTLS(dataSource); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
 
-	if err := s.checkDataSource(ctx, instance, dataSource); err != nil {
+	if err := s.checkInstanceDataSources(ctx, instance, metadata.GetDataSources()); err != nil {
 		return nil, err
 	}
 
@@ -868,7 +1041,7 @@ func (s *InstanceService) UpdateDataSource(ctx context.Context, req *connect.Req
 		if err != nil {
 			return nil, err
 		}
-		result := convertToV1Instance(instance)
+		result := s.convertToV1Instance(ctx, instanceWithMetadata(instance, metadata))
 		return connect.NewResponse(result), nil
 	}
 
@@ -880,7 +1053,7 @@ func (s *InstanceService) UpdateDataSource(ctx context.Context, req *connect.Req
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	result := convertToV1Instance(instance)
+	result := s.convertToV1Instance(ctx, instance)
 	return connect.NewResponse(result), nil
 }
 
@@ -927,7 +1100,7 @@ func (s *InstanceService) RemoveDataSource(ctx context.Context, req *connect.Req
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 
-	result := convertToV1Instance(instance)
+	result := s.convertToV1Instance(ctx, instance)
 	return connect.NewResponse(result), nil
 }
 
@@ -991,9 +1164,9 @@ func (s *InstanceService) instanceCountGuard(ctx context.Context) error {
 
 // validateExtraConnectionParameters validates extra connection parameters for security risks.
 func validateExtraConnectionParameters(engine storepb.Engine, params map[string]string) error {
-	// Validate MySQL-based engines
+	// Validate MySQL-compatible engines
 	switch engine {
-	case storepb.Engine_MYSQL, storepb.Engine_MARIADB, storepb.Engine_OCEANBASE:
+	case storepb.Engine_MYSQL, storepb.Engine_MARIADB, storepb.Engine_OCEANBASE, storepb.Engine_TIDB:
 		for key := range params {
 			normalizedKey := strings.ToLower(strings.TrimSpace(key))
 			if normalizedKey == "allowallfiles" {

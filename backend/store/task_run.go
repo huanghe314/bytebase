@@ -34,6 +34,9 @@ type TaskRunMessage struct {
 
 // FindTaskRunMessage is the message for finding task runs.
 type FindTaskRunMessage struct {
+	// Workspace filters task runs by the parent project's workspace.
+	// Empty string skips filtering (for cross-workspace queries like runners).
+	Workspace   string
 	UID         *int64
 	UIDs        *[]int64
 	ProjectID   string
@@ -52,8 +55,9 @@ type TaskRunStatusPatch struct {
 	Updater string
 
 	// Domain specific fields
-	Status      storepb.TaskRun_Status
-	ResultProto *storepb.TaskRunResult
+	Status          storepb.TaskRun_Status
+	AllowedStatuses []storepb.TaskRun_Status
+	ResultProto     *storepb.TaskRunResult
 }
 
 // ListTaskRuns lists task runs.
@@ -77,6 +81,10 @@ func (s *Store) ListTaskRuns(ctx context.Context, find *FindTaskRunMessage) ([]*
 		LEFT JOIN task ON task.project = task_run.project AND task.id = task_run.task_id
 		WHERE task_run.project = ?
 	`, find.ProjectID)
+
+	if find.Workspace != "" {
+		q.And("task_run.project IN (SELECT resource_id FROM project WHERE workspace = ?)", find.Workspace)
+	}
 
 	if v := find.UID; v != nil {
 		q.And("task_run.id = ?", *v)
@@ -179,17 +187,12 @@ func (s *Store) GetTaskRunV1(ctx context.Context, find *FindTaskRunMessage) (*Ta
 		return nil, err
 	}
 	if len(taskRuns) == 0 {
-		return nil, errors.Errorf("task run not found")
+		return nil, nil
 	}
 	if len(taskRuns) > 1 {
 		return nil, errors.Errorf("expected to get one task run, but got %d", len(taskRuns))
 	}
 	return taskRuns[0], nil
-}
-
-// GetTaskRunByUID gets a task run by uid.
-func (s *Store) GetTaskRunByUID(ctx context.Context, projectID string, uid int64) (*TaskRunMessage, error) {
-	return s.GetTaskRunV1(ctx, &FindTaskRunMessage{ProjectID: projectID, UID: &uid})
 }
 
 // UpdateTaskRunStatus updates task run status.
@@ -237,8 +240,8 @@ func (s *Store) ClaimAvailableTaskRuns(ctx context.Context, replicaID string) ([
 	q := qb.Q().Space(`
 		UPDATE task_run
 		SET status = ?, updated_at = now(), replica_id = ?
-		WHERE id IN (
-			SELECT task_run.id FROM task_run
+		WHERE (project, id) IN (
+			SELECT task_run.project, task_run.id FROM task_run
 			WHERE task_run.status = ?
 			FOR UPDATE SKIP LOCKED
 		)
@@ -429,8 +432,17 @@ func (*Store) patchTaskRunStatusImpl(ctx context.Context, txn *sql.Tx, patch *Ta
 	}
 
 	q := qb.Q().Space("UPDATE task_run SET ?", set).
-		Space("WHERE id = ? AND project = ?", patch.ID, patch.ProjectID).
-		Space("RETURNING id, creator, created_at, updated_at, task_id, status, result")
+		Space("WHERE id = ? AND project = ?", patch.ID, patch.ProjectID)
+
+	if len(patch.AllowedStatuses) > 0 {
+		var statusStrings []string
+		for _, status := range patch.AllowedStatuses {
+			statusStrings = append(statusStrings, status.String())
+		}
+		q.Space("AND status = ANY(?)", statusStrings)
+	}
+
+	q.Space("RETURNING id, creator, created_at, updated_at, task_id, status, result")
 
 	query, args, err := q.ToSQL()
 	if err != nil {
@@ -451,6 +463,9 @@ func (*Store) patchTaskRunStatusImpl(ctx context.Context, txn *sql.Tx, patch *Ta
 		&resultJSON,
 	); err != nil {
 		if err == sql.ErrNoRows {
+			if len(patch.AllowedStatuses) > 0 {
+				return nil, &common.Error{Code: common.Conflict, Err: errors.Errorf("task run %d status changed", patch.ID)}
+			}
 			return nil, &common.Error{Code: common.NotFound, Err: errors.Errorf("project ID not found: %d", patch.ID)}
 		}
 		return nil, err
@@ -471,7 +486,7 @@ func (*Store) patchTaskRunStatusImpl(ctx context.Context, txn *sql.Tx, patch *Ta
 	return &taskRun, nil
 }
 
-// BatchCancelTaskRuns updates the status of taskRuns to CANCELED.
+// BatchCancelTaskRuns updates non-running task runs to CANCELED.
 func (s *Store) BatchCancelTaskRuns(ctx context.Context, projectID string, taskRunIDs []int64) error {
 	if len(taskRunIDs) == 0 {
 		return nil
@@ -480,7 +495,9 @@ func (s *Store) BatchCancelTaskRuns(ctx context.Context, projectID string, taskR
 		UPDATE task_run
 		SET status = ?, updated_at = now()
 		WHERE id = ANY(?) AND project = ?
-	`, storepb.TaskRun_CANCELED.String(), taskRunIDs, projectID)
+		AND status IN (?, ?)
+	`, storepb.TaskRun_CANCELED.String(), taskRunIDs, projectID,
+		storepb.TaskRun_PENDING.String(), storepb.TaskRun_AVAILABLE.String())
 
 	query, args, err := q.ToSQL()
 	if err != nil {
@@ -595,12 +612,12 @@ func (s *Store) ListTaskRunsByStatus(ctx context.Context, statuses []storepb.Tas
 	var taskRuns []*TaskRunMessage
 	for rows.Next() {
 		var taskRun TaskRunMessage
-		var resultJSON string
-		var payloadJSON string
+		var creatorEmail sql.NullString
 		var statusString string
+		var resultJSON, payloadJSON string
 		if err := rows.Scan(
 			&taskRun.ID,
-			&taskRun.CreatorEmail,
+			&creatorEmail,
 			&taskRun.CreatedAt,
 			&taskRun.UpdatedAt,
 			&taskRun.TaskUID,
@@ -615,8 +632,13 @@ func (s *Store) ListTaskRunsByStatus(ctx context.Context, statuses []storepb.Tas
 		); err != nil {
 			return nil, err
 		}
+		if creatorEmail.Valid {
+			taskRun.CreatorEmail = creatorEmail.String
+		}
 		if statusValue, ok := storepb.TaskRun_Status_value[statusString]; ok {
 			taskRun.Status = storepb.TaskRun_Status(statusValue)
+		} else {
+			return nil, errors.Errorf("invalid task run status string: %s", statusString)
 		}
 		resultProto := &storepb.TaskRunResult{}
 		if err := common.ProtojsonUnmarshaler.Unmarshal([]byte(resultJSON), resultProto); err != nil {

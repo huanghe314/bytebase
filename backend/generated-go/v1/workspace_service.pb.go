@@ -10,7 +10,9 @@ import (
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	fieldmaskpb "google.golang.org/protobuf/types/known/fieldmaskpb"
 	reflect "reflect"
+	sync "sync"
 	unsafe "unsafe"
 )
 
@@ -21,31 +23,420 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type ListWorkspacesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListWorkspacesRequest) Reset() {
+	*x = ListWorkspacesRequest{}
+	mi := &file_v1_workspace_service_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListWorkspacesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListWorkspacesRequest) ProtoMessage() {}
+
+func (x *ListWorkspacesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_workspace_service_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListWorkspacesRequest.ProtoReflect.Descriptor instead.
+func (*ListWorkspacesRequest) Descriptor() ([]byte, []int) {
+	return file_v1_workspace_service_proto_rawDescGZIP(), []int{0}
+}
+
+type ListWorkspacesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Workspaces    []*Workspace           `protobuf:"bytes,1,rep,name=workspaces,proto3" json:"workspaces,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListWorkspacesResponse) Reset() {
+	*x = ListWorkspacesResponse{}
+	mi := &file_v1_workspace_service_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListWorkspacesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListWorkspacesResponse) ProtoMessage() {}
+
+func (x *ListWorkspacesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_workspace_service_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListWorkspacesResponse.ProtoReflect.Descriptor instead.
+func (*ListWorkspacesResponse) Descriptor() ([]byte, []int) {
+	return file_v1_workspace_service_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *ListWorkspacesResponse) GetWorkspaces() []*Workspace {
+	if x != nil {
+		return x.Workspaces
+	}
+	return nil
+}
+
+type GetWorkspaceRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The workspace name, format: workspaces/{workspace}.
+	// Use "workspaces/-" to get the current/default workspace.
+	Name          string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetWorkspaceRequest) Reset() {
+	*x = GetWorkspaceRequest{}
+	mi := &file_v1_workspace_service_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetWorkspaceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetWorkspaceRequest) ProtoMessage() {}
+
+func (x *GetWorkspaceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_workspace_service_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetWorkspaceRequest.ProtoReflect.Descriptor instead.
+func (*GetWorkspaceRequest) Descriptor() ([]byte, []int) {
+	return file_v1_workspace_service_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *GetWorkspaceRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type Workspace struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Format: workspaces/{workspace}
+	Name  string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Title string `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
+	// The branding logo.
+	Logo          string `protobuf:"bytes,3,opt,name=logo,proto3" json:"logo,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Workspace) Reset() {
+	*x = Workspace{}
+	mi := &file_v1_workspace_service_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Workspace) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Workspace) ProtoMessage() {}
+
+func (x *Workspace) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_workspace_service_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Workspace.ProtoReflect.Descriptor instead.
+func (*Workspace) Descriptor() ([]byte, []int) {
+	return file_v1_workspace_service_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *Workspace) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Workspace) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *Workspace) GetLogo() string {
+	if x != nil {
+		return x.Logo
+	}
+	return ""
+}
+
+type DeleteWorkspaceRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Format: workspaces/{workspace}
+	Name          string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteWorkspaceRequest) Reset() {
+	*x = DeleteWorkspaceRequest{}
+	mi := &file_v1_workspace_service_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteWorkspaceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteWorkspaceRequest) ProtoMessage() {}
+
+func (x *DeleteWorkspaceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_workspace_service_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteWorkspaceRequest.ProtoReflect.Descriptor instead.
+func (*DeleteWorkspaceRequest) Descriptor() ([]byte, []int) {
+	return file_v1_workspace_service_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *DeleteWorkspaceRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type UpdateWorkspaceRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Workspace     *Workspace             `protobuf:"bytes,1,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	UpdateMask    *fieldmaskpb.FieldMask `protobuf:"bytes,2,opt,name=update_mask,json=updateMask,proto3" json:"update_mask,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateWorkspaceRequest) Reset() {
+	*x = UpdateWorkspaceRequest{}
+	mi := &file_v1_workspace_service_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateWorkspaceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateWorkspaceRequest) ProtoMessage() {}
+
+func (x *UpdateWorkspaceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_workspace_service_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateWorkspaceRequest.ProtoReflect.Descriptor instead.
+func (*UpdateWorkspaceRequest) Descriptor() ([]byte, []int) {
+	return file_v1_workspace_service_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *UpdateWorkspaceRequest) GetWorkspace() *Workspace {
+	if x != nil {
+		return x.Workspace
+	}
+	return nil
+}
+
+func (x *UpdateWorkspaceRequest) GetUpdateMask() *fieldmaskpb.FieldMask {
+	if x != nil {
+		return x.UpdateMask
+	}
+	return nil
+}
+
+type LeaveWorkspaceRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Format: workspaces/{workspace}
+	Name          string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LeaveWorkspaceRequest) Reset() {
+	*x = LeaveWorkspaceRequest{}
+	mi := &file_v1_workspace_service_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LeaveWorkspaceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LeaveWorkspaceRequest) ProtoMessage() {}
+
+func (x *LeaveWorkspaceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_workspace_service_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LeaveWorkspaceRequest.ProtoReflect.Descriptor instead.
+func (*LeaveWorkspaceRequest) Descriptor() ([]byte, []int) {
+	return file_v1_workspace_service_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *LeaveWorkspaceRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
 var File_v1_workspace_service_proto protoreflect.FileDescriptor
 
 const file_v1_workspace_service_proto_rawDesc = "" +
 	"\n" +
-	"\x1av1/workspace_service.proto\x12\vbytebase.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x13v1/annotation.proto\x1a\x13v1/iam_policy.proto2\xd7\x02\n" +
-	"\x10WorkspaceService\x12\x9c\x01\n" +
-	"\fGetIamPolicy\x12 .bytebase.v1.GetIamPolicyRequest\x1a\x16.bytebase.v1.IamPolicy\"R\x8a\xea0\x1abb.workspaces.getIamPolicy\x90\xea0\x01\x82\xd3\xe4\x93\x02*\x12(/v1/{resource=workspaces/*}:getIamPolicy\x12\xa3\x01\n" +
+	"\x1av1/workspace_service.proto\x12\vbytebase.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/api/field_behavior.proto\x1a google/protobuf/field_mask.proto\x1a\x13v1/annotation.proto\x1a\x15v1/auth_service.proto\x1a\x13v1/iam_policy.proto\"\x17\n" +
+	"\x15ListWorkspacesRequest\"P\n" +
+	"\x16ListWorkspacesResponse\x126\n" +
+	"\n" +
+	"workspaces\x18\x01 \x03(\v2\x16.bytebase.v1.WorkspaceR\n" +
+	"workspaces\")\n" +
+	"\x13GetWorkspaceRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"I\n" +
+	"\tWorkspace\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05title\x18\x02 \x01(\tR\x05title\x12\x12\n" +
+	"\x04logo\x18\x03 \x01(\tR\x04logo\"1\n" +
+	"\x16DeleteWorkspaceRequest\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tB\x03\xe0A\x02R\x04name\"\x90\x01\n" +
+	"\x16UpdateWorkspaceRequest\x129\n" +
+	"\tworkspace\x18\x01 \x01(\v2\x16.bytebase.v1.WorkspaceB\x03\xe0A\x02R\tworkspace\x12;\n" +
+	"\vupdate_mask\x18\x02 \x01(\v2\x1a.google.protobuf.FieldMaskR\n" +
+	"updateMask\"0\n" +
+	"\x15LeaveWorkspaceRequest\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tB\x03\xe0A\x02R\x04name2\xf7\a\n" +
+	"\x10WorkspaceService\x12m\n" +
+	"\fGetWorkspace\x12 .bytebase.v1.GetWorkspaceRequest\x1a\x16.bytebase.v1.Workspace\"#\x80\xea0\x01\x82\xd3\xe4\x93\x02\x19\x12\x17/v1/{name=workspaces/*}\x12u\n" +
+	"\x0eListWorkspaces\x12\".bytebase.v1.ListWorkspacesRequest\x1a#.bytebase.v1.ListWorkspacesResponse\"\x1a\x90\xea0\x02\x82\xd3\xe4\x93\x02\x10\x12\x0e/v1/workspaces\x12\x9c\x01\n" +
+	"\x0fUpdateWorkspace\x12#.bytebase.v1.UpdateWorkspaceRequest\x1a\x16.bytebase.v1.Workspace\"L\x8a\xea0\x14bb.workspaces.update\x90\xea0\x01\x98\xea0\x01\x82\xd3\xe4\x93\x02&:\x01*2!/v1/{workspace.name=workspaces/*}\x12\x9c\x01\n" +
+	"\fGetIamPolicy\x12 .bytebase.v1.GetIamPolicyRequest\x1a\x16.bytebase.v1.IamPolicy\"R\x8a\xea0\x1abb.workspaces.getIamPolicy\x90\xea0\x01\x82\xd3\xe4\x93\x02*\x12(/v1/{resource=workspaces/*}:getIamPolicy\x12\x93\x01\n" +
+	"\x0fDeleteWorkspace\x12#.bytebase.v1.DeleteWorkspaceRequest\x1a\x1a.bytebase.v1.LoginResponse\"?\x8a\xea0\x14bb.workspaces.delete\x90\xea0\x01\x98\xea0\x01\x82\xd3\xe4\x93\x02\x19*\x17/v1/{name=workspaces/*}\x12\x82\x01\n" +
+	"\x0eLeaveWorkspace\x12\".bytebase.v1.LeaveWorkspaceRequest\x1a\x1a.bytebase.v1.LoginResponse\"0\x90\xea0\x02\x98\xea0\x01\x82\xd3\xe4\x93\x02\":\x01*\"\x1d/v1/{name=workspaces/*}:leave\x12\xa3\x01\n" +
 	"\fSetIamPolicy\x12 .bytebase.v1.SetIamPolicyRequest\x1a\x16.bytebase.v1.IamPolicy\"Y\x8a\xea0\x1abb.workspaces.setIamPolicy\x90\xea0\x01\x98\xea0\x01\x82\xd3\xe4\x93\x02-:\x01*\"(/v1/{resource=workspaces/*}:setIamPolicyB\xab\x01\n" +
 	"\x0fcom.bytebase.v1B\x15WorkspaceServiceProtoP\x01Z4github.com/bytebase/bytebase/backend/generated-go/v1\xa2\x02\x03BXX\xaa\x02\vBytebase.V1\xca\x02\vBytebase\\V1\xe2\x02\x17Bytebase\\V1\\GPBMetadata\xea\x02\fBytebase::V1b\x06proto3"
 
+var (
+	file_v1_workspace_service_proto_rawDescOnce sync.Once
+	file_v1_workspace_service_proto_rawDescData []byte
+)
+
+func file_v1_workspace_service_proto_rawDescGZIP() []byte {
+	file_v1_workspace_service_proto_rawDescOnce.Do(func() {
+		file_v1_workspace_service_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_v1_workspace_service_proto_rawDesc), len(file_v1_workspace_service_proto_rawDesc)))
+	})
+	return file_v1_workspace_service_proto_rawDescData
+}
+
+var file_v1_workspace_service_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_v1_workspace_service_proto_goTypes = []any{
-	(*GetIamPolicyRequest)(nil), // 0: bytebase.v1.GetIamPolicyRequest
-	(*SetIamPolicyRequest)(nil), // 1: bytebase.v1.SetIamPolicyRequest
-	(*IamPolicy)(nil),           // 2: bytebase.v1.IamPolicy
+	(*ListWorkspacesRequest)(nil),  // 0: bytebase.v1.ListWorkspacesRequest
+	(*ListWorkspacesResponse)(nil), // 1: bytebase.v1.ListWorkspacesResponse
+	(*GetWorkspaceRequest)(nil),    // 2: bytebase.v1.GetWorkspaceRequest
+	(*Workspace)(nil),              // 3: bytebase.v1.Workspace
+	(*DeleteWorkspaceRequest)(nil), // 4: bytebase.v1.DeleteWorkspaceRequest
+	(*UpdateWorkspaceRequest)(nil), // 5: bytebase.v1.UpdateWorkspaceRequest
+	(*LeaveWorkspaceRequest)(nil),  // 6: bytebase.v1.LeaveWorkspaceRequest
+	(*fieldmaskpb.FieldMask)(nil),  // 7: google.protobuf.FieldMask
+	(*GetIamPolicyRequest)(nil),    // 8: bytebase.v1.GetIamPolicyRequest
+	(*SetIamPolicyRequest)(nil),    // 9: bytebase.v1.SetIamPolicyRequest
+	(*IamPolicy)(nil),              // 10: bytebase.v1.IamPolicy
+	(*LoginResponse)(nil),          // 11: bytebase.v1.LoginResponse
 }
 var file_v1_workspace_service_proto_depIdxs = []int32{
-	0, // 0: bytebase.v1.WorkspaceService.GetIamPolicy:input_type -> bytebase.v1.GetIamPolicyRequest
-	1, // 1: bytebase.v1.WorkspaceService.SetIamPolicy:input_type -> bytebase.v1.SetIamPolicyRequest
-	2, // 2: bytebase.v1.WorkspaceService.GetIamPolicy:output_type -> bytebase.v1.IamPolicy
-	2, // 3: bytebase.v1.WorkspaceService.SetIamPolicy:output_type -> bytebase.v1.IamPolicy
-	2, // [2:4] is the sub-list for method output_type
-	0, // [0:2] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	3,  // 0: bytebase.v1.ListWorkspacesResponse.workspaces:type_name -> bytebase.v1.Workspace
+	3,  // 1: bytebase.v1.UpdateWorkspaceRequest.workspace:type_name -> bytebase.v1.Workspace
+	7,  // 2: bytebase.v1.UpdateWorkspaceRequest.update_mask:type_name -> google.protobuf.FieldMask
+	2,  // 3: bytebase.v1.WorkspaceService.GetWorkspace:input_type -> bytebase.v1.GetWorkspaceRequest
+	0,  // 4: bytebase.v1.WorkspaceService.ListWorkspaces:input_type -> bytebase.v1.ListWorkspacesRequest
+	5,  // 5: bytebase.v1.WorkspaceService.UpdateWorkspace:input_type -> bytebase.v1.UpdateWorkspaceRequest
+	8,  // 6: bytebase.v1.WorkspaceService.GetIamPolicy:input_type -> bytebase.v1.GetIamPolicyRequest
+	4,  // 7: bytebase.v1.WorkspaceService.DeleteWorkspace:input_type -> bytebase.v1.DeleteWorkspaceRequest
+	6,  // 8: bytebase.v1.WorkspaceService.LeaveWorkspace:input_type -> bytebase.v1.LeaveWorkspaceRequest
+	9,  // 9: bytebase.v1.WorkspaceService.SetIamPolicy:input_type -> bytebase.v1.SetIamPolicyRequest
+	3,  // 10: bytebase.v1.WorkspaceService.GetWorkspace:output_type -> bytebase.v1.Workspace
+	1,  // 11: bytebase.v1.WorkspaceService.ListWorkspaces:output_type -> bytebase.v1.ListWorkspacesResponse
+	3,  // 12: bytebase.v1.WorkspaceService.UpdateWorkspace:output_type -> bytebase.v1.Workspace
+	10, // 13: bytebase.v1.WorkspaceService.GetIamPolicy:output_type -> bytebase.v1.IamPolicy
+	11, // 14: bytebase.v1.WorkspaceService.DeleteWorkspace:output_type -> bytebase.v1.LoginResponse
+	11, // 15: bytebase.v1.WorkspaceService.LeaveWorkspace:output_type -> bytebase.v1.LoginResponse
+	10, // 16: bytebase.v1.WorkspaceService.SetIamPolicy:output_type -> bytebase.v1.IamPolicy
+	10, // [10:17] is the sub-list for method output_type
+	3,  // [3:10] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_v1_workspace_service_proto_init() }
@@ -54,6 +445,7 @@ func file_v1_workspace_service_proto_init() {
 		return
 	}
 	file_v1_annotation_proto_init()
+	file_v1_auth_service_proto_init()
 	file_v1_iam_policy_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -61,12 +453,13 @@ func file_v1_workspace_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_v1_workspace_service_proto_rawDesc), len(file_v1_workspace_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   0,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_v1_workspace_service_proto_goTypes,
 		DependencyIndexes: file_v1_workspace_service_proto_depIdxs,
+		MessageInfos:      file_v1_workspace_service_proto_msgTypes,
 	}.Build()
 	File_v1_workspace_service_proto = out.File
 	file_v1_workspace_service_proto_goTypes = nil

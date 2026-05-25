@@ -19,20 +19,57 @@ import (
 // WorkspaceMessage is the message for a workspace.
 type WorkspaceMessage struct {
 	ResourceID string
-	Name       string
+	Payload    *storepb.WorkspacePayload
+	// AdditionalSettings are extra settings to inject during workspace creation.
+	// These are applied after the default settings.
+	AdditionalSettings []AdditionalSetting
+}
+
+// AdditionalSetting is an extra setting to inject during workspace creation.
+type AdditionalSetting struct {
+	Name    storepb.SettingName
+	Payload proto.Message
 }
 
 // getWorkspace returns the workspace. Returns (nil, nil) if no workspace exists.
 func (s *Store) getWorkspace(ctx context.Context) (*WorkspaceMessage, error) {
 	var workspace WorkspaceMessage
+	var payloadBytes []byte
 	if err := s.GetDB().QueryRowContext(ctx,
-		`SELECT resource_id, name FROM workspace WHERE deleted = FALSE LIMIT 1`,
-	).Scan(&workspace.ResourceID, &workspace.Name); err != nil {
+		`SELECT resource_id, payload FROM workspace WHERE deleted = FALSE LIMIT 1`,
+	).Scan(&workspace.ResourceID, &payloadBytes); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, errors.Wrap(err, "failed to get workspace")
 	}
+	payload := &storepb.WorkspacePayload{}
+	if err := common.ProtojsonUnmarshaler.Unmarshal(payloadBytes, payload); err != nil {
+		return nil, errors.Wrap(err, "failed to unmarshal workspace payload")
+	}
+	workspace.Payload = payload
+	return &workspace, nil
+}
+
+// GetWorkspaceByID gets a workspace by its resource ID.
+// Returns (nil, nil) if not found.
+func (s *Store) GetWorkspaceByID(ctx context.Context, resourceID string) (*WorkspaceMessage, error) {
+	var workspace WorkspaceMessage
+	var payloadBytes []byte
+	if err := s.GetDB().QueryRowContext(ctx,
+		`SELECT resource_id, payload FROM workspace WHERE resource_id = $1 AND deleted = FALSE`,
+		resourceID,
+	).Scan(&workspace.ResourceID, &payloadBytes); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, errors.Wrap(err, "failed to get workspace")
+	}
+	payload := &storepb.WorkspacePayload{}
+	if err := common.ProtojsonUnmarshaler.Unmarshal(payloadBytes, payload); err != nil {
+		return nil, errors.Wrap(err, "failed to unmarshal workspace payload")
+	}
+	workspace.Payload = payload
 	return &workspace, nil
 }
 
@@ -58,9 +95,16 @@ func (s *Store) CreateWorkspace(ctx context.Context, create *WorkspaceMessage, a
 	defer tx.Rollback()
 
 	// Create workspace.
+	if create.Payload == nil {
+		create.Payload = &storepb.WorkspacePayload{}
+	}
+	payloadBytes, err := protojson.Marshal(create.Payload)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to marshal workspace payload")
+	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO workspace (resource_id, name) VALUES ($1, $2)`,
-		create.ResourceID, create.Name,
+		`INSERT INTO workspace (resource_id, payload) VALUES ($1, $2)`,
+		create.ResourceID, payloadBytes,
 	); err != nil {
 		return nil, errors.Wrap(err, "failed to create workspace")
 	}
@@ -89,7 +133,8 @@ func (s *Store) CreateWorkspace(ctx context.Context, create *WorkspaceMessage, a
 		{storepb.SettingName_WORKSPACE_PROFILE, &storepb.WorkspaceProfileSetting{
 			EnableMetricCollection: true,
 			DirectorySyncToken:     uuid.New().String(),
-			DisallowSignup:         true,
+			DisallowSignup:         false,
+			DisallowPasswordSignin: false,
 			PasswordRestriction:    &storepb.WorkspaceProfileSetting_PasswordRestriction{MinLength: 8},
 		}},
 		{storepb.SettingName_ENVIRONMENT, &storepb.EnvironmentSetting{
@@ -99,6 +144,11 @@ func (s *Store) CreateWorkspace(ctx context.Context, create *WorkspaceMessage, a
 			},
 		}},
 	}
+	// Append additional settings from the caller (e.g., AI config in SaaS mode).
+	for _, as := range create.AdditionalSettings {
+		settings = append(settings, defaultSetting{name: as.Name, payload: as.Payload})
+	}
+
 	for _, s := range settings {
 		value, err := protojson.Marshal(s.payload)
 		if err != nil {
@@ -148,35 +198,108 @@ func (s *Store) CreateWorkspace(ctx context.Context, create *WorkspaceMessage, a
 	return create, nil
 }
 
-func (s *Store) FindWorkspaceIDByMemberEmail(ctx context.Context, memberName string, includeAllUser bool) (string, error) {
-	workspaces, err := s.FindWorkspacesByMemberEmail(ctx, memberName, includeAllUser)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to find workspaces for user")
-	}
-	if len(workspaces) == 0 {
-		return "", errors.Errorf("%q is not a member of any workspace", memberName)
-	}
-	// TODO(ed): In SaaS mode with multiple workspaces, return a workspace picker
-	// instead of auto-selecting the first one. For now, use the first workspace.
-	return workspaces[0].ResourceID, nil
+// UpdateWorkspaceMessage is the message for updating a workspace.
+type UpdateWorkspaceMessage struct {
+	ResourceID string
+	Title      *string
+	Logo       *string
 }
 
-// FindWorkspacesByMemberEmail finds all workspaces where the given email is a member
-// in the workspace IAM policy bindings. The memberName should be in the format
-// "users/{email}", "serviceAccounts/{email}", etc.
+// UpdateWorkspace updates workspace payload fields atomically using jsonb_set.
+// Each field is updated independently in SQL to avoid lost-update races.
+func (s *Store) UpdateWorkspace(ctx context.Context, patch *UpdateWorkspaceMessage) error {
+	q := qb.Q().Space("UPDATE workspace SET payload = payload")
+	if v := patch.Title; v != nil {
+		q.Space("|| jsonb_build_object('title', ?::text)", *v)
+	}
+	if v := patch.Logo; v != nil {
+		q.Space("|| jsonb_build_object('logo', ?::text)", *v)
+	}
+	q.Space("WHERE resource_id = ? AND deleted = FALSE", patch.ResourceID)
+	query, args, err := q.ToSQL()
+	if err != nil {
+		return errors.Wrapf(err, "failed to build sql")
+	}
+	if _, err := s.GetDB().ExecContext(ctx, query, args...); err != nil {
+		return errors.Wrapf(err, "failed to update workspace")
+	}
+	return nil
+}
+
+// DeleteWorkspace soft-deletes a workspace by setting deleted = TRUE.
+func (s *Store) DeleteWorkspace(ctx context.Context, resourceID string) error {
+	q := qb.Q().Space("UPDATE workspace SET deleted = TRUE WHERE resource_id = ? AND deleted = FALSE", resourceID)
+	query, args, err := q.ToSQL()
+	if err != nil {
+		return errors.Wrapf(err, "failed to build sql")
+	}
+	result, err := s.GetDB().ExecContext(ctx, query, args...)
+	if err != nil {
+		return errors.Wrapf(err, "failed to delete workspace")
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return errors.Wrapf(err, "failed to get rows affected")
+	}
+	if rows == 0 {
+		return errors.Errorf("workspace %q not found or already deleted", resourceID)
+	}
+	return nil
+}
+
+// FindWorkspaceMessage is the message for finding workspaces.
+type FindWorkspaceMessage struct {
+	// WorkspaceID filters by a specific workspace. Nil means no filter.
+	WorkspaceID *string
+	// Email is required. The user email (without "users/" prefix).
+	Email string
+	// IncludeAllUser includes workspaces where "allUsers" is a member.
+	IncludeAllUser bool
+}
+
+// FindWorkspace finds a single workspace matching the filter.
+// Returns (nil, nil) if no workspace matches.
+func (s *Store) FindWorkspace(ctx context.Context, find *FindWorkspaceMessage) (*WorkspaceMessage, error) {
+	workspaces, err := s.ListWorkspacesByEmail(ctx, find)
+	if err != nil {
+		return nil, err
+	}
+	if len(workspaces) == 0 {
+		return nil, nil
+	}
+	return workspaces[0], nil
+}
+
+// ListWorkspacesByEmail finds all workspaces where the given email is a member
+// in the workspace IAM policy bindings, either directly or via a group.
 // Returns workspaces sorted by name.
-func (s *Store) FindWorkspacesByMemberEmail(ctx context.Context, memberName string, includeAllUser bool) ([]*WorkspaceMessage, error) {
+func (s *Store) ListWorkspacesByEmail(ctx context.Context, find *FindWorkspaceMessage) ([]*WorkspaceMessage, error) {
+	memberName := common.FormatUserEmail(find.Email)
+
+	// Check direct membership OR group membership:
+	// 1. Direct: member = 'users/{email}'
+	// 2. Group: member = 'groups/{groupEmail}' and user_group with that email
+	//    contains 'users/{email}' in its payload.members[].member
+	// 3. AllUsers: member = 'allUsers' (self-hosted only)
 	memberFilter := qb.Q().Space("member = ?", memberName)
-	if includeAllUser {
+	memberFilter.Or(`member LIKE 'groups/%' AND EXISTS (
+		SELECT 1
+		FROM user_group ug,
+		     jsonb_array_elements(ug.payload->'members') AS gm
+		WHERE ug.workspace = w.resource_id
+		  AND ('groups/' || ug.email = member OR 'groups/' || ug.id = member)
+		  AND gm->>'member' = ?
+	)`, memberName)
+	if find.IncludeAllUser {
 		memberFilter.Or("member = ?", common.AllUsers)
 	}
 
 	q := qb.Q().Space(`
-		SELECT DISTINCT w.resource_id, w.name
+		SELECT DISTINCT w.resource_id, w.payload, w.created_at
 		FROM workspace w
 		JOIN policy p ON p.workspace = w.resource_id
-		WHERE p.resource_type = 'WORKSPACE'
-		  AND p.type = 'IAM'
+		WHERE p.resource_type = ?
+		  AND p.type = ?
 		  AND w.deleted = FALSE
 		  AND EXISTS (
 			SELECT 1
@@ -184,8 +307,11 @@ func (s *Store) FindWorkspacesByMemberEmail(ctx context.Context, memberName stri
 			     jsonb_array_elements_text(binding->'members') AS member
 			WHERE ?
 		  )
-		ORDER BY w.name
-	`, memberFilter)
+	`, storepb.Policy_WORKSPACE.String(), storepb.Policy_IAM.String(), memberFilter)
+	if v := find.WorkspaceID; v != nil {
+		q.And("w.resource_id = ?", *v)
+	}
+	q.Space("ORDER BY w.created_at")
 
 	query, args, err := q.ToSQL()
 	if err != nil {
@@ -201,9 +327,16 @@ func (s *Store) FindWorkspacesByMemberEmail(ctx context.Context, memberName stri
 	var workspaces []*WorkspaceMessage
 	for rows.Next() {
 		var ws WorkspaceMessage
-		if err := rows.Scan(&ws.ResourceID, &ws.Name); err != nil {
+		var payloadBytes []byte
+		var createdAt any
+		if err := rows.Scan(&ws.ResourceID, &payloadBytes, &createdAt); err != nil {
 			return nil, errors.Wrap(err, "failed to scan workspace")
 		}
+		payload := &storepb.WorkspacePayload{}
+		if err := common.ProtojsonUnmarshaler.Unmarshal(payloadBytes, payload); err != nil {
+			return nil, errors.Wrap(err, "failed to unmarshal workspace payload")
+		}
+		ws.Payload = payload
 		workspaces = append(workspaces, &ws)
 	}
 	if err := rows.Err(); err != nil {

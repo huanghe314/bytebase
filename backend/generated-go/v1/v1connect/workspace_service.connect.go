@@ -33,9 +33,24 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
+	// WorkspaceServiceGetWorkspaceProcedure is the fully-qualified name of the WorkspaceService's
+	// GetWorkspace RPC.
+	WorkspaceServiceGetWorkspaceProcedure = "/bytebase.v1.WorkspaceService/GetWorkspace"
+	// WorkspaceServiceListWorkspacesProcedure is the fully-qualified name of the WorkspaceService's
+	// ListWorkspaces RPC.
+	WorkspaceServiceListWorkspacesProcedure = "/bytebase.v1.WorkspaceService/ListWorkspaces"
+	// WorkspaceServiceUpdateWorkspaceProcedure is the fully-qualified name of the WorkspaceService's
+	// UpdateWorkspace RPC.
+	WorkspaceServiceUpdateWorkspaceProcedure = "/bytebase.v1.WorkspaceService/UpdateWorkspace"
 	// WorkspaceServiceGetIamPolicyProcedure is the fully-qualified name of the WorkspaceService's
 	// GetIamPolicy RPC.
 	WorkspaceServiceGetIamPolicyProcedure = "/bytebase.v1.WorkspaceService/GetIamPolicy"
+	// WorkspaceServiceDeleteWorkspaceProcedure is the fully-qualified name of the WorkspaceService's
+	// DeleteWorkspace RPC.
+	WorkspaceServiceDeleteWorkspaceProcedure = "/bytebase.v1.WorkspaceService/DeleteWorkspace"
+	// WorkspaceServiceLeaveWorkspaceProcedure is the fully-qualified name of the WorkspaceService's
+	// LeaveWorkspace RPC.
+	WorkspaceServiceLeaveWorkspaceProcedure = "/bytebase.v1.WorkspaceService/LeaveWorkspace"
 	// WorkspaceServiceSetIamPolicyProcedure is the fully-qualified name of the WorkspaceService's
 	// SetIamPolicy RPC.
 	WorkspaceServiceSetIamPolicyProcedure = "/bytebase.v1.WorkspaceService/SetIamPolicy"
@@ -43,9 +58,27 @@ const (
 
 // WorkspaceServiceClient is a client for the bytebase.v1.WorkspaceService service.
 type WorkspaceServiceClient interface {
+	// Gets a workspace by name.
+	// Supports "workspaces/-" to resolve the current workspace:
+	// - Authenticated: uses the workspace from JWT context
+	// - Self-hosted unauthenticated: returns the single workspace
+	// - SaaS unauthenticated: returns minimal response
+	GetWorkspace(context.Context, *connect.Request[v1.GetWorkspaceRequest]) (*connect.Response[v1.Workspace], error)
+	// Lists all workspaces the current user is a member of.
+	ListWorkspaces(context.Context, *connect.Request[v1.ListWorkspacesRequest]) (*connect.Response[v1.ListWorkspacesResponse], error)
+	// Updates a workspace. Currently only title can be updated.
+	UpdateWorkspace(context.Context, *connect.Request[v1.UpdateWorkspaceRequest]) (*connect.Response[v1.Workspace], error)
 	// Retrieves IAM policy for the workspace.
 	// Permissions required: bb.workspaces.getIamPolicy
 	GetIamPolicy(context.Context, *connect.Request[v1.GetIamPolicyRequest]) (*connect.Response[v1.IamPolicy], error)
+	// Deletes a workspace. SaaS only. Cancels any active subscription and
+	// soft-deletes the workspace so all associated data becomes inaccessible.
+	// Requires workspace admin permission.
+	DeleteWorkspace(context.Context, *connect.Request[v1.DeleteWorkspaceRequest]) (*connect.Response[v1.LoginResponse], error)
+	// Removes the calling user from a workspace and switches to the next
+	// available workspace. Available to any workspace member. Fails if the
+	// caller is the last workspace admin.
+	LeaveWorkspace(context.Context, *connect.Request[v1.LeaveWorkspaceRequest]) (*connect.Response[v1.LoginResponse], error)
 	// Sets IAM policy for the workspace.
 	// Permissions required: bb.workspaces.setIamPolicy
 	SetIamPolicy(context.Context, *connect.Request[v1.SetIamPolicyRequest]) (*connect.Response[v1.IamPolicy], error)
@@ -62,10 +95,40 @@ func NewWorkspaceServiceClient(httpClient connect.HTTPClient, baseURL string, op
 	baseURL = strings.TrimRight(baseURL, "/")
 	workspaceServiceMethods := v1.File_v1_workspace_service_proto.Services().ByName("WorkspaceService").Methods()
 	return &workspaceServiceClient{
+		getWorkspace: connect.NewClient[v1.GetWorkspaceRequest, v1.Workspace](
+			httpClient,
+			baseURL+WorkspaceServiceGetWorkspaceProcedure,
+			connect.WithSchema(workspaceServiceMethods.ByName("GetWorkspace")),
+			connect.WithClientOptions(opts...),
+		),
+		listWorkspaces: connect.NewClient[v1.ListWorkspacesRequest, v1.ListWorkspacesResponse](
+			httpClient,
+			baseURL+WorkspaceServiceListWorkspacesProcedure,
+			connect.WithSchema(workspaceServiceMethods.ByName("ListWorkspaces")),
+			connect.WithClientOptions(opts...),
+		),
+		updateWorkspace: connect.NewClient[v1.UpdateWorkspaceRequest, v1.Workspace](
+			httpClient,
+			baseURL+WorkspaceServiceUpdateWorkspaceProcedure,
+			connect.WithSchema(workspaceServiceMethods.ByName("UpdateWorkspace")),
+			connect.WithClientOptions(opts...),
+		),
 		getIamPolicy: connect.NewClient[v1.GetIamPolicyRequest, v1.IamPolicy](
 			httpClient,
 			baseURL+WorkspaceServiceGetIamPolicyProcedure,
 			connect.WithSchema(workspaceServiceMethods.ByName("GetIamPolicy")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteWorkspace: connect.NewClient[v1.DeleteWorkspaceRequest, v1.LoginResponse](
+			httpClient,
+			baseURL+WorkspaceServiceDeleteWorkspaceProcedure,
+			connect.WithSchema(workspaceServiceMethods.ByName("DeleteWorkspace")),
+			connect.WithClientOptions(opts...),
+		),
+		leaveWorkspace: connect.NewClient[v1.LeaveWorkspaceRequest, v1.LoginResponse](
+			httpClient,
+			baseURL+WorkspaceServiceLeaveWorkspaceProcedure,
+			connect.WithSchema(workspaceServiceMethods.ByName("LeaveWorkspace")),
 			connect.WithClientOptions(opts...),
 		),
 		setIamPolicy: connect.NewClient[v1.SetIamPolicyRequest, v1.IamPolicy](
@@ -79,13 +142,43 @@ func NewWorkspaceServiceClient(httpClient connect.HTTPClient, baseURL string, op
 
 // workspaceServiceClient implements WorkspaceServiceClient.
 type workspaceServiceClient struct {
-	getIamPolicy *connect.Client[v1.GetIamPolicyRequest, v1.IamPolicy]
-	setIamPolicy *connect.Client[v1.SetIamPolicyRequest, v1.IamPolicy]
+	getWorkspace    *connect.Client[v1.GetWorkspaceRequest, v1.Workspace]
+	listWorkspaces  *connect.Client[v1.ListWorkspacesRequest, v1.ListWorkspacesResponse]
+	updateWorkspace *connect.Client[v1.UpdateWorkspaceRequest, v1.Workspace]
+	getIamPolicy    *connect.Client[v1.GetIamPolicyRequest, v1.IamPolicy]
+	deleteWorkspace *connect.Client[v1.DeleteWorkspaceRequest, v1.LoginResponse]
+	leaveWorkspace  *connect.Client[v1.LeaveWorkspaceRequest, v1.LoginResponse]
+	setIamPolicy    *connect.Client[v1.SetIamPolicyRequest, v1.IamPolicy]
+}
+
+// GetWorkspace calls bytebase.v1.WorkspaceService.GetWorkspace.
+func (c *workspaceServiceClient) GetWorkspace(ctx context.Context, req *connect.Request[v1.GetWorkspaceRequest]) (*connect.Response[v1.Workspace], error) {
+	return c.getWorkspace.CallUnary(ctx, req)
+}
+
+// ListWorkspaces calls bytebase.v1.WorkspaceService.ListWorkspaces.
+func (c *workspaceServiceClient) ListWorkspaces(ctx context.Context, req *connect.Request[v1.ListWorkspacesRequest]) (*connect.Response[v1.ListWorkspacesResponse], error) {
+	return c.listWorkspaces.CallUnary(ctx, req)
+}
+
+// UpdateWorkspace calls bytebase.v1.WorkspaceService.UpdateWorkspace.
+func (c *workspaceServiceClient) UpdateWorkspace(ctx context.Context, req *connect.Request[v1.UpdateWorkspaceRequest]) (*connect.Response[v1.Workspace], error) {
+	return c.updateWorkspace.CallUnary(ctx, req)
 }
 
 // GetIamPolicy calls bytebase.v1.WorkspaceService.GetIamPolicy.
 func (c *workspaceServiceClient) GetIamPolicy(ctx context.Context, req *connect.Request[v1.GetIamPolicyRequest]) (*connect.Response[v1.IamPolicy], error) {
 	return c.getIamPolicy.CallUnary(ctx, req)
+}
+
+// DeleteWorkspace calls bytebase.v1.WorkspaceService.DeleteWorkspace.
+func (c *workspaceServiceClient) DeleteWorkspace(ctx context.Context, req *connect.Request[v1.DeleteWorkspaceRequest]) (*connect.Response[v1.LoginResponse], error) {
+	return c.deleteWorkspace.CallUnary(ctx, req)
+}
+
+// LeaveWorkspace calls bytebase.v1.WorkspaceService.LeaveWorkspace.
+func (c *workspaceServiceClient) LeaveWorkspace(ctx context.Context, req *connect.Request[v1.LeaveWorkspaceRequest]) (*connect.Response[v1.LoginResponse], error) {
+	return c.leaveWorkspace.CallUnary(ctx, req)
 }
 
 // SetIamPolicy calls bytebase.v1.WorkspaceService.SetIamPolicy.
@@ -95,9 +188,27 @@ func (c *workspaceServiceClient) SetIamPolicy(ctx context.Context, req *connect.
 
 // WorkspaceServiceHandler is an implementation of the bytebase.v1.WorkspaceService service.
 type WorkspaceServiceHandler interface {
+	// Gets a workspace by name.
+	// Supports "workspaces/-" to resolve the current workspace:
+	// - Authenticated: uses the workspace from JWT context
+	// - Self-hosted unauthenticated: returns the single workspace
+	// - SaaS unauthenticated: returns minimal response
+	GetWorkspace(context.Context, *connect.Request[v1.GetWorkspaceRequest]) (*connect.Response[v1.Workspace], error)
+	// Lists all workspaces the current user is a member of.
+	ListWorkspaces(context.Context, *connect.Request[v1.ListWorkspacesRequest]) (*connect.Response[v1.ListWorkspacesResponse], error)
+	// Updates a workspace. Currently only title can be updated.
+	UpdateWorkspace(context.Context, *connect.Request[v1.UpdateWorkspaceRequest]) (*connect.Response[v1.Workspace], error)
 	// Retrieves IAM policy for the workspace.
 	// Permissions required: bb.workspaces.getIamPolicy
 	GetIamPolicy(context.Context, *connect.Request[v1.GetIamPolicyRequest]) (*connect.Response[v1.IamPolicy], error)
+	// Deletes a workspace. SaaS only. Cancels any active subscription and
+	// soft-deletes the workspace so all associated data becomes inaccessible.
+	// Requires workspace admin permission.
+	DeleteWorkspace(context.Context, *connect.Request[v1.DeleteWorkspaceRequest]) (*connect.Response[v1.LoginResponse], error)
+	// Removes the calling user from a workspace and switches to the next
+	// available workspace. Available to any workspace member. Fails if the
+	// caller is the last workspace admin.
+	LeaveWorkspace(context.Context, *connect.Request[v1.LeaveWorkspaceRequest]) (*connect.Response[v1.LoginResponse], error)
 	// Sets IAM policy for the workspace.
 	// Permissions required: bb.workspaces.setIamPolicy
 	SetIamPolicy(context.Context, *connect.Request[v1.SetIamPolicyRequest]) (*connect.Response[v1.IamPolicy], error)
@@ -110,10 +221,40 @@ type WorkspaceServiceHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewWorkspaceServiceHandler(svc WorkspaceServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	workspaceServiceMethods := v1.File_v1_workspace_service_proto.Services().ByName("WorkspaceService").Methods()
+	workspaceServiceGetWorkspaceHandler := connect.NewUnaryHandler(
+		WorkspaceServiceGetWorkspaceProcedure,
+		svc.GetWorkspace,
+		connect.WithSchema(workspaceServiceMethods.ByName("GetWorkspace")),
+		connect.WithHandlerOptions(opts...),
+	)
+	workspaceServiceListWorkspacesHandler := connect.NewUnaryHandler(
+		WorkspaceServiceListWorkspacesProcedure,
+		svc.ListWorkspaces,
+		connect.WithSchema(workspaceServiceMethods.ByName("ListWorkspaces")),
+		connect.WithHandlerOptions(opts...),
+	)
+	workspaceServiceUpdateWorkspaceHandler := connect.NewUnaryHandler(
+		WorkspaceServiceUpdateWorkspaceProcedure,
+		svc.UpdateWorkspace,
+		connect.WithSchema(workspaceServiceMethods.ByName("UpdateWorkspace")),
+		connect.WithHandlerOptions(opts...),
+	)
 	workspaceServiceGetIamPolicyHandler := connect.NewUnaryHandler(
 		WorkspaceServiceGetIamPolicyProcedure,
 		svc.GetIamPolicy,
 		connect.WithSchema(workspaceServiceMethods.ByName("GetIamPolicy")),
+		connect.WithHandlerOptions(opts...),
+	)
+	workspaceServiceDeleteWorkspaceHandler := connect.NewUnaryHandler(
+		WorkspaceServiceDeleteWorkspaceProcedure,
+		svc.DeleteWorkspace,
+		connect.WithSchema(workspaceServiceMethods.ByName("DeleteWorkspace")),
+		connect.WithHandlerOptions(opts...),
+	)
+	workspaceServiceLeaveWorkspaceHandler := connect.NewUnaryHandler(
+		WorkspaceServiceLeaveWorkspaceProcedure,
+		svc.LeaveWorkspace,
+		connect.WithSchema(workspaceServiceMethods.ByName("LeaveWorkspace")),
 		connect.WithHandlerOptions(opts...),
 	)
 	workspaceServiceSetIamPolicyHandler := connect.NewUnaryHandler(
@@ -124,8 +265,18 @@ func NewWorkspaceServiceHandler(svc WorkspaceServiceHandler, opts ...connect.Han
 	)
 	return "/bytebase.v1.WorkspaceService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case WorkspaceServiceGetWorkspaceProcedure:
+			workspaceServiceGetWorkspaceHandler.ServeHTTP(w, r)
+		case WorkspaceServiceListWorkspacesProcedure:
+			workspaceServiceListWorkspacesHandler.ServeHTTP(w, r)
+		case WorkspaceServiceUpdateWorkspaceProcedure:
+			workspaceServiceUpdateWorkspaceHandler.ServeHTTP(w, r)
 		case WorkspaceServiceGetIamPolicyProcedure:
 			workspaceServiceGetIamPolicyHandler.ServeHTTP(w, r)
+		case WorkspaceServiceDeleteWorkspaceProcedure:
+			workspaceServiceDeleteWorkspaceHandler.ServeHTTP(w, r)
+		case WorkspaceServiceLeaveWorkspaceProcedure:
+			workspaceServiceLeaveWorkspaceHandler.ServeHTTP(w, r)
 		case WorkspaceServiceSetIamPolicyProcedure:
 			workspaceServiceSetIamPolicyHandler.ServeHTTP(w, r)
 		default:
@@ -137,8 +288,28 @@ func NewWorkspaceServiceHandler(svc WorkspaceServiceHandler, opts ...connect.Han
 // UnimplementedWorkspaceServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedWorkspaceServiceHandler struct{}
 
+func (UnimplementedWorkspaceServiceHandler) GetWorkspace(context.Context, *connect.Request[v1.GetWorkspaceRequest]) (*connect.Response[v1.Workspace], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bytebase.v1.WorkspaceService.GetWorkspace is not implemented"))
+}
+
+func (UnimplementedWorkspaceServiceHandler) ListWorkspaces(context.Context, *connect.Request[v1.ListWorkspacesRequest]) (*connect.Response[v1.ListWorkspacesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bytebase.v1.WorkspaceService.ListWorkspaces is not implemented"))
+}
+
+func (UnimplementedWorkspaceServiceHandler) UpdateWorkspace(context.Context, *connect.Request[v1.UpdateWorkspaceRequest]) (*connect.Response[v1.Workspace], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bytebase.v1.WorkspaceService.UpdateWorkspace is not implemented"))
+}
+
 func (UnimplementedWorkspaceServiceHandler) GetIamPolicy(context.Context, *connect.Request[v1.GetIamPolicyRequest]) (*connect.Response[v1.IamPolicy], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bytebase.v1.WorkspaceService.GetIamPolicy is not implemented"))
+}
+
+func (UnimplementedWorkspaceServiceHandler) DeleteWorkspace(context.Context, *connect.Request[v1.DeleteWorkspaceRequest]) (*connect.Response[v1.LoginResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bytebase.v1.WorkspaceService.DeleteWorkspace is not implemented"))
+}
+
+func (UnimplementedWorkspaceServiceHandler) LeaveWorkspace(context.Context, *connect.Request[v1.LeaveWorkspaceRequest]) (*connect.Response[v1.LoginResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bytebase.v1.WorkspaceService.LeaveWorkspace is not implemented"))
 }
 
 func (UnimplementedWorkspaceServiceHandler) SetIamPolicy(context.Context, *connect.Request[v1.SetIamPolicyRequest]) (*connect.Response[v1.IamPolicy], error) {

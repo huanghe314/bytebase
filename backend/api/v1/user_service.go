@@ -59,8 +59,13 @@ func (s *UserService) GetUser(ctx context.Context, request *connect.Request[v1pb
 		return nil, err
 	}
 
-	workspaceID := common.GetWorkspaceIDFromContext(ctx)
-	users, err := s.store.BatchGetUsersByEmails(ctx, workspaceID, []string{email})
+	// Only scope to workspace IAM in SaaS mode to prevent cross-workspace access.
+	// In non-SaaS mode, users may exist in the principal table before being added to IAM.
+	var workspace string
+	if s.profile.SaaS {
+		workspace = common.GetWorkspaceIDFromContext(ctx)
+	}
+	users, err := s.store.BatchGetUsersByEmails(ctx, workspace, []string{email})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get user"))
 	}
@@ -89,8 +94,12 @@ func (s *UserService) BatchGetUsers(ctx context.Context, request *connect.Reques
 		emails = append(emails, email)
 	}
 
-	// Batch get from store — scoped to the caller's workspace.
-	users, err := s.store.BatchGetUsersByEmails(ctx, common.GetWorkspaceIDFromContext(ctx), emails)
+	// Only scope to workspace IAM in SaaS mode.
+	var workspace string
+	if s.profile.SaaS {
+		workspace = common.GetWorkspaceIDFromContext(ctx)
+	}
+	users, err := s.store.BatchGetUsersByEmails(ctx, workspace, emails)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to batch get users"))
 	}
@@ -137,7 +146,6 @@ func (s *UserService) ListUsers(ctx context.Context, request *connect.Request[v1
 		Limit:       &limitPlusOne,
 		Offset:      &offset.offset,
 		ShowDeleted: request.Msg.ShowDeleted,
-		Workspace:   common.GetWorkspaceIDFromContext(ctx),
 	}
 	filterResult, err := store.GetAccountListFilter(request.Msg.Filter)
 	if err != nil {
@@ -146,18 +154,25 @@ func (s *UserService) ListUsers(ctx context.Context, request *connect.Request[v1
 	find.FilterQ = filterResult.Query
 	find.ProjectID = filterResult.ProjectID
 
-	if v := find.ProjectID; v != nil {
+	// Set workspace scope:
+	// - When ProjectID is set, workspace is required for the project member CTE query.
+	// - In SaaS mode (no ProjectID), scope to workspace IAM members to prevent cross-workspace listing.
+	if find.ProjectID != nil {
+		find.Workspace = common.GetWorkspaceIDFromContext(ctx)
+
 		user, ok := GetUserFromContext(ctx)
 		if !ok {
 			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("user not found"))
 		}
-		hasPermission, err := s.iamManager.CheckPermission(ctx, permission.ProjectsGet, user, common.GetWorkspaceIDFromContext(ctx), *v)
+		hasPermission, err := s.iamManager.CheckPermission(ctx, permission.ProjectsGet, user, common.GetWorkspaceIDFromContext(ctx), *find.ProjectID)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to check user permission"))
 		}
 		if !hasPermission {
 			return nil, connect.NewError(connect.CodePermissionDenied, errors.Errorf("user does not have permission %q", permission.ProjectsGet))
 		}
+	} else if s.profile.SaaS {
+		find.Workspace = common.GetWorkspaceIDFromContext(ctx)
 	}
 
 	users, err := s.store.ListUsers(ctx, find)
@@ -211,10 +226,6 @@ func (s *UserService) CreateUser(ctx context.Context, request *connect.Request[v
 	workspaceID := common.GetWorkspaceIDFromContext(ctx)
 	email := request.Msg.User.Email
 
-	if err := userCountGuard(ctx, s.store, s.licenseService, workspaceID); err != nil {
-		return nil, err
-	}
-
 	if err := validateEmailWithDomains(ctx, s.licenseService, s.store, workspaceID, email, false); err != nil {
 		return nil, err
 	}
@@ -230,7 +241,7 @@ func (s *UserService) CreateUser(ctx context.Context, request *connect.Request[v
 	// Validate password.
 	password := request.Msg.User.Password
 	if password != "" {
-		if err := validatePassword(ctx, s.store, workspaceID, password); err != nil {
+		if err := s.validatePassword(ctx, workspaceID, password); err != nil {
 			return nil, err
 		}
 	} else {
@@ -243,6 +254,10 @@ func (s *UserService) CreateUser(ctx context.Context, request *connect.Request[v
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to generate password hash"))
+	}
+
+	if err := s.preAddUserGuard(ctx, workspaceID); err != nil {
+		return nil, err
 	}
 
 	user, err := s.store.CreateUser(ctx, &store.UserMessage{
@@ -264,13 +279,22 @@ func (s *UserService) CreateUser(ctx context.Context, request *connect.Request[v
 	return connect.NewResponse(userResponse), nil
 }
 
-func validatePassword(ctx context.Context, store *store.Store, workspace, password string) error {
-	setting, err := store.GetWorkspaceProfileSetting(ctx, workspace)
+func (s *UserService) validatePassword(ctx context.Context, workspaceID, password string) error {
+	restriction, err := getAccountRestriction(
+		ctx,
+		s.store,
+		s.licenseService,
+		s.profile.SaaS,
+		workspaceID,
+	)
 	if err != nil {
-		return connect.NewError(connect.CodeInternal, errors.Errorf("failed to get password restriction with error: %v", err))
+		return err
 	}
-	passwordRestriction := setting.GetPasswordRestriction()
+	passwordRestriction := convertToStorePasswordRestriction(restriction.PasswordRestriction)
+	return validatePasswordWithRestriction(password, passwordRestriction)
+}
 
+func validatePasswordWithRestriction(password string, passwordRestriction *storepb.WorkspaceProfileSetting_PasswordRestriction) error {
 	if len(password) < int(passwordRestriction.GetMinLength()) {
 		return connect.NewError(connect.CodeInvalidArgument, errors.Errorf("password length should no less than %v characters", passwordRestriction.GetMinLength()))
 	}
@@ -360,7 +384,7 @@ func (s *UserService) UpdateUser(ctx context.Context, request *connect.Request[v
 			if user.Type != storepb.PrincipalType_END_USER {
 				return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("password can be mutated for end users only"))
 			}
-			if err := validatePassword(ctx, s.store, common.GetWorkspaceIDFromContext(ctx), request.Msg.User.Password); err != nil {
+			if err := s.validatePassword(ctx, common.GetWorkspaceIDFromContext(ctx), request.Msg.User.Password); err != nil {
 				return nil, err
 			}
 			passwordPatch = &request.Msg.User.Password
@@ -417,8 +441,7 @@ func (s *UserService) UpdateUser(ctx context.Context, request *connect.Request[v
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to generate password hash"))
 		}
-		passwordHashStr := string(passwordHash)
-		patch.PasswordHash = &passwordHashStr
+		patch.PasswordHash = new(string(passwordHash))
 
 		// Revoke all refresh tokens for this user (including current session)
 		// User must re-login after password change for security
@@ -555,7 +578,7 @@ func (s *UserService) hasExtraWorkspaceAdmin(ctx context.Context, policy *storep
 			if member == common.AllUsers && !s.profile.SaaS {
 				// allUsers means every user is an admin. Count all active end users
 				// (not just workspace members) since allUsers includes everyone.
-				count, err := s.store.CountAllActivePrincipals(ctx)
+				count, err := s.store.CountActivePrincipals(ctx)
 				if err != nil {
 					return false, err
 				}
@@ -608,16 +631,16 @@ func (s *UserService) UndeleteUser(ctx context.Context, request *connect.Request
 	if !user.MemberDeleted {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("user %q is already active", email))
 	}
-	if user.Type == storepb.PrincipalType_END_USER {
-		if err := userCountGuard(ctx, s.store, s.licenseService, workspaceID); err != nil {
-			return nil, err
-		}
+
+	if err := s.preAddUserGuard(ctx, workspaceID); err != nil {
+		return nil, err
 	}
 
 	user, err = s.store.UpdateUser(ctx, user, &store.UpdateUserMessage{Delete: &undeletePatch})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+
 	v1User, err := convertToUser(ctx, s.iamManager, user)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to convert user"))
@@ -836,17 +859,83 @@ func generateRecoveryCodes(n int) ([]string, error) {
 	return recoveryCodes, nil
 }
 
-func userCountGuard(ctx context.Context, store *store.Store, licenseService *enterprise.LicenseService, workspaceID string) error {
-	userLimit := licenseService.GetUserLimit(ctx, workspaceID)
+// countUsersInIamPolicy counts distinct user members in an IAM policy,
+// expanding group memberships. When allUsers is present and not in SaaS mode,
+// returns the total active principal count instead.
+func countUsersInIamPolicy(ctx context.Context, s *store.Store, workspaceID string, policy *storepb.IamPolicy, saas bool) (int, error) {
+	emails := make(map[string]struct{})
+	var groupRefs []string
+	for _, binding := range policy.Bindings {
+		for _, member := range binding.Members {
+			if member == common.AllUsers {
+				if !saas {
+					return s.CountActivePrincipals(ctx)
+				}
+				continue
+			}
+			if strings.HasPrefix(member, "users/") {
+				emails[strings.TrimPrefix(member, "users/")] = struct{}{}
+			} else if strings.HasPrefix(member, "groups/") {
+				groupRefs = append(groupRefs, strings.TrimPrefix(member, "groups/"))
+			}
+		}
+	}
+	for _, ref := range groupRefs {
+		members, _ := s.GetGroupMembersSnapshot(ctx, workspaceID, "groups/"+ref)
+		for member := range members {
+			if strings.HasPrefix(member, "users/") {
+				emails[strings.TrimPrefix(member, "users/")] = struct{}{}
+			}
+		}
+	}
+	return len(emails), nil
+}
 
-	count, err := store.CountActiveEndUsersPerWorkspace(ctx, workspaceID)
+// userCountGuard checks seat limits before adding a new IAM member (e.g. SSO login).
+// Uses >= because the new user has not been counted yet.
+// If policy is nil, reads the current workspace IAM policy.
+func userCountGuard(ctx context.Context, s *store.Store, licenseService *enterprise.LicenseService, workspaceID string, policy *storepb.IamPolicy, saas bool) error {
+	if policy == nil {
+		p, err := s.GetWorkspaceIamPolicy(ctx, workspaceID)
+		if err != nil {
+			return connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to get workspace IAM policy"))
+		}
+		policy = p.Policy
+	}
+	userLimit := licenseService.GetUserLimit(ctx, workspaceID)
+	count, err := countUsersInIamPolicy(ctx, s, workspaceID, policy, saas)
 	if err != nil {
-		return connect.NewError(connect.CodeInternal, err)
+		return connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to count users in IAM policy"))
 	}
 	if count >= userLimit {
-		return connect.NewError(connect.CodeResourceExhausted, errors.Errorf("reached the maximum user count %d", userLimit))
+		return connect.NewError(connect.CodeResourceExhausted, errors.Errorf("workspace has %d users, reaching the limit of %d", count, userLimit))
 	}
 	return nil
+}
+
+// preAddUserGuard checks seat limits before creating or undeleting a principal.
+// Only enforces when the IAM policy contains allUsers, because without allUsers
+// a new principal does not occupy a seat until explicitly added to IAM.
+func (s *UserService) preAddUserGuard(ctx context.Context, workspaceID string) error {
+	p, err := s.store.GetWorkspaceIamPolicy(ctx, workspaceID)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to get workspace IAM policy"))
+	}
+	if !policyContainsAllUsers(p.Policy) {
+		return nil
+	}
+	return userCountGuard(ctx, s.store, s.licenseService, workspaceID, p.Policy, s.profile.SaaS)
+}
+
+func policyContainsAllUsers(policy *storepb.IamPolicy) bool {
+	for _, binding := range policy.Bindings {
+		for _, member := range binding.Members {
+			if member == common.AllUsers {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isUserWorkspaceAdmin(ctx context.Context, stores *store.Store, user *store.UserMessage, workspaceID string) (bool, error) {

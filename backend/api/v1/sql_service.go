@@ -204,6 +204,7 @@ func (s *SQLService) preCheckAccess(ctx context.Context, request *v1pb.QueryRequ
 	}
 
 	grants, err := s.store.ListAccessGrants(ctx, &store.FindAccessGrantMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: &database.ProjectID,
 		Creator:   &user.Email,
 		FilterQ:   filterQ,
@@ -249,7 +250,12 @@ func (s *SQLService) Query(ctx context.Context, req *connect.Request[v1pb.QueryR
 		}
 	}
 
-	dataSource, err := checkAndGetDataSourceQueriable(ctx, s.store, s.licenseService, database, request.DataSourceId)
+	resolvedDataSourceID, err := resolveDataSourceID(instance, request.DataSourceId)
+	if err != nil {
+		return nil, err
+	}
+
+	dataSource, err := checkAndGetDataSourceQueriable(ctx, s.store, s.licenseService, database, resolvedDataSourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -626,9 +632,20 @@ func queryRetry(
 	// Sync database metadata.
 	for accessDatabaseName := range syncDatabaseMap {
 		slog.Debug("sync database metadata", slog.String("instance", instance.ResourceID), slog.String("database", accessDatabaseName))
-		d, err := stores.GetDatabase(ctx, &store.FindDatabaseMessage{InstanceID: &instance.ResourceID, DatabaseName: &accessDatabaseName})
+		d, err := stores.GetDatabase(ctx, &store.FindDatabaseMessage{Workspace: common.GetWorkspaceIDFromContext(ctx), InstanceID: &instance.ResourceID, DatabaseName: &accessDatabaseName})
 		if err != nil {
 			return nil, nil, duration, err
+		}
+		if d == nil {
+			// The referenced database is not tracked by Bytebase (e.g. it was
+			// dropped, excluded by sync filters, or never discovered yet).
+			// Skip the sync attempt and leave the span's NotFoundError in place
+			// so the masking policy below can reject the query cleanly instead
+			// of panicking on a nil *DatabaseMessage.
+			slog.Debug("skip metadata sync: database not tracked",
+				slog.String("instance", instance.ResourceID),
+				slog.String("database", accessDatabaseName))
+			continue
 		}
 		if err := schemaSyncer.SyncDatabaseSchema(ctx, d); err != nil {
 			return nil, nil, duration, errors.Wrapf(err, "failed to sync database schema for database %q", accessDatabaseName)
@@ -861,7 +878,12 @@ func (s *SQLService) Export(ctx context.Context, req *connect.Request[v1pb.Expor
 		}
 	}
 
-	dataSource, err := checkAndGetDataSourceQueriable(ctx, s.store, s.licenseService, database, request.DataSourceId)
+	resolvedDataSourceID, err := resolveDataSourceID(instance, request.DataSourceId)
+	if err != nil {
+		return nil, err
+	}
+
+	dataSource, err := checkAndGetDataSourceQueriable(ctx, s.store, s.licenseService, database, resolvedDataSourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -893,6 +915,7 @@ func (s *SQLService) doExportFromIssue(ctx context.Context, requestName string) 
 	}
 
 	plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: projectID,
 		UID:       &planID,
 	})
@@ -903,7 +926,7 @@ func (s *SQLService) doExportFromIssue(ctx context.Context, requestName string) 
 		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("rollout %d not found in project %s", planID, projectID))
 	}
 
-	tasks, err := s.store.ListTasks(ctx, &store.TaskFind{ProjectID: projectID, PlanID: &plan.UID})
+	tasks, err := s.store.ListTasks(ctx, &store.TaskFind{Workspace: common.GetWorkspaceIDFromContext(ctx), ProjectID: projectID, PlanID: &plan.UID})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to get tasks: %v", err))
 	}
@@ -921,7 +944,6 @@ func (s *SQLService) doExportFromIssue(ctx context.Context, requestName string) 
 	}
 
 	pendingEncrypts := []*encryptContent{}
-	targetTaskRunStatus := []storepb.TaskRun_Status{storepb.TaskRun_DONE}
 
 	for _, task := range tasks {
 		// Skip tasks that are marked as skipped (they don't have archives)
@@ -930,9 +952,10 @@ func (s *SQLService) doExportFromIssue(ctx context.Context, requestName string) 
 		}
 
 		taskRuns, err := s.store.ListTaskRuns(ctx, &store.FindTaskRunMessage{
+			Workspace: common.GetWorkspaceIDFromContext(ctx),
 			ProjectID: projectID,
 			TaskUID:   &task.ID,
-			Status:    &targetTaskRunStatus,
+			Status:    &[]storepb.TaskRun_Status{storepb.TaskRun_DONE},
 		})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to get task run: %v", err))
@@ -1238,8 +1261,7 @@ func (s *SQLService) createQueryHistory(database *store.DatabaseMessage, queryTy
 		},
 	}
 	if queryErr != nil {
-		queryErrString := queryErr.Error()
-		qh.Payload.Error = &queryErrString
+		qh.Payload.Error = new(queryErr.Error())
 	}
 
 	// Use a fresh context with timeout for creating query history
@@ -1328,6 +1350,7 @@ func BuildGetLinkedDatabaseMetadataFunc(storeInstance *store.Store, engine store
 	return func(ctx context.Context, instanceID string, linkedDatabaseName string, schemaName string) (string, string, *model.DatabaseMetadata, error) {
 		// Find the linked database metadata.
 		databases, err := storeInstance.ListDatabases(ctx, &store.FindDatabaseMessage{
+			Workspace:  common.GetWorkspaceIDFromContext(ctx),
 			InstanceID: &instanceID,
 		})
 		if err != nil {
@@ -1357,6 +1380,7 @@ func BuildGetLinkedDatabaseMetadataFunc(storeInstance *store.Store, engine store
 			databaseName = schemaName
 		}
 		databaseList, err := storeInstance.ListDatabases(ctx, &store.FindDatabaseMessage{
+			Workspace:    common.GetWorkspaceIDFromContext(ctx),
 			DatabaseName: &databaseName,
 			Engine:       &engine,
 		})
@@ -1419,6 +1443,7 @@ func BuildGetDatabaseMetadataFunc(storeInstance *store.Store) parserbase.GetData
 func BuildListDatabaseNamesFunc(storeInstance *store.Store) parserbase.ListDatabaseNamesFunc {
 	return func(ctx context.Context, instanceID string) ([]string, error) {
 		databases, err := storeInstance.ListDatabases(ctx, &store.FindDatabaseMessage{
+			Workspace:  common.GetWorkspaceIDFromContext(ctx),
 			InstanceID: &instanceID,
 		})
 		if err != nil {
@@ -1616,6 +1641,7 @@ func (s *SQLService) prepareRelatedMessage(ctx context.Context, requestName stri
 		return nil, nil, nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to parse %q", requestName))
 	}
 	database, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+		Workspace:    common.GetWorkspaceIDFromContext(ctx),
 		InstanceID:   &instanceID,
 		DatabaseName: &databaseName,
 	})
@@ -1749,21 +1775,45 @@ func (*SQLService) DiffMetadata(_ context.Context, req *connect.Request[v1pb.Dif
 	sourceDBSchema := model.NewDatabaseMetadata(storeSourceMetadata, nil, nil, storepb.Engine(request.Engine), isObjectCaseSensitive)
 	targetDBSchema := model.NewDatabaseMetadata(storeTargetMetadata, nil, nil, storepb.Engine(request.Engine), isObjectCaseSensitive)
 
-	// Get the metadata diff between source and target
-	metadataDiff, err := schema.GetDatabaseSchemaDiff(storepb.Engine(request.Engine), sourceDBSchema, targetDBSchema)
+	migrationSQL, err := schema.DiffMigration(storepb.Engine(request.Engine), sourceDBSchema, targetDBSchema)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to compute diff between source and target schemas"))
 	}
 
-	// Generate migration SQL from the diff
-	diff, err := schema.GenerateMigration(storepb.Engine(request.Engine), metadataDiff)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to generate migration SQL"))
+	return connect.NewResponse(&v1pb.DiffMetadataResponse{
+		Diff: migrationSQL,
+	}), nil
+}
+
+func resolveDataSourceID(instance *store.InstanceMessage, dataSourceID string) (string, error) {
+	if dataSourceID != "" {
+		return dataSourceID, nil
 	}
 
-	return connect.NewResponse(&v1pb.DiffMetadataResponse{
-		Diff: diff,
-	}), nil
+	var adminDataSourceID string
+	var readOnlyDataSourceID string
+	readOnlyCount := 0
+	for _, dataSource := range instance.Metadata.GetDataSources() {
+		switch dataSource.GetType() {
+		case storepb.DataSourceType_ADMIN:
+			adminDataSourceID = dataSource.GetId()
+		case storepb.DataSourceType_READ_ONLY:
+			readOnlyCount++
+			readOnlyDataSourceID = dataSource.GetId()
+		default:
+		}
+	}
+
+	switch {
+	case readOnlyCount == 1:
+		return readOnlyDataSourceID, nil
+	case readOnlyCount > 1:
+		return "", connect.NewError(connect.CodeFailedPrecondition, errors.New("instance has multiple read-only data sources, please specify data_source_id explicitly"))
+	case adminDataSourceID != "":
+		return adminDataSourceID, nil
+	default:
+		return "", connect.NewError(connect.CodeFailedPrecondition, errors.New("instance has no admin data source"))
+	}
 }
 
 func checkAndGetDataSourceQueriable(

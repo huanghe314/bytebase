@@ -23,6 +23,55 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type BillingInterval int32
+
+const (
+	BillingInterval_BILLING_INTERVAL_UNSPECIFIED BillingInterval = 0
+	BillingInterval_MONTH                        BillingInterval = 1
+	BillingInterval_YEAR                         BillingInterval = 2
+)
+
+// Enum value maps for BillingInterval.
+var (
+	BillingInterval_name = map[int32]string{
+		0: "BILLING_INTERVAL_UNSPECIFIED",
+		1: "MONTH",
+		2: "YEAR",
+	}
+	BillingInterval_value = map[string]int32{
+		"BILLING_INTERVAL_UNSPECIFIED": 0,
+		"MONTH":                        1,
+		"YEAR":                         2,
+	}
+)
+
+func (x BillingInterval) Enum() *BillingInterval {
+	p := new(BillingInterval)
+	*p = x
+	return p
+}
+
+func (x BillingInterval) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (BillingInterval) Descriptor() protoreflect.EnumDescriptor {
+	return file_v1_subscription_service_proto_enumTypes[0].Descriptor()
+}
+
+func (BillingInterval) Type() protoreflect.EnumType {
+	return &file_v1_subscription_service_proto_enumTypes[0]
+}
+
+func (x BillingInterval) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use BillingInterval.Descriptor instead.
+func (BillingInterval) EnumDescriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{0}
+}
+
 type PlanType int32
 
 const (
@@ -63,11 +112,11 @@ func (x PlanType) String() string {
 }
 
 func (PlanType) Descriptor() protoreflect.EnumDescriptor {
-	return file_v1_subscription_service_proto_enumTypes[0].Descriptor()
+	return file_v1_subscription_service_proto_enumTypes[1].Descriptor()
 }
 
 func (PlanType) Type() protoreflect.EnumType {
-	return &file_v1_subscription_service_proto_enumTypes[0]
+	return &file_v1_subscription_service_proto_enumTypes[1]
 }
 
 func (x PlanType) Number() protoreflect.EnumNumber {
@@ -76,7 +125,7 @@ func (x PlanType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use PlanType.Descriptor instead.
 func (PlanType) EnumDescriptor() ([]byte, []int) {
-	return file_v1_subscription_service_proto_rawDescGZIP(), []int{0}
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{1}
 }
 
 // PlanFeature represents the available features in Bytebase
@@ -97,8 +146,9 @@ const (
 	PlanFeature_FEATURE_PROGRESSIVE_ENVIRONMENT_DEPLOYMENT   PlanFeature = 10
 	PlanFeature_FEATURE_SCHEDULED_ROLLOUT_TIME               PlanFeature = 11
 	PlanFeature_FEATURE_DATABASE_CHANGELOG                   PlanFeature = 12
-	PlanFeature_FEATURE_SCHEMA_DRIFT_DETECTION               PlanFeature = 13
-	PlanFeature_FEATURE_ROLLOUT_POLICY                       PlanFeature = 14
+	// Deprecated: Marked as deprecated in v1/subscription_service.proto.
+	PlanFeature_FEATURE_SCHEMA_DRIFT_DETECTION PlanFeature = 13
+	PlanFeature_FEATURE_ROLLOUT_POLICY         PlanFeature = 14
 	// SQL Editor & Development
 	PlanFeature_FEATURE_WEB_BASED_SQL_EDITOR          PlanFeature = 15
 	PlanFeature_FEATURE_SQL_EDITOR_ADMIN_MODE         PlanFeature = 16
@@ -324,11 +374,11 @@ func (x PlanFeature) String() string {
 }
 
 func (PlanFeature) Descriptor() protoreflect.EnumDescriptor {
-	return file_v1_subscription_service_proto_enumTypes[1].Descriptor()
+	return file_v1_subscription_service_proto_enumTypes[2].Descriptor()
 }
 
 func (PlanFeature) Type() protoreflect.EnumType {
-	return &file_v1_subscription_service_proto_enumTypes[1]
+	return &file_v1_subscription_service_proto_enumTypes[2]
 }
 
 func (x PlanFeature) Number() protoreflect.EnumNumber {
@@ -337,7 +387,105 @@ func (x PlanFeature) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use PlanFeature.Descriptor instead.
 func (PlanFeature) EnumDescriptor() ([]byte, []int) {
-	return file_v1_subscription_service_proto_rawDescGZIP(), []int{1}
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{2}
+}
+
+type PurchasePlanAdditional_Type int32
+
+const (
+	PurchasePlanAdditional_TYPE_UNSPECIFIED PurchasePlanAdditional_Type = 0
+	PurchasePlanAdditional_USER             PurchasePlanAdditional_Type = 1
+)
+
+// Enum value maps for PurchasePlanAdditional_Type.
+var (
+	PurchasePlanAdditional_Type_name = map[int32]string{
+		0: "TYPE_UNSPECIFIED",
+		1: "USER",
+	}
+	PurchasePlanAdditional_Type_value = map[string]int32{
+		"TYPE_UNSPECIFIED": 0,
+		"USER":             1,
+	}
+)
+
+func (x PurchasePlanAdditional_Type) Enum() *PurchasePlanAdditional_Type {
+	p := new(PurchasePlanAdditional_Type)
+	*p = x
+	return p
+}
+
+func (x PurchasePlanAdditional_Type) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PurchasePlanAdditional_Type) Descriptor() protoreflect.EnumDescriptor {
+	return file_v1_subscription_service_proto_enumTypes[3].Descriptor()
+}
+
+func (PurchasePlanAdditional_Type) Type() protoreflect.EnumType {
+	return &file_v1_subscription_service_proto_enumTypes[3]
+}
+
+func (x PurchasePlanAdditional_Type) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PurchasePlanAdditional_Type.Descriptor instead.
+func (PurchasePlanAdditional_Type) EnumDescriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{11, 0}
+}
+
+type PurchaseDiscount_Type int32
+
+const (
+	PurchaseDiscount_TYPE_UNSPECIFIED PurchaseDiscount_Type = 0
+	PurchaseDiscount_PERCENTAGE_OFF   PurchaseDiscount_Type = 1
+	PurchaseDiscount_FIXED_MONTH_OFF  PurchaseDiscount_Type = 2
+	PurchaseDiscount_FIXED_PRICE_OFF  PurchaseDiscount_Type = 3
+)
+
+// Enum value maps for PurchaseDiscount_Type.
+var (
+	PurchaseDiscount_Type_name = map[int32]string{
+		0: "TYPE_UNSPECIFIED",
+		1: "PERCENTAGE_OFF",
+		2: "FIXED_MONTH_OFF",
+		3: "FIXED_PRICE_OFF",
+	}
+	PurchaseDiscount_Type_value = map[string]int32{
+		"TYPE_UNSPECIFIED": 0,
+		"PERCENTAGE_OFF":   1,
+		"FIXED_MONTH_OFF":  2,
+		"FIXED_PRICE_OFF":  3,
+	}
+)
+
+func (x PurchaseDiscount_Type) Enum() *PurchaseDiscount_Type {
+	p := new(PurchaseDiscount_Type)
+	*p = x
+	return p
+}
+
+func (x PurchaseDiscount_Type) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PurchaseDiscount_Type) Descriptor() protoreflect.EnumDescriptor {
+	return file_v1_subscription_service_proto_enumTypes[4].Descriptor()
+}
+
+func (PurchaseDiscount_Type) Type() protoreflect.EnumType {
+	return &file_v1_subscription_service_proto_enumTypes[4]
+}
+
+func (x PurchaseDiscount_Type) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PurchaseDiscount_Type.Descriptor instead.
+func (PurchaseDiscount_Type) EnumDescriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{13, 0}
 }
 
 type GetSubscriptionRequest struct {
@@ -376,30 +524,27 @@ func (*GetSubscriptionRequest) Descriptor() ([]byte, []int) {
 	return file_v1_subscription_service_proto_rawDescGZIP(), []int{0}
 }
 
-type UpdateSubscriptionRequest struct {
-	state   protoimpl.MessageState `protogen:"open.v1"`
-	License string                 `protobuf:"bytes,1,opt,name=license,proto3" json:"license,omitempty"`
-	// If set to true, and the subscription is not found, a new subscription will be created.
-	// In this situation, `update_mask` is ignored.
-	AllowMissing  bool `protobuf:"varint,2,opt,name=allow_missing,json=allowMissing,proto3" json:"allow_missing,omitempty"`
+type UploadLicenseRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	License       string                 `protobuf:"bytes,1,opt,name=license,proto3" json:"license,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *UpdateSubscriptionRequest) Reset() {
-	*x = UpdateSubscriptionRequest{}
+func (x *UploadLicenseRequest) Reset() {
+	*x = UploadLicenseRequest{}
 	mi := &file_v1_subscription_service_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *UpdateSubscriptionRequest) String() string {
+func (x *UploadLicenseRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*UpdateSubscriptionRequest) ProtoMessage() {}
+func (*UploadLicenseRequest) ProtoMessage() {}
 
-func (x *UpdateSubscriptionRequest) ProtoReflect() protoreflect.Message {
+func (x *UploadLicenseRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_v1_subscription_service_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -411,23 +556,797 @@ func (x *UpdateSubscriptionRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use UpdateSubscriptionRequest.ProtoReflect.Descriptor instead.
-func (*UpdateSubscriptionRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use UploadLicenseRequest.ProtoReflect.Descriptor instead.
+func (*UploadLicenseRequest) Descriptor() ([]byte, []int) {
 	return file_v1_subscription_service_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *UpdateSubscriptionRequest) GetLicense() string {
+func (x *UploadLicenseRequest) GetLicense() string {
 	if x != nil {
 		return x.License
 	}
 	return ""
 }
 
-func (x *UpdateSubscriptionRequest) GetAllowMissing() bool {
+type CreatePurchaseRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Plan          PlanType               `protobuf:"varint,1,opt,name=plan,proto3,enum=bytebase.v1.PlanType" json:"plan,omitempty"`
+	Interval      BillingInterval        `protobuf:"varint,2,opt,name=interval,proto3,enum=bytebase.v1.BillingInterval" json:"interval,omitempty"`
+	Seats         int32                  `protobuf:"varint,3,opt,name=seats,proto3" json:"seats,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreatePurchaseRequest) Reset() {
+	*x = CreatePurchaseRequest{}
+	mi := &file_v1_subscription_service_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreatePurchaseRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreatePurchaseRequest) ProtoMessage() {}
+
+func (x *CreatePurchaseRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_subscription_service_proto_msgTypes[2]
 	if x != nil {
-		return x.AllowMissing
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreatePurchaseRequest.ProtoReflect.Descriptor instead.
+func (*CreatePurchaseRequest) Descriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *CreatePurchaseRequest) GetPlan() PlanType {
+	if x != nil {
+		return x.Plan
+	}
+	return PlanType_PLAN_TYPE_UNSPECIFIED
+}
+
+func (x *CreatePurchaseRequest) GetInterval() BillingInterval {
+	if x != nil {
+		return x.Interval
+	}
+	return BillingInterval_BILLING_INTERVAL_UNSPECIFIED
+}
+
+func (x *CreatePurchaseRequest) GetSeats() int32 {
+	if x != nil {
+		return x.Seats
+	}
+	return 0
+}
+
+type PurchaseResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// If set, redirect to this Stripe Checkout URL.
+	// If empty, the update was applied directly using the existing payment method.
+	PaymentUrl string `protobuf:"bytes,1,opt,name=payment_url,json=paymentUrl,proto3" json:"payment_url,omitempty"`
+	// Stripe Checkout Session ID. Used to verify the session after redirect.
+	SessionId     string `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PurchaseResponse) Reset() {
+	*x = PurchaseResponse{}
+	mi := &file_v1_subscription_service_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PurchaseResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PurchaseResponse) ProtoMessage() {}
+
+func (x *PurchaseResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_subscription_service_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PurchaseResponse.ProtoReflect.Descriptor instead.
+func (*PurchaseResponse) Descriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *PurchaseResponse) GetPaymentUrl() string {
+	if x != nil {
+		return x.PaymentUrl
+	}
+	return ""
+}
+
+func (x *PurchaseResponse) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+type VerifyCheckoutSessionRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerifyCheckoutSessionRequest) Reset() {
+	*x = VerifyCheckoutSessionRequest{}
+	mi := &file_v1_subscription_service_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifyCheckoutSessionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifyCheckoutSessionRequest) ProtoMessage() {}
+
+func (x *VerifyCheckoutSessionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_subscription_service_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifyCheckoutSessionRequest.ProtoReflect.Descriptor instead.
+func (*VerifyCheckoutSessionRequest) Descriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *VerifyCheckoutSessionRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+type VerifyCheckoutSessionResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Stripe Checkout Session status: "complete", "expired", or "open".
+	Status        string `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerifyCheckoutSessionResponse) Reset() {
+	*x = VerifyCheckoutSessionResponse{}
+	mi := &file_v1_subscription_service_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifyCheckoutSessionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifyCheckoutSessionResponse) ProtoMessage() {}
+
+func (x *VerifyCheckoutSessionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_subscription_service_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifyCheckoutSessionResponse.ProtoReflect.Descriptor instead.
+func (*VerifyCheckoutSessionResponse) Descriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *VerifyCheckoutSessionResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+type UpdatePurchaseRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Plan          PlanType               `protobuf:"varint,1,opt,name=plan,proto3,enum=bytebase.v1.PlanType" json:"plan,omitempty"`
+	Interval      BillingInterval        `protobuf:"varint,2,opt,name=interval,proto3,enum=bytebase.v1.BillingInterval" json:"interval,omitempty"`
+	Seats         int32                  `protobuf:"varint,3,opt,name=seats,proto3" json:"seats,omitempty"`
+	Etag          string                 `protobuf:"bytes,4,opt,name=etag,proto3" json:"etag,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdatePurchaseRequest) Reset() {
+	*x = UpdatePurchaseRequest{}
+	mi := &file_v1_subscription_service_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdatePurchaseRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdatePurchaseRequest) ProtoMessage() {}
+
+func (x *UpdatePurchaseRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_subscription_service_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdatePurchaseRequest.ProtoReflect.Descriptor instead.
+func (*UpdatePurchaseRequest) Descriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *UpdatePurchaseRequest) GetPlan() PlanType {
+	if x != nil {
+		return x.Plan
+	}
+	return PlanType_PLAN_TYPE_UNSPECIFIED
+}
+
+func (x *UpdatePurchaseRequest) GetInterval() BillingInterval {
+	if x != nil {
+		return x.Interval
+	}
+	return BillingInterval_BILLING_INTERVAL_UNSPECIFIED
+}
+
+func (x *UpdatePurchaseRequest) GetSeats() int32 {
+	if x != nil {
+		return x.Seats
+	}
+	return 0
+}
+
+func (x *UpdatePurchaseRequest) GetEtag() string {
+	if x != nil {
+		return x.Etag
+	}
+	return ""
+}
+
+type CancelPurchaseRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Reason the customer is canceling. Maps to Stripe's cancellation_details.feedback.
+	// Valid Stripe values: "customer_service", "low_quality", "missing_features",
+	// "switched_service", "too_complex", "too_expensive", "unused", "other".
+	// Required.
+	Feedback string `protobuf:"bytes,1,opt,name=feedback,proto3" json:"feedback,omitempty"`
+	// Optional free-form comment. Max 500 chars (Stripe limit).
+	Comment       string `protobuf:"bytes,2,opt,name=comment,proto3" json:"comment,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CancelPurchaseRequest) Reset() {
+	*x = CancelPurchaseRequest{}
+	mi := &file_v1_subscription_service_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CancelPurchaseRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CancelPurchaseRequest) ProtoMessage() {}
+
+func (x *CancelPurchaseRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_subscription_service_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CancelPurchaseRequest.ProtoReflect.Descriptor instead.
+func (*CancelPurchaseRequest) Descriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *CancelPurchaseRequest) GetFeedback() string {
+	if x != nil {
+		return x.Feedback
+	}
+	return ""
+}
+
+func (x *CancelPurchaseRequest) GetComment() string {
+	if x != nil {
+		return x.Comment
+	}
+	return ""
+}
+
+type GetPaymentInfoRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPaymentInfoRequest) Reset() {
+	*x = GetPaymentInfoRequest{}
+	mi := &file_v1_subscription_service_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPaymentInfoRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPaymentInfoRequest) ProtoMessage() {}
+
+func (x *GetPaymentInfoRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_subscription_service_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPaymentInfoRequest.ProtoReflect.Descriptor instead.
+func (*GetPaymentInfoRequest) Descriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{8}
+}
+
+type PaymentInfo struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	TotalPrice  string                 `protobuf:"bytes,1,opt,name=total_price,json=totalPrice,proto3" json:"total_price,omitempty"`
+	Currency    string                 `protobuf:"bytes,2,opt,name=currency,proto3" json:"currency,omitempty"`
+	PeriodStart string                 `protobuf:"bytes,3,opt,name=period_start,json=periodStart,proto3" json:"period_start,omitempty"`
+	PeriodEnd   string                 `protobuf:"bytes,4,opt,name=period_end,json=periodEnd,proto3" json:"period_end,omitempty"`
+	// Stripe Billing Portal URL for invoice management.
+	InvoiceUrl string `protobuf:"bytes,5,opt,name=invoice_url,json=invoiceUrl,proto3" json:"invoice_url,omitempty"`
+	// Whether the subscription is scheduled to cancel at the end of the current billing period.
+	CancelAtPeriodEnd bool `protobuf:"varint,6,opt,name=cancel_at_period_end,json=cancelAtPeriodEnd,proto3" json:"cancel_at_period_end,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *PaymentInfo) Reset() {
+	*x = PaymentInfo{}
+	mi := &file_v1_subscription_service_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PaymentInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PaymentInfo) ProtoMessage() {}
+
+func (x *PaymentInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_subscription_service_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PaymentInfo.ProtoReflect.Descriptor instead.
+func (*PaymentInfo) Descriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *PaymentInfo) GetTotalPrice() string {
+	if x != nil {
+		return x.TotalPrice
+	}
+	return ""
+}
+
+func (x *PaymentInfo) GetCurrency() string {
+	if x != nil {
+		return x.Currency
+	}
+	return ""
+}
+
+func (x *PaymentInfo) GetPeriodStart() string {
+	if x != nil {
+		return x.PeriodStart
+	}
+	return ""
+}
+
+func (x *PaymentInfo) GetPeriodEnd() string {
+	if x != nil {
+		return x.PeriodEnd
+	}
+	return ""
+}
+
+func (x *PaymentInfo) GetInvoiceUrl() string {
+	if x != nil {
+		return x.InvoiceUrl
+	}
+	return ""
+}
+
+func (x *PaymentInfo) GetCancelAtPeriodEnd() bool {
+	if x != nil {
+		return x.CancelAtPeriodEnd
 	}
 	return false
+}
+
+type PurchasePlan struct {
+	state               protoimpl.MessageState    `protogen:"open.v1"`
+	Type                PlanType                  `protobuf:"varint,1,opt,name=type,proto3,enum=bytebase.v1.PlanType" json:"type,omitempty"`
+	SelfServicePurchase bool                      `protobuf:"varint,2,opt,name=self_service_purchase,json=selfServicePurchase,proto3" json:"self_service_purchase,omitempty"`
+	Additionals         []*PurchasePlanAdditional `protobuf:"bytes,3,rep,name=additionals,proto3" json:"additionals,omitempty"`
+	BillingMethods      []*PurchaseBillingMethod  `protobuf:"bytes,4,rep,name=billing_methods,json=billingMethods,proto3" json:"billing_methods,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *PurchasePlan) Reset() {
+	*x = PurchasePlan{}
+	mi := &file_v1_subscription_service_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PurchasePlan) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PurchasePlan) ProtoMessage() {}
+
+func (x *PurchasePlan) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_subscription_service_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PurchasePlan.ProtoReflect.Descriptor instead.
+func (*PurchasePlan) Descriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *PurchasePlan) GetType() PlanType {
+	if x != nil {
+		return x.Type
+	}
+	return PlanType_PLAN_TYPE_UNSPECIFIED
+}
+
+func (x *PurchasePlan) GetSelfServicePurchase() bool {
+	if x != nil {
+		return x.SelfServicePurchase
+	}
+	return false
+}
+
+func (x *PurchasePlan) GetAdditionals() []*PurchasePlanAdditional {
+	if x != nil {
+		return x.Additionals
+	}
+	return nil
+}
+
+func (x *PurchasePlan) GetBillingMethods() []*PurchaseBillingMethod {
+	if x != nil {
+		return x.BillingMethods
+	}
+	return nil
+}
+
+type PurchasePlanAdditional struct {
+	state protoimpl.MessageState      `protogen:"open.v1"`
+	Type  PurchasePlanAdditional_Type `protobuf:"varint,1,opt,name=type,proto3,enum=bytebase.v1.PurchasePlanAdditional_Type" json:"type,omitempty"`
+	// Price in USD cents per month.
+	UnitPrice    int32 `protobuf:"varint,2,opt,name=unit_price,json=unitPrice,proto3" json:"unit_price,omitempty"`
+	FreeCount    int32 `protobuf:"varint,3,opt,name=free_count,json=freeCount,proto3" json:"free_count,omitempty"`
+	MinimumCount int32 `protobuf:"varint,4,opt,name=minimum_count,json=minimumCount,proto3" json:"minimum_count,omitempty"`
+	// -1 means unlimited.
+	MaximumCount  int32 `protobuf:"varint,5,opt,name=maximum_count,json=maximumCount,proto3" json:"maximum_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PurchasePlanAdditional) Reset() {
+	*x = PurchasePlanAdditional{}
+	mi := &file_v1_subscription_service_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PurchasePlanAdditional) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PurchasePlanAdditional) ProtoMessage() {}
+
+func (x *PurchasePlanAdditional) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_subscription_service_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PurchasePlanAdditional.ProtoReflect.Descriptor instead.
+func (*PurchasePlanAdditional) Descriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *PurchasePlanAdditional) GetType() PurchasePlanAdditional_Type {
+	if x != nil {
+		return x.Type
+	}
+	return PurchasePlanAdditional_TYPE_UNSPECIFIED
+}
+
+func (x *PurchasePlanAdditional) GetUnitPrice() int32 {
+	if x != nil {
+		return x.UnitPrice
+	}
+	return 0
+}
+
+func (x *PurchasePlanAdditional) GetFreeCount() int32 {
+	if x != nil {
+		return x.FreeCount
+	}
+	return 0
+}
+
+func (x *PurchasePlanAdditional) GetMinimumCount() int32 {
+	if x != nil {
+		return x.MinimumCount
+	}
+	return 0
+}
+
+func (x *PurchasePlanAdditional) GetMaximumCount() int32 {
+	if x != nil {
+		return x.MaximumCount
+	}
+	return 0
+}
+
+type PurchaseBillingMethod struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Interval      BillingInterval        `protobuf:"varint,1,opt,name=interval,proto3,enum=bytebase.v1.BillingInterval" json:"interval,omitempty"`
+	Discount      *PurchaseDiscount      `protobuf:"bytes,2,opt,name=discount,proto3" json:"discount,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PurchaseBillingMethod) Reset() {
+	*x = PurchaseBillingMethod{}
+	mi := &file_v1_subscription_service_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PurchaseBillingMethod) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PurchaseBillingMethod) ProtoMessage() {}
+
+func (x *PurchaseBillingMethod) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_subscription_service_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PurchaseBillingMethod.ProtoReflect.Descriptor instead.
+func (*PurchaseBillingMethod) Descriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *PurchaseBillingMethod) GetInterval() BillingInterval {
+	if x != nil {
+		return x.Interval
+	}
+	return BillingInterval_BILLING_INTERVAL_UNSPECIFIED
+}
+
+func (x *PurchaseBillingMethod) GetDiscount() *PurchaseDiscount {
+	if x != nil {
+		return x.Discount
+	}
+	return nil
+}
+
+type PurchaseDiscount struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Type          PurchaseDiscount_Type  `protobuf:"varint,1,opt,name=type,proto3,enum=bytebase.v1.PurchaseDiscount_Type" json:"type,omitempty"`
+	Value         int32                  `protobuf:"varint,2,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PurchaseDiscount) Reset() {
+	*x = PurchaseDiscount{}
+	mi := &file_v1_subscription_service_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PurchaseDiscount) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PurchaseDiscount) ProtoMessage() {}
+
+func (x *PurchaseDiscount) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_subscription_service_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PurchaseDiscount.ProtoReflect.Descriptor instead.
+func (*PurchaseDiscount) Descriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *PurchaseDiscount) GetType() PurchaseDiscount_Type {
+	if x != nil {
+		return x.Type
+	}
+	return PurchaseDiscount_TYPE_UNSPECIFIED
+}
+
+func (x *PurchaseDiscount) GetValue() int32 {
+	if x != nil {
+		return x.Value
+	}
+	return 0
+}
+
+type ListPurchasePlansRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListPurchasePlansRequest) Reset() {
+	*x = ListPurchasePlansRequest{}
+	mi := &file_v1_subscription_service_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListPurchasePlansRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListPurchasePlansRequest) ProtoMessage() {}
+
+func (x *ListPurchasePlansRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_subscription_service_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListPurchasePlansRequest.ProtoReflect.Descriptor instead.
+func (*ListPurchasePlansRequest) Descriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{14}
+}
+
+type ListPurchasePlansResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Plans         []*PurchasePlan        `protobuf:"bytes,1,rep,name=plans,proto3" json:"plans,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListPurchasePlansResponse) Reset() {
+	*x = ListPurchasePlansResponse{}
+	mi := &file_v1_subscription_service_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListPurchasePlansResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListPurchasePlansResponse) ProtoMessage() {}
+
+func (x *ListPurchasePlansResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_subscription_service_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListPurchasePlansResponse.ProtoReflect.Descriptor instead.
+func (*ListPurchasePlansResponse) Descriptor() ([]byte, []int) {
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ListPurchasePlansResponse) GetPlans() []*PurchasePlan {
+	if x != nil {
+		return x.Plans
+	}
+	return nil
 }
 
 type Subscription struct {
@@ -440,14 +1359,16 @@ type Subscription struct {
 	Trialing        bool                   `protobuf:"varint,6,opt,name=trialing,proto3" json:"trialing,omitempty"`
 	OrgName         string                 `protobuf:"bytes,7,opt,name=org_name,json=orgName,proto3" json:"org_name,omitempty"`
 	// Whether high availability (multiple replicas) is enabled.
-	Ha            bool `protobuf:"varint,8,opt,name=ha,proto3" json:"ha,omitempty"`
+	Ha bool `protobuf:"varint,8,opt,name=ha,proto3" json:"ha,omitempty"`
+	// Etag for optimistic concurrency on purchase updates. Only set in SaaS mode.
+	Etag          string `protobuf:"bytes,9,opt,name=etag,proto3" json:"etag,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Subscription) Reset() {
 	*x = Subscription{}
-	mi := &file_v1_subscription_service_proto_msgTypes[2]
+	mi := &file_v1_subscription_service_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -459,7 +1380,7 @@ func (x *Subscription) String() string {
 func (*Subscription) ProtoMessage() {}
 
 func (x *Subscription) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_subscription_service_proto_msgTypes[2]
+	mi := &file_v1_subscription_service_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -472,7 +1393,7 @@ func (x *Subscription) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Subscription.ProtoReflect.Descriptor instead.
 func (*Subscription) Descriptor() ([]byte, []int) {
-	return file_v1_subscription_service_proto_rawDescGZIP(), []int{2}
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *Subscription) GetPlan() PlanType {
@@ -531,6 +1452,13 @@ func (x *Subscription) GetHa() bool {
 	return false
 }
 
+func (x *Subscription) GetEtag() string {
+	if x != nil {
+		return x.Etag
+	}
+	return ""
+}
+
 // PlanConfig represents the configuration for all plans loaded from plan.yaml
 type PlanConfig struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
@@ -542,7 +1470,7 @@ type PlanConfig struct {
 
 func (x *PlanConfig) Reset() {
 	*x = PlanConfig{}
-	mi := &file_v1_subscription_service_proto_msgTypes[3]
+	mi := &file_v1_subscription_service_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -554,7 +1482,7 @@ func (x *PlanConfig) String() string {
 func (*PlanConfig) ProtoMessage() {}
 
 func (x *PlanConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_subscription_service_proto_msgTypes[3]
+	mi := &file_v1_subscription_service_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -567,7 +1495,7 @@ func (x *PlanConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanConfig.ProtoReflect.Descriptor instead.
 func (*PlanConfig) Descriptor() ([]byte, []int) {
-	return file_v1_subscription_service_proto_rawDescGZIP(), []int{3}
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *PlanConfig) GetPlans() []*PlanLimitConfig {
@@ -597,7 +1525,7 @@ type PlanLimitConfig struct {
 
 func (x *PlanLimitConfig) Reset() {
 	*x = PlanLimitConfig{}
-	mi := &file_v1_subscription_service_proto_msgTypes[4]
+	mi := &file_v1_subscription_service_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -609,7 +1537,7 @@ func (x *PlanLimitConfig) String() string {
 func (*PlanLimitConfig) ProtoMessage() {}
 
 func (x *PlanLimitConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_subscription_service_proto_msgTypes[4]
+	mi := &file_v1_subscription_service_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -622,7 +1550,7 @@ func (x *PlanLimitConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanLimitConfig.ProtoReflect.Descriptor instead.
 func (*PlanLimitConfig) Descriptor() ([]byte, []int) {
-	return file_v1_subscription_service_proto_rawDescGZIP(), []int{4}
+	return file_v1_subscription_service_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *PlanLimitConfig) GetType() PlanType {
@@ -658,10 +1586,72 @@ var File_v1_subscription_service_proto protoreflect.FileDescriptor
 const file_v1_subscription_service_proto_rawDesc = "" +
 	"\n" +
 	"\x1dv1/subscription_service.proto\x12\vbytebase.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x17google/api/client.proto\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x13v1/annotation.proto\"\x18\n" +
-	"\x16GetSubscriptionRequest\"Z\n" +
-	"\x19UpdateSubscriptionRequest\x12\x18\n" +
-	"\alicense\x18\x01 \x01(\tR\alicense\x12#\n" +
-	"\rallow_missing\x18\x02 \x01(\bR\fallowMissing\"\xc6\x02\n" +
+	"\x16GetSubscriptionRequest\"0\n" +
+	"\x14UploadLicenseRequest\x12\x18\n" +
+	"\alicense\x18\x01 \x01(\tR\alicense\"\x92\x01\n" +
+	"\x15CreatePurchaseRequest\x12)\n" +
+	"\x04plan\x18\x01 \x01(\x0e2\x15.bytebase.v1.PlanTypeR\x04plan\x128\n" +
+	"\binterval\x18\x02 \x01(\x0e2\x1c.bytebase.v1.BillingIntervalR\binterval\x12\x14\n" +
+	"\x05seats\x18\x03 \x01(\x05R\x05seats\"R\n" +
+	"\x10PurchaseResponse\x12\x1f\n" +
+	"\vpayment_url\x18\x01 \x01(\tR\n" +
+	"paymentUrl\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\"=\n" +
+	"\x1cVerifyCheckoutSessionRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"7\n" +
+	"\x1dVerifyCheckoutSessionResponse\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\"\xa6\x01\n" +
+	"\x15UpdatePurchaseRequest\x12)\n" +
+	"\x04plan\x18\x01 \x01(\x0e2\x15.bytebase.v1.PlanTypeR\x04plan\x128\n" +
+	"\binterval\x18\x02 \x01(\x0e2\x1c.bytebase.v1.BillingIntervalR\binterval\x12\x14\n" +
+	"\x05seats\x18\x03 \x01(\x05R\x05seats\x12\x12\n" +
+	"\x04etag\x18\x04 \x01(\tR\x04etag\"M\n" +
+	"\x15CancelPurchaseRequest\x12\x1a\n" +
+	"\bfeedback\x18\x01 \x01(\tR\bfeedback\x12\x18\n" +
+	"\acomment\x18\x02 \x01(\tR\acomment\"\x17\n" +
+	"\x15GetPaymentInfoRequest\"\xde\x01\n" +
+	"\vPaymentInfo\x12\x1f\n" +
+	"\vtotal_price\x18\x01 \x01(\tR\n" +
+	"totalPrice\x12\x1a\n" +
+	"\bcurrency\x18\x02 \x01(\tR\bcurrency\x12!\n" +
+	"\fperiod_start\x18\x03 \x01(\tR\vperiodStart\x12\x1d\n" +
+	"\n" +
+	"period_end\x18\x04 \x01(\tR\tperiodEnd\x12\x1f\n" +
+	"\vinvoice_url\x18\x05 \x01(\tR\n" +
+	"invoiceUrl\x12/\n" +
+	"\x14cancel_at_period_end\x18\x06 \x01(\bR\x11cancelAtPeriodEnd\"\x81\x02\n" +
+	"\fPurchasePlan\x12)\n" +
+	"\x04type\x18\x01 \x01(\x0e2\x15.bytebase.v1.PlanTypeR\x04type\x122\n" +
+	"\x15self_service_purchase\x18\x02 \x01(\bR\x13selfServicePurchase\x12E\n" +
+	"\vadditionals\x18\x03 \x03(\v2#.bytebase.v1.PurchasePlanAdditionalR\vadditionals\x12K\n" +
+	"\x0fbilling_methods\x18\x04 \x03(\v2\".bytebase.v1.PurchaseBillingMethodR\x0ebillingMethods\"\x86\x02\n" +
+	"\x16PurchasePlanAdditional\x12<\n" +
+	"\x04type\x18\x01 \x01(\x0e2(.bytebase.v1.PurchasePlanAdditional.TypeR\x04type\x12\x1d\n" +
+	"\n" +
+	"unit_price\x18\x02 \x01(\x05R\tunitPrice\x12\x1d\n" +
+	"\n" +
+	"free_count\x18\x03 \x01(\x05R\tfreeCount\x12#\n" +
+	"\rminimum_count\x18\x04 \x01(\x05R\fminimumCount\x12#\n" +
+	"\rmaximum_count\x18\x05 \x01(\x05R\fmaximumCount\"&\n" +
+	"\x04Type\x12\x14\n" +
+	"\x10TYPE_UNSPECIFIED\x10\x00\x12\b\n" +
+	"\x04USER\x10\x01\"\x8c\x01\n" +
+	"\x15PurchaseBillingMethod\x128\n" +
+	"\binterval\x18\x01 \x01(\x0e2\x1c.bytebase.v1.BillingIntervalR\binterval\x129\n" +
+	"\bdiscount\x18\x02 \x01(\v2\x1d.bytebase.v1.PurchaseDiscountR\bdiscount\"\xbc\x01\n" +
+	"\x10PurchaseDiscount\x126\n" +
+	"\x04type\x18\x01 \x01(\x0e2\".bytebase.v1.PurchaseDiscount.TypeR\x04type\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\x05R\x05value\"Z\n" +
+	"\x04Type\x12\x14\n" +
+	"\x10TYPE_UNSPECIFIED\x10\x00\x12\x12\n" +
+	"\x0ePERCENTAGE_OFF\x10\x01\x12\x13\n" +
+	"\x0fFIXED_MONTH_OFF\x10\x02\x12\x13\n" +
+	"\x0fFIXED_PRICE_OFF\x10\x03\"\x1a\n" +
+	"\x18ListPurchasePlansRequest\"L\n" +
+	"\x19ListPurchasePlansResponse\x12/\n" +
+	"\x05plans\x18\x01 \x03(\v2\x19.bytebase.v1.PurchasePlanR\x05plans\"\xdf\x02\n" +
 	"\fSubscription\x12.\n" +
 	"\x04plan\x18\x01 \x01(\x0e2\x15.bytebase.v1.PlanTypeB\x03\xe0A\x03R\x04plan\x12\x19\n" +
 	"\x05seats\x18\x02 \x01(\x05B\x03\xe0A\x03R\x05seats\x12!\n" +
@@ -670,7 +1660,8 @@ const file_v1_subscription_service_proto_rawDesc = "" +
 	"\fexpires_time\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampB\x03\xe0A\x03R\vexpiresTime\x12\x1f\n" +
 	"\btrialing\x18\x06 \x01(\bB\x03\xe0A\x03R\btrialing\x12\x1e\n" +
 	"\borg_name\x18\a \x01(\tB\x03\xe0A\x03R\aorgName\x12\x13\n" +
-	"\x02ha\x18\b \x01(\bB\x03\xe0A\x03R\x02ha\"\x87\x01\n" +
+	"\x02ha\x18\b \x01(\bB\x03\xe0A\x03R\x02ha\x12\x17\n" +
+	"\x04etag\x18\t \x01(\tB\x03\xe0A\x03R\x04etag\"\x87\x01\n" +
 	"\n" +
 	"PlanConfig\x122\n" +
 	"\x05plans\x18\x01 \x03(\v2\x1c.bytebase.v1.PlanLimitConfigR\x05plans\x12E\n" +
@@ -679,13 +1670,17 @@ const file_v1_subscription_service_proto_rawDesc = "" +
 	"\x04type\x18\x01 \x01(\x0e2\x15.bytebase.v1.PlanTypeR\x04type\x124\n" +
 	"\x16maximum_instance_count\x18\x02 \x01(\x05R\x14maximumInstanceCount\x12,\n" +
 	"\x12maximum_seat_count\x18\x03 \x01(\x05R\x10maximumSeatCount\x124\n" +
-	"\bfeatures\x18\x04 \x03(\x0e2\x18.bytebase.v1.PlanFeatureR\bfeatures*I\n" +
+	"\bfeatures\x18\x04 \x03(\x0e2\x18.bytebase.v1.PlanFeatureR\bfeatures*H\n" +
+	"\x0fBillingInterval\x12 \n" +
+	"\x1cBILLING_INTERVAL_UNSPECIFIED\x10\x00\x12\t\n" +
+	"\x05MONTH\x10\x01\x12\b\n" +
+	"\x04YEAR\x10\x02*I\n" +
 	"\bPlanType\x12\x19\n" +
 	"\x15PLAN_TYPE_UNSPECIFIED\x10\x00\x12\b\n" +
 	"\x04FREE\x10\x01\x12\b\n" +
 	"\x04TEAM\x10\x02\x12\x0e\n" +
 	"\n" +
-	"ENTERPRISE\x10\x03*\xe1\x12\n" +
+	"ENTERPRISE\x10\x03*\xe5\x12\n" +
 	"\vPlanFeature\x12\x17\n" +
 	"\x13FEATURE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17FEATURE_DATABASE_CHANGE\x10\x01\x12,\n" +
@@ -700,8 +1695,8 @@ const file_v1_subscription_service_proto_rawDesc = "" +
 	"*FEATURE_PROGRESSIVE_ENVIRONMENT_DEPLOYMENT\x10\n" +
 	"\x12\"\n" +
 	"\x1eFEATURE_SCHEDULED_ROLLOUT_TIME\x10\v\x12\x1e\n" +
-	"\x1aFEATURE_DATABASE_CHANGELOG\x10\f\x12\"\n" +
-	"\x1eFEATURE_SCHEMA_DRIFT_DETECTION\x10\r\x12\x1a\n" +
+	"\x1aFEATURE_DATABASE_CHANGELOG\x10\f\x12&\n" +
+	"\x1eFEATURE_SCHEMA_DRIFT_DETECTION\x10\r\x1a\x02\b\x01\x12\x1a\n" +
 	"\x16FEATURE_ROLLOUT_POLICY\x10\x0e\x12 \n" +
 	"\x1cFEATURE_WEB_BASED_SQL_EDITOR\x10\x0f\x12!\n" +
 	"\x1dFEATURE_SQL_EDITOR_ADMIN_MODE\x10\x10\x12#\n" +
@@ -759,10 +1754,16 @@ const file_v1_subscription_service_proto_rawDesc = "" +
 	"\x12FEATURE_CUSTOM_MSA\x10D\x12\x1d\n" +
 	"\x19FEATURE_COMMUNITY_SUPPORT\x10E\x12\x19\n" +
 	"\x15FEATURE_EMAIL_SUPPORT\x10F\x12&\n" +
-	"\"FEATURE_DEDICATED_SUPPORT_WITH_SLA\x10G2\xa5\x02\n" +
-	"\x13SubscriptionService\x12r\n" +
-	"\x0fGetSubscription\x12#.bytebase.v1.GetSubscriptionRequest\x1a\x19.bytebase.v1.Subscription\"\x1f\xdaA\x00\x80\xea0\x01\x82\xd3\xe4\x93\x02\x12\x12\x10/v1/subscription\x12\x99\x01\n" +
-	"\x12UpdateSubscription\x12&.bytebase.v1.UpdateSubscriptionRequest\x1a\x19.bytebase.v1.Subscription\"@\xdaA\x05patch\x8a\xea0\x0fbb.settings.set\x90\xea0\x01\x82\xd3\xe4\x93\x02\x1b:\alicense2\x10/v1/subscriptionB\xae\x01\n" +
+	"\"FEATURE_DEDICATED_SUPPORT_WITH_SLA\x10G2\xd2\t\n" +
+	"\x13SubscriptionService\x12n\n" +
+	"\x0fGetSubscription\x12#.bytebase.v1.GetSubscriptionRequest\x1a\x19.bytebase.v1.Subscription\"\x1b\xdaA\x00\x82\xd3\xe4\x93\x02\x12\x12\x10/v1/subscription\x12\x90\x01\n" +
+	"\rUploadLicense\x12!.bytebase.v1.UploadLicenseRequest\x1a\x19.bytebase.v1.Subscription\"A\x8a\xea0\x16bb.subscription.manage\x90\xea0\x01\x82\xd3\xe4\x93\x02\x1d:\x01*2\x18/v1/subscription/license\x12\x97\x01\n" +
+	"\x0eCreatePurchase\x12\".bytebase.v1.CreatePurchaseRequest\x1a\x1d.bytebase.v1.PurchaseResponse\"B\x8a\xea0\x16bb.subscription.manage\x90\xea0\x01\x82\xd3\xe4\x93\x02\x1e:\x01*\"\x19/v1/subscription:purchase\x12\x9d\x01\n" +
+	"\x0eUpdatePurchase\x12\".bytebase.v1.UpdatePurchaseRequest\x1a\x1d.bytebase.v1.PurchaseResponse\"H\x8a\xea0\x16bb.subscription.manage\x90\xea0\x01\x82\xd3\xe4\x93\x02$:\x01*\"\x1f/v1/subscription:updatePurchase\x12\x9d\x01\n" +
+	"\x0eCancelPurchase\x12\".bytebase.v1.CancelPurchaseRequest\x1a\x1d.bytebase.v1.PurchaseResponse\"H\x8a\xea0\x16bb.subscription.manage\x90\xea0\x01\x82\xd3\xe4\x93\x02$:\x01*\"\x1f/v1/subscription:cancelPurchase\x12\x92\x01\n" +
+	"\x0eGetPaymentInfo\x12\".bytebase.v1.GetPaymentInfoRequest\x1a\x18.bytebase.v1.PaymentInfo\"B\x8a\xea0\x16bb.subscription.manage\x90\xea0\x01\x82\xd3\xe4\x93\x02\x1e\x12\x1c/v1/subscription/paymentInfo\x12\xc3\x01\n" +
+	"\x15VerifyCheckoutSession\x12).bytebase.v1.VerifyCheckoutSessionRequest\x1a*.bytebase.v1.VerifyCheckoutSessionResponse\"S\x8a\xea0\x16bb.subscription.manage\x90\xea0\x01\x82\xd3\xe4\x93\x02/\x12-/v1/subscription/checkoutSession/{session_id}\x12\x82\x01\n" +
+	"\x11ListPurchasePlans\x12%.bytebase.v1.ListPurchasePlansRequest\x1a&.bytebase.v1.ListPurchasePlansResponse\"\x1e\x82\xd3\xe4\x93\x02\x18\x12\x16/v1/subscription/plansB\xae\x01\n" +
 	"\x0fcom.bytebase.v1B\x18SubscriptionServiceProtoP\x01Z4github.com/bytebase/bytebase/backend/generated-go/v1\xa2\x02\x03BXX\xaa\x02\vBytebase.V1\xca\x02\vBytebase\\V1\xe2\x02\x17Bytebase\\V1\\GPBMetadata\xea\x02\fBytebase::V1b\x06proto3"
 
 var (
@@ -777,34 +1778,75 @@ func file_v1_subscription_service_proto_rawDescGZIP() []byte {
 	return file_v1_subscription_service_proto_rawDescData
 }
 
-var file_v1_subscription_service_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_v1_subscription_service_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_v1_subscription_service_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_v1_subscription_service_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_v1_subscription_service_proto_goTypes = []any{
-	(PlanType)(0),                     // 0: bytebase.v1.PlanType
-	(PlanFeature)(0),                  // 1: bytebase.v1.PlanFeature
-	(*GetSubscriptionRequest)(nil),    // 2: bytebase.v1.GetSubscriptionRequest
-	(*UpdateSubscriptionRequest)(nil), // 3: bytebase.v1.UpdateSubscriptionRequest
-	(*Subscription)(nil),              // 4: bytebase.v1.Subscription
-	(*PlanConfig)(nil),                // 5: bytebase.v1.PlanConfig
-	(*PlanLimitConfig)(nil),           // 6: bytebase.v1.PlanLimitConfig
-	(*timestamppb.Timestamp)(nil),     // 7: google.protobuf.Timestamp
+	(BillingInterval)(0),                  // 0: bytebase.v1.BillingInterval
+	(PlanType)(0),                         // 1: bytebase.v1.PlanType
+	(PlanFeature)(0),                      // 2: bytebase.v1.PlanFeature
+	(PurchasePlanAdditional_Type)(0),      // 3: bytebase.v1.PurchasePlanAdditional.Type
+	(PurchaseDiscount_Type)(0),            // 4: bytebase.v1.PurchaseDiscount.Type
+	(*GetSubscriptionRequest)(nil),        // 5: bytebase.v1.GetSubscriptionRequest
+	(*UploadLicenseRequest)(nil),          // 6: bytebase.v1.UploadLicenseRequest
+	(*CreatePurchaseRequest)(nil),         // 7: bytebase.v1.CreatePurchaseRequest
+	(*PurchaseResponse)(nil),              // 8: bytebase.v1.PurchaseResponse
+	(*VerifyCheckoutSessionRequest)(nil),  // 9: bytebase.v1.VerifyCheckoutSessionRequest
+	(*VerifyCheckoutSessionResponse)(nil), // 10: bytebase.v1.VerifyCheckoutSessionResponse
+	(*UpdatePurchaseRequest)(nil),         // 11: bytebase.v1.UpdatePurchaseRequest
+	(*CancelPurchaseRequest)(nil),         // 12: bytebase.v1.CancelPurchaseRequest
+	(*GetPaymentInfoRequest)(nil),         // 13: bytebase.v1.GetPaymentInfoRequest
+	(*PaymentInfo)(nil),                   // 14: bytebase.v1.PaymentInfo
+	(*PurchasePlan)(nil),                  // 15: bytebase.v1.PurchasePlan
+	(*PurchasePlanAdditional)(nil),        // 16: bytebase.v1.PurchasePlanAdditional
+	(*PurchaseBillingMethod)(nil),         // 17: bytebase.v1.PurchaseBillingMethod
+	(*PurchaseDiscount)(nil),              // 18: bytebase.v1.PurchaseDiscount
+	(*ListPurchasePlansRequest)(nil),      // 19: bytebase.v1.ListPurchasePlansRequest
+	(*ListPurchasePlansResponse)(nil),     // 20: bytebase.v1.ListPurchasePlansResponse
+	(*Subscription)(nil),                  // 21: bytebase.v1.Subscription
+	(*PlanConfig)(nil),                    // 22: bytebase.v1.PlanConfig
+	(*PlanLimitConfig)(nil),               // 23: bytebase.v1.PlanLimitConfig
+	(*timestamppb.Timestamp)(nil),         // 24: google.protobuf.Timestamp
 }
 var file_v1_subscription_service_proto_depIdxs = []int32{
-	0, // 0: bytebase.v1.Subscription.plan:type_name -> bytebase.v1.PlanType
-	7, // 1: bytebase.v1.Subscription.expires_time:type_name -> google.protobuf.Timestamp
-	6, // 2: bytebase.v1.PlanConfig.plans:type_name -> bytebase.v1.PlanLimitConfig
-	1, // 3: bytebase.v1.PlanConfig.instance_features:type_name -> bytebase.v1.PlanFeature
-	0, // 4: bytebase.v1.PlanLimitConfig.type:type_name -> bytebase.v1.PlanType
-	1, // 5: bytebase.v1.PlanLimitConfig.features:type_name -> bytebase.v1.PlanFeature
-	2, // 6: bytebase.v1.SubscriptionService.GetSubscription:input_type -> bytebase.v1.GetSubscriptionRequest
-	3, // 7: bytebase.v1.SubscriptionService.UpdateSubscription:input_type -> bytebase.v1.UpdateSubscriptionRequest
-	4, // 8: bytebase.v1.SubscriptionService.GetSubscription:output_type -> bytebase.v1.Subscription
-	4, // 9: bytebase.v1.SubscriptionService.UpdateSubscription:output_type -> bytebase.v1.Subscription
-	8, // [8:10] is the sub-list for method output_type
-	6, // [6:8] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	1,  // 0: bytebase.v1.CreatePurchaseRequest.plan:type_name -> bytebase.v1.PlanType
+	0,  // 1: bytebase.v1.CreatePurchaseRequest.interval:type_name -> bytebase.v1.BillingInterval
+	1,  // 2: bytebase.v1.UpdatePurchaseRequest.plan:type_name -> bytebase.v1.PlanType
+	0,  // 3: bytebase.v1.UpdatePurchaseRequest.interval:type_name -> bytebase.v1.BillingInterval
+	1,  // 4: bytebase.v1.PurchasePlan.type:type_name -> bytebase.v1.PlanType
+	16, // 5: bytebase.v1.PurchasePlan.additionals:type_name -> bytebase.v1.PurchasePlanAdditional
+	17, // 6: bytebase.v1.PurchasePlan.billing_methods:type_name -> bytebase.v1.PurchaseBillingMethod
+	3,  // 7: bytebase.v1.PurchasePlanAdditional.type:type_name -> bytebase.v1.PurchasePlanAdditional.Type
+	0,  // 8: bytebase.v1.PurchaseBillingMethod.interval:type_name -> bytebase.v1.BillingInterval
+	18, // 9: bytebase.v1.PurchaseBillingMethod.discount:type_name -> bytebase.v1.PurchaseDiscount
+	4,  // 10: bytebase.v1.PurchaseDiscount.type:type_name -> bytebase.v1.PurchaseDiscount.Type
+	15, // 11: bytebase.v1.ListPurchasePlansResponse.plans:type_name -> bytebase.v1.PurchasePlan
+	1,  // 12: bytebase.v1.Subscription.plan:type_name -> bytebase.v1.PlanType
+	24, // 13: bytebase.v1.Subscription.expires_time:type_name -> google.protobuf.Timestamp
+	23, // 14: bytebase.v1.PlanConfig.plans:type_name -> bytebase.v1.PlanLimitConfig
+	2,  // 15: bytebase.v1.PlanConfig.instance_features:type_name -> bytebase.v1.PlanFeature
+	1,  // 16: bytebase.v1.PlanLimitConfig.type:type_name -> bytebase.v1.PlanType
+	2,  // 17: bytebase.v1.PlanLimitConfig.features:type_name -> bytebase.v1.PlanFeature
+	5,  // 18: bytebase.v1.SubscriptionService.GetSubscription:input_type -> bytebase.v1.GetSubscriptionRequest
+	6,  // 19: bytebase.v1.SubscriptionService.UploadLicense:input_type -> bytebase.v1.UploadLicenseRequest
+	7,  // 20: bytebase.v1.SubscriptionService.CreatePurchase:input_type -> bytebase.v1.CreatePurchaseRequest
+	11, // 21: bytebase.v1.SubscriptionService.UpdatePurchase:input_type -> bytebase.v1.UpdatePurchaseRequest
+	12, // 22: bytebase.v1.SubscriptionService.CancelPurchase:input_type -> bytebase.v1.CancelPurchaseRequest
+	13, // 23: bytebase.v1.SubscriptionService.GetPaymentInfo:input_type -> bytebase.v1.GetPaymentInfoRequest
+	9,  // 24: bytebase.v1.SubscriptionService.VerifyCheckoutSession:input_type -> bytebase.v1.VerifyCheckoutSessionRequest
+	19, // 25: bytebase.v1.SubscriptionService.ListPurchasePlans:input_type -> bytebase.v1.ListPurchasePlansRequest
+	21, // 26: bytebase.v1.SubscriptionService.GetSubscription:output_type -> bytebase.v1.Subscription
+	21, // 27: bytebase.v1.SubscriptionService.UploadLicense:output_type -> bytebase.v1.Subscription
+	8,  // 28: bytebase.v1.SubscriptionService.CreatePurchase:output_type -> bytebase.v1.PurchaseResponse
+	8,  // 29: bytebase.v1.SubscriptionService.UpdatePurchase:output_type -> bytebase.v1.PurchaseResponse
+	8,  // 30: bytebase.v1.SubscriptionService.CancelPurchase:output_type -> bytebase.v1.PurchaseResponse
+	14, // 31: bytebase.v1.SubscriptionService.GetPaymentInfo:output_type -> bytebase.v1.PaymentInfo
+	10, // 32: bytebase.v1.SubscriptionService.VerifyCheckoutSession:output_type -> bytebase.v1.VerifyCheckoutSessionResponse
+	20, // 33: bytebase.v1.SubscriptionService.ListPurchasePlans:output_type -> bytebase.v1.ListPurchasePlansResponse
+	26, // [26:34] is the sub-list for method output_type
+	18, // [18:26] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_v1_subscription_service_proto_init() }
@@ -818,8 +1860,8 @@ func file_v1_subscription_service_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_v1_subscription_service_proto_rawDesc), len(file_v1_subscription_service_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   5,
+			NumEnums:      5,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

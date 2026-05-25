@@ -1,0 +1,1186 @@
+import { create as createProto } from "@bufbuild/protobuf";
+import {
+  CheckCircle,
+  Database as DatabaseIcon,
+  FolderTree,
+  Loader2,
+  Plus,
+  XCircle,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { v4 as uuidv4 } from "uuid";
+import {
+  AdvancedSearch,
+  type ScopeOption,
+  type SearchParams,
+  type ValueOption,
+} from "@/react/components/AdvancedSearch";
+import { EngineIcon } from "@/react/components/EngineIcon";
+import { EnvironmentLabel } from "@/react/components/EnvironmentLabel";
+import {
+  PermissionGuard,
+  usePermissionCheck,
+} from "@/react/components/PermissionGuard";
+import { Alert } from "@/react/components/ui/alert";
+import { Badge } from "@/react/components/ui/badge";
+import { Button } from "@/react/components/ui/button";
+import { Checkbox } from "@/react/components/ui/checkbox";
+import { SearchInput } from "@/react/components/ui/search-input";
+import {
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/react/components/ui/sheet";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/react/components/ui/table";
+import { Tooltip } from "@/react/components/ui/tooltip";
+import { useColumnWidths } from "@/react/hooks/useColumnWidths";
+import { useEscapeKey } from "@/react/hooks/useEscapeKey";
+import { PagedTableFooter, usePagedData } from "@/react/hooks/usePagedData";
+import { useSessionPageSize } from "@/react/hooks/useSessionPageSize";
+import { useVueState } from "@/react/hooks/useVueState";
+import { applyPlanTitleToQuery } from "@/react/lib/plan/title";
+import { cn } from "@/react/lib/utils";
+import { router } from "@/router";
+import {
+  PROJECT_V1_ROUTE_PLAN_DETAIL,
+  PROJECT_V1_ROUTE_PLAN_DETAIL_SPEC_DETAIL,
+} from "@/router/dashboard/projectV1";
+import {
+  pushNotification,
+  useCurrentUserV1,
+  useDatabaseV1Store,
+  useDBGroupStore,
+  useEnvironmentV1Store,
+  useProjectV1Store,
+  useUIStateStore,
+  useUserStore,
+} from "@/store";
+import { projectNamePrefix } from "@/store/modules/v1/common";
+import {
+  buildPlanFindBySearchParams,
+  usePlanStore,
+} from "@/store/modules/v1/plan";
+import {
+  formatEnvironmentName,
+  getTimeForPbTimestampProtoEs,
+  isValidDatabaseGroupName,
+  unknownUser,
+} from "@/types";
+import { State } from "@/types/proto-es/v1/common_pb";
+import type { DatabaseGroup } from "@/types/proto-es/v1/database_group_service_pb";
+import { DatabaseGroupView } from "@/types/proto-es/v1/database_group_service_pb";
+import {
+  type Database,
+  SyncStatus,
+} from "@/types/proto-es/v1/database_service_pb";
+import type {
+  Plan,
+  Plan_RolloutStageSummary,
+  Plan_Spec,
+} from "@/types/proto-es/v1/plan_service_pb";
+import {
+  Plan_ChangeDatabaseConfigSchema,
+  Plan_SpecSchema,
+} from "@/types/proto-es/v1/plan_service_pb";
+import { Task_Status } from "@/types/proto-es/v1/rollout_service_pb";
+import {
+  extractDatabaseGroupName,
+  extractDatabaseResourceName,
+  extractPlanUID,
+  formatAbsoluteDateTime,
+  generatePlanTitle,
+  getDatabaseEnvironment,
+  getDefaultPagination,
+  getInstanceResource,
+  humanizeTs,
+  type SearchParams as VueSearchParams,
+} from "@/utils";
+import { extractStageUID } from "@/utils/v1/issue/rollout";
+import { getReviewBadge, type ReviewBadge } from "./utils/reviewBadge";
+
+// Task status priority order for determining rollout stage status
+const TASK_STATUS_FILTERS: Task_Status[] = [
+  Task_Status.RUNNING,
+  Task_Status.FAILED,
+  Task_Status.PENDING,
+  Task_Status.NOT_STARTED,
+  Task_Status.CANCELED,
+  Task_Status.DONE,
+  Task_Status.SKIPPED,
+];
+
+export function ProjectPlanDashboardPage({ projectId }: { projectId: string }) {
+  const { t } = useTranslation();
+  const planStore = usePlanStore();
+  const projectStore = useProjectV1Store();
+  const userStore = useUserStore();
+  const uiStateStore = useUIStateStore();
+  const currentUser = useCurrentUserV1();
+
+  const projectName = `${projectNamePrefix}${projectId}`;
+  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  const me = useVueState(() => currentUser.value);
+
+  const [showAddSpecDrawer, setShowAddSpecDrawer] = useState(false);
+
+  // Hint dismissal
+  const HINT_KEY = "plan.hint-dismissed";
+  const hideHint = useVueState(() => uiStateStore.getIntroStateByKey(HINT_KEY));
+  const dismissHint = useCallback(() => {
+    uiStateStore.saveIntroStateByKey({ key: HINT_KEY, newState: true });
+  }, [uiStateStore]);
+
+  // Search
+  const defaultSearchParams = useCallback(
+    (): SearchParams => ({
+      query: "",
+      scopes: [{ id: "state", value: "ACTIVE" }],
+    }),
+    []
+  );
+
+  const [searchParams, setSearchParams] =
+    useState<SearchParams>(defaultSearchParams);
+
+  const didMountRef = useRef(false);
+  useEffect(() => {
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      return;
+    }
+    setSearchParams(defaultSearchParams());
+  }, [defaultSearchParams, projectId]);
+
+  // Scope options
+  const scopeOptions: ScopeOption[] = useMemo(
+    () => [
+      {
+        id: "state",
+        title: t("common.state"),
+        description: t("issue.advanced-search.scope.state.description"),
+        options: [
+          {
+            value: "ACTIVE",
+            keywords: ["active", "ACTIVE"],
+            render: () => <span>{t("common.active")}</span>,
+          },
+          {
+            value: "DELETED",
+            keywords: ["deleted", "DELETED", "closed", "CLOSED"],
+            render: () => <span>{t("common.closed")}</span>,
+          },
+        ],
+      },
+      {
+        id: "creator",
+        title: t("issue.advanced-search.scope.creator.title"),
+        description: t("issue.advanced-search.scope.creator.description"),
+        onSearch: async (keyword: string) => {
+          const resp = await userStore.fetchUserList({
+            pageSize: getDefaultPagination(),
+            filter: { query: keyword },
+          });
+          return resp.users.map<ValueOption>((user) => ({
+            value: user.email,
+            keywords: [user.email, user.title],
+            render: () => (
+              <div className="flex items-center gap-x-1">
+                <span>{user.title}</span>
+                {user.name === me?.name && (
+                  <span className="text-xs text-control-light">
+                    ({t("common.you")})
+                  </span>
+                )}
+              </div>
+            ),
+          }));
+        },
+      },
+    ],
+    [t, userStore, me]
+  );
+
+  const [canCreate] = usePermissionCheck(["bb.plans.create"], project);
+
+  // Build plan filter
+  const planFilter = useMemo(() => {
+    const merged: VueSearchParams = {
+      query: searchParams.query.trim().toLowerCase(),
+      scopes: [
+        ...searchParams.scopes.map((s) => ({ id: s.id, value: s.value })),
+        { id: "project", value: projectId },
+      ],
+    };
+    return buildPlanFindBySearchParams(merged, {
+      specType: "change_database_config",
+    });
+  }, [searchParams, projectId]);
+
+  const fetchPlanList = useCallback(
+    async (params: { pageSize: number; pageToken: string }) => {
+      const { nextPageToken, plans } = await planStore.listPlans({
+        find: planFilter,
+        pageSize: params.pageSize,
+        pageToken: params.pageToken,
+      });
+      return { list: plans, nextPageToken };
+    },
+    [planStore, planFilter]
+  );
+
+  const paged = usePagedData<Plan>({
+    sessionKey: `bb.${projectName}.plan-table`,
+    fetchList: fetchPlanList,
+  });
+
+  // Handle spec created from AddSpecDrawer
+  const handleSpecCreated = useCallback(
+    async (spec: Plan_Spec) => {
+      if (!project) return;
+
+      const template = "bb.plan.change-database";
+      const targets =
+        spec.config?.case === "changeDatabaseConfig"
+          ? [...(spec.config.value.targets ?? [])]
+          : [];
+      const isDatabaseGroup = targets.every((target) =>
+        isValidDatabaseGroupName(target)
+      );
+      const query: Record<string, string> = { template };
+
+      // Check if the spec has a sheet with content
+      if (
+        spec.config?.case === "changeDatabaseConfig" &&
+        spec.config.value.sheet
+      ) {
+        // The sheet is local (not yet created on server), so we skip content handling here.
+        // The plan creation page will handle it.
+      }
+
+      if (isDatabaseGroup) {
+        const databaseGroupName = targets[0];
+        if (!databaseGroupName) return;
+        query.databaseGroupName = databaseGroupName;
+        applyPlanTitleToQuery(query, project, () =>
+          generatePlanTitle(template, [
+            extractDatabaseGroupName(databaseGroupName),
+          ])
+        );
+      } else {
+        query.databaseList = targets.join(",");
+        applyPlanTitleToQuery(query, project, () =>
+          generatePlanTitle(
+            template,
+            targets.map((db) => {
+              const { databaseName } = extractDatabaseResourceName(db);
+              return databaseName;
+            })
+          )
+        );
+      }
+
+      await router.push({
+        name: PROJECT_V1_ROUTE_PLAN_DETAIL_SPEC_DETAIL,
+        params: {
+          projectId,
+          planId: "create",
+          specId: "placeholder",
+        },
+        query,
+      });
+    },
+    [project, projectId]
+  );
+
+  return (
+    <div className="py-4 w-full flex flex-col">
+      <div className="px-4 flex flex-col gap-y-2 pb-2">
+        {!hideHint && (
+          <Alert description={t("plan.subtitle")} onDismiss={dismissHint} />
+        )}
+        <div className="w-full flex flex-col lg:flex-row items-start lg:items-center justify-between gap-2">
+          <div className="w-full flex flex-1 items-center justify-between gap-x-2">
+            <AdvancedSearch
+              params={searchParams}
+              onParamsChange={setSearchParams}
+              scopeOptions={scopeOptions}
+            />
+            <PermissionGuard
+              permissions={["bb.plans.create"]}
+              project={project}
+            >
+              <Button
+                disabled={!canCreate}
+                onClick={() => setShowAddSpecDrawer(true)}
+              >
+                <Plus className="size-4 mr-1" />
+                {t("plan.new-plan")}
+              </Button>
+            </PermissionGuard>
+          </div>
+        </div>
+      </div>
+
+      {/* Plan list */}
+      <div className="mt-2">
+        {paged.isLoading ? (
+          <div className="flex justify-center py-8 text-control-light">
+            <Loader2 className="size-5 animate-spin" />
+          </div>
+        ) : paged.dataList.length === 0 ? (
+          <div className="flex justify-center py-8 text-control-light">
+            {t("common.no-data")}
+          </div>
+        ) : (
+          <PlanTable plans={paged.dataList} projectId={projectId} />
+        )}
+
+        {paged.dataList.length > 0 && (
+          <div className="mt-4 mx-2">
+            <PagedTableFooter
+              pageSize={paged.pageSize}
+              pageSizeOptions={paged.pageSizeOptions}
+              onPageSizeChange={paged.onPageSizeChange}
+              hasMore={paged.hasMore}
+              isFetchingMore={paged.isFetchingMore}
+              onLoadMore={paged.loadMore}
+            />
+          </div>
+        )}
+      </div>
+
+      <AddSpecDrawer
+        open={showAddSpecDrawer}
+        onClose={() => setShowAddSpecDrawer(false)}
+        projectName={projectName}
+        onCreated={handleSpecCreated}
+        title={t("plan.new-plan")}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PlanTable
+// ---------------------------------------------------------------------------
+
+interface PlanColumn {
+  key: string;
+  title: React.ReactNode;
+  defaultWidth: number;
+  minWidth?: number;
+  resizable?: boolean;
+  render: (plan: Plan, ctx: PlanRowContext) => React.ReactNode;
+}
+
+interface PlanRowContext {
+  creator: { title: string; name: string };
+  updateTimeTs: number;
+  approvalTag: { label: string; variant: ReviewBadge["variant"] } | undefined;
+  isDeleted: boolean;
+  showDraftTag: boolean;
+  environmentStore: ReturnType<typeof useEnvironmentV1Store>;
+}
+
+function getRolloutStageStatus(summary: Plan_RolloutStageSummary): Task_Status {
+  for (const status of TASK_STATUS_FILTERS) {
+    if (summary.taskStatusCounts.some((item) => item.status === status)) {
+      return status;
+    }
+  }
+  return Task_Status.STATUS_UNSPECIFIED;
+}
+
+function PlanTable({ plans, projectId }: { plans: Plan[]; projectId: string }) {
+  const { t } = useTranslation();
+
+  const columns = useMemo<PlanColumn[]>(
+    () => [
+      {
+        key: "name",
+        title: t("issue.table.name"),
+        defaultWidth: 400,
+        minWidth: 200,
+        resizable: true,
+        render: (plan, ctx) => (
+          <div className="flex items-center gap-x-2 overflow-hidden">
+            <span className="whitespace-nowrap text-control opacity-60">
+              {extractPlanUID(plan.name)}
+            </span>
+            {plan.title ? (
+              <span className="truncate normal-nums min-w-0">{plan.title}</span>
+            ) : (
+              <span className="opacity-60 italic">{t("common.untitled")}</span>
+            )}
+            {ctx.isDeleted && (
+              <span className="inline-flex items-center rounded-full bg-warning/10 text-warning px-2 py-0.5 text-xs shrink-0">
+                {t("common.closed")}
+              </span>
+            )}
+            {ctx.showDraftTag && !ctx.isDeleted && (
+              <span className="inline-flex items-center rounded-full bg-control-bg text-control-light px-2 py-0.5 text-xs shrink-0">
+                {t("common.draft")}
+              </span>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: "creator",
+        title: t("issue.table.creator"),
+        defaultWidth: 160,
+        minWidth: 100,
+        resizable: true,
+        render: (_plan, ctx) => (
+          <span className="block truncate">{ctx.creator.title}</span>
+        ),
+      },
+      {
+        key: "review",
+        title: t("plan.navigator.review"),
+        defaultWidth: 140,
+        minWidth: 100,
+        resizable: true,
+        render: (_plan, ctx) =>
+          ctx.approvalTag ? (
+            <Badge
+              variant={ctx.approvalTag.variant}
+              className="whitespace-nowrap"
+            >
+              {ctx.approvalTag.label}
+            </Badge>
+          ) : (
+            <span className="text-control-light">-</span>
+          ),
+      },
+      {
+        key: "stages",
+        title: t("rollout.stage.self", { count: 2 }),
+        defaultWidth: 260,
+        minWidth: 140,
+        resizable: true,
+        render: (plan, ctx) =>
+          plan.rolloutStageSummaries.length === 0 ? (
+            <span className="text-control-light">-</span>
+          ) : (
+            <div className="flex items-center gap-1 flex-wrap">
+              {plan.rolloutStageSummaries.map((summary, index) => {
+                const envName = formatEnvironmentName(
+                  extractStageUID(summary.stage)
+                );
+                const environment =
+                  ctx.environmentStore.getEnvironmentByName(envName);
+                const stageStatus = getRolloutStageStatus(summary);
+                return (
+                  <div key={summary.stage} className="flex items-center gap-1">
+                    <div className="flex items-center gap-1">
+                      <TaskStatusIcon status={stageStatus} />
+                      <span className="text-sm">
+                        {environment?.title || envName}
+                      </span>
+                    </div>
+                    {index < plan.rolloutStageSummaries.length - 1 && (
+                      <span className="mx-1 text-control-light">&rarr;</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ),
+      },
+      {
+        key: "updated",
+        title: t("issue.table.updated"),
+        defaultWidth: 152,
+        minWidth: 100,
+        resizable: true,
+        render: (_plan, ctx) => (
+          <Tooltip content={formatAbsoluteDateTime(ctx.updateTimeTs * 1000)}>
+            <span className="text-control-light whitespace-nowrap">
+              {humanizeTs(ctx.updateTimeTs)}
+            </span>
+          </Tooltip>
+        ),
+      },
+    ],
+    [t]
+  );
+
+  const { widths, totalWidth, onResizeStart } = useColumnWidths(columns);
+
+  return (
+    <div className="overflow-x-auto">
+      <Table className="table-fixed" style={{ minWidth: `${totalWidth}px` }}>
+        <colgroup>
+          {widths.map((w, i) => (
+            <col key={columns[i].key} style={{ width: `${w}px` }} />
+          ))}
+        </colgroup>
+        <TableHeader>
+          <TableRow className="bg-control-bg">
+            {columns.map((col, colIdx) => (
+              <TableHead
+                key={col.key}
+                resizable={col.resizable}
+                onResizeStart={
+                  col.resizable ? (e) => onResizeStart(colIdx, e) : undefined
+                }
+              >
+                {col.title}
+              </TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {plans.map((plan) => (
+            <PlanRow
+              key={plan.name}
+              plan={plan}
+              projectId={projectId}
+              columns={columns}
+            />
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PlanRow
+// ---------------------------------------------------------------------------
+
+function PlanRow({
+  plan,
+  projectId,
+  columns,
+}: Readonly<{
+  plan: Plan;
+  projectId: string;
+  columns: PlanColumn[];
+}>) {
+  const userStore = useUserStore();
+  const environmentStore = useEnvironmentV1Store();
+  const { t } = useTranslation();
+
+  const isDeleted = plan.state === State.DELETED;
+  const showDraftTag = plan.issue === "" && !plan.hasRollout;
+
+  const creator =
+    userStore.getUserByIdentifier(plan.creator) || unknownUser(plan.creator);
+
+  const updateTimeTs = Math.floor(
+    getTimeForPbTimestampProtoEs(plan.updateTime, 0) / 1000
+  );
+
+  const planUrl = useMemo(() => {
+    return router.resolve({
+      name: PROJECT_V1_ROUTE_PLAN_DETAIL,
+      params: {
+        projectId,
+        planId: extractPlanUID(plan.name),
+      },
+    }).fullPath;
+  }, [plan.name, projectId]);
+
+  const onRowClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        window.open(planUrl, "_blank");
+      } else {
+        router.push(planUrl);
+      }
+    },
+    [planUrl]
+  );
+
+  // Approval status
+  // Plan List passes issueStatus=undefined because the Plan proto does not
+  // expose issue_status. Two divergence categories vs Plan Detail remain by
+  // design (see the spec's "Residual divergences" table):
+  //   Category A — CANCELED issues render the approval-derived badge here
+  //     instead of "Closed".
+  //   Category C₂ — issue manually marked DONE with no rollout while approval
+  //     is still PENDING renders "Under Review" here instead of "Bypassed".
+  // To close those gaps, expose issue_status on the Plan proto and pass it
+  // through here. Bug history: BYT-9551.
+  const approvalTag = useMemo(() => {
+    const badge = getReviewBadge({
+      hasIssue: plan.issue !== "",
+      issueStatus: undefined,
+      hasRollout: plan.hasRollout,
+      approvalStatus: plan.approvalStatus,
+    });
+    if (!badge) return undefined;
+    return { label: t(badge.labelKey), variant: badge.variant };
+  }, [plan.approvalStatus, plan.hasRollout, plan.issue, t]);
+
+  const ctx: PlanRowContext = {
+    creator,
+    updateTimeTs,
+    approvalTag,
+    isDeleted,
+    showDraftTag,
+    environmentStore,
+  };
+
+  return (
+    <TableRow
+      className={cn("cursor-pointer", isDeleted && "opacity-60")}
+      onClick={onRowClick}
+    >
+      {columns.map((col) => (
+        <TableCell key={col.key} className="overflow-hidden">
+          {col.render(plan, ctx)}
+        </TableCell>
+      ))}
+    </TableRow>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TaskStatusIcon
+// ---------------------------------------------------------------------------
+
+function TaskStatusIcon({ status }: { status: Task_Status }) {
+  const size = "size-4";
+  switch (status) {
+    case Task_Status.DONE:
+      return <CheckCircle className={cn(size, "text-success")} />;
+    case Task_Status.RUNNING:
+      return <Loader2 className={cn(size, "text-info animate-spin")} />;
+    case Task_Status.FAILED:
+      return <XCircle className={cn(size, "text-error")} />;
+    case Task_Status.CANCELED:
+      return <XCircle className={cn(size, "text-control-placeholder")} />;
+    case Task_Status.PENDING:
+    case Task_Status.NOT_STARTED:
+      return (
+        <span
+          className={cn(
+            size,
+            "inline-flex items-center justify-center rounded-full border-2 border-control-border"
+          )}
+        />
+      );
+    case Task_Status.SKIPPED:
+      return (
+        <span
+          className={cn(
+            size,
+            "inline-flex items-center justify-center rounded-full bg-control-bg-hover text-control-light"
+          )}
+        >
+          <span className="w-2 h-px bg-current" />
+        </span>
+      );
+    default:
+      return (
+        <span
+          className={cn(
+            size,
+            "inline-flex items-center justify-center rounded-full border-2 border-block-border"
+          )}
+        />
+      );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AddSpecDrawer
+// ---------------------------------------------------------------------------
+
+function AddSpecDrawer({
+  open,
+  onClose,
+  projectName,
+  onCreated,
+  title,
+}: {
+  open: boolean;
+  onClose: () => void;
+  projectName: string;
+  onCreated: (spec: Plan_Spec) => void | Promise<void>;
+  title: string;
+}) {
+  const { t } = useTranslation();
+  const dbStore = useDatabaseV1Store();
+
+  const [creating, setCreating] = useState(false);
+  const [changeSource, setChangeSource] = useState<"DATABASE" | "GROUP">(
+    "DATABASE"
+  );
+  const [selectedDatabaseNames, setSelectedDatabaseNames] = useState<
+    Set<string>
+  >(new Set());
+  const [selectedDatabaseGroup, setSelectedDatabaseGroup] = useState<
+    string | undefined
+  >();
+
+  const targets = useMemo(() => {
+    if (changeSource === "DATABASE") {
+      return [...selectedDatabaseNames];
+    }
+    return selectedDatabaseGroup ? [selectedDatabaseGroup] : [];
+  }, [changeSource, selectedDatabaseNames, selectedDatabaseGroup]);
+
+  const canSubmit = targets.length > 0;
+
+  // Reset on open
+  useEffect(() => {
+    if (open) {
+      setCreating(false);
+      setChangeSource("DATABASE");
+      setSelectedDatabaseNames(new Set());
+      setSelectedDatabaseGroup(undefined);
+    }
+  }, [open]);
+
+  useEscapeKey(open, onClose);
+
+  const handleConfirm = async () => {
+    if (!canSubmit || creating) return;
+    setCreating(true);
+    try {
+      // Preload database information
+      if (changeSource === "DATABASE" && selectedDatabaseNames.size > 0) {
+        await dbStore.batchGetOrFetchDatabases([...selectedDatabaseNames]);
+      }
+
+      const spec = createProto(Plan_SpecSchema, {
+        id: uuidv4(),
+        config: {
+          case: "changeDatabaseConfig",
+          value: createProto(Plan_ChangeDatabaseConfigSchema, {
+            targets,
+          }),
+        },
+      });
+
+      await onCreated(spec);
+      onClose();
+    } catch (error) {
+      pushNotification({
+        module: "bytebase",
+        style: "CRITICAL",
+        title: t("common.error"),
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <Sheet open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <SheetContent width="workspace">
+        {/* Header */}
+        <SheetHeader>
+          <SheetTitle>{title}</SheetTitle>
+        </SheetHeader>
+
+        {/* Content */}
+        <SheetBody className="p-6">
+          <DatabaseAndGroupSelector
+            projectName={projectName}
+            changeSource={changeSource}
+            onChangeSourceChange={setChangeSource}
+            selectedDatabaseNames={selectedDatabaseNames}
+            onSelectedDatabaseNamesChange={setSelectedDatabaseNames}
+            selectedDatabaseGroup={selectedDatabaseGroup}
+            onSelectedDatabaseGroupChange={setSelectedDatabaseGroup}
+          />
+        </SheetBody>
+
+        {/* Footer */}
+        <SheetFooter>
+          <Button variant="outline" onClick={onClose}>
+            {t("common.close")}
+          </Button>
+          <Button disabled={!canSubmit || creating} onClick={handleConfirm}>
+            {creating && <Loader2 className="size-4 mr-1 animate-spin" />}
+            {t("common.confirm")}
+          </Button>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DatabaseAndGroupSelector
+// ---------------------------------------------------------------------------
+
+function DatabaseAndGroupSelector({
+  projectName,
+  changeSource,
+  onChangeSourceChange,
+  selectedDatabaseNames,
+  onSelectedDatabaseNamesChange,
+  selectedDatabaseGroup,
+  onSelectedDatabaseGroupChange,
+}: {
+  projectName: string;
+  changeSource: "DATABASE" | "GROUP";
+  onChangeSourceChange: (source: "DATABASE" | "GROUP") => void;
+  selectedDatabaseNames: Set<string>;
+  onSelectedDatabaseNamesChange: (names: Set<string>) => void;
+  selectedDatabaseGroup: string | undefined;
+  onSelectedDatabaseGroupChange: (name: string | undefined) => void;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <div className="flex flex-col gap-y-3">
+      <div className="flex border-b border-control-border">
+        <button
+          type="button"
+          className={cn(
+            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+            changeSource === "DATABASE"
+              ? "border-accent text-accent"
+              : "border-transparent text-control-light hover:text-control"
+          )}
+          onClick={() => onChangeSourceChange("DATABASE")}
+        >
+          <span className="inline-flex items-center gap-x-1.5">
+            <DatabaseIcon className="size-4" />
+            {t("common.databases")}
+          </span>
+        </button>
+        <button
+          type="button"
+          className={cn(
+            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+            changeSource === "GROUP"
+              ? "border-accent text-accent"
+              : "border-transparent text-control-light hover:text-control"
+          )}
+          onClick={() => onChangeSourceChange("GROUP")}
+        >
+          <span className="inline-flex items-center gap-x-1.5">
+            <FolderTree className="size-4" />
+            {t("common.database-group")}
+          </span>
+        </button>
+      </div>
+
+      {changeSource === "DATABASE" ? (
+        <DatabaseSelector
+          projectName={projectName}
+          selectedNames={selectedDatabaseNames}
+          onSelectedNamesChange={onSelectedDatabaseNamesChange}
+        />
+      ) : (
+        <DatabaseGroupSelector
+          projectName={projectName}
+          selectedGroup={selectedDatabaseGroup}
+          onSelectedGroupChange={onSelectedDatabaseGroupChange}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DatabaseSelector
+// ---------------------------------------------------------------------------
+
+function DatabaseSelector({
+  projectName,
+  selectedNames,
+  onSelectedNamesChange,
+}: {
+  projectName: string;
+  selectedNames: Set<string>;
+  onSelectedNamesChange: (names: Set<string>) => void;
+}) {
+  const { t } = useTranslation();
+  const databaseStore = useDatabaseV1Store();
+
+  const [databases, setDatabases] = useState<Database[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
+  const [query, setQuery] = useState("");
+  const [pageSize] = useSessionPageSize("bb.plan-db-selector");
+  const nextPageTokenRef = useRef("");
+  const fetchIdRef = useRef(0);
+
+  const doFetch = useCallback(
+    async (isRefresh: boolean) => {
+      const currentFetchId = ++fetchIdRef.current;
+      if (isRefresh) {
+        setLoading(true);
+      } else {
+        setIsFetchingMore(true);
+      }
+      try {
+        const token = isRefresh ? "" : nextPageTokenRef.current;
+        const result = await databaseStore.fetchDatabases({
+          parent: projectName,
+          pageSize,
+          pageToken: token || undefined,
+          filter: { query },
+        });
+        if (currentFetchId !== fetchIdRef.current) return;
+        setDatabases((prev) =>
+          isRefresh ? result.databases : [...prev, ...result.databases]
+        );
+        nextPageTokenRef.current = result.nextPageToken;
+        setHasMore(Boolean(result.nextPageToken));
+      } finally {
+        if (currentFetchId === fetchIdRef.current) {
+          setLoading(false);
+          setIsFetchingMore(false);
+        }
+      }
+    },
+    [databaseStore, projectName, pageSize, query]
+  );
+
+  const isFirstLoad = useRef(true);
+  useEffect(() => {
+    if (isFirstLoad.current) {
+      isFirstLoad.current = false;
+      doFetch(true);
+      return;
+    }
+    const timer = setTimeout(() => doFetch(true), 300);
+    return () => clearTimeout(timer);
+  }, [doFetch]);
+
+  const toggleDatabase = (name: string) => {
+    const next = new Set(selectedNames);
+    if (next.has(name)) {
+      next.delete(name);
+    } else {
+      next.add(name);
+    }
+    onSelectedNamesChange(next);
+  };
+
+  const toggleAll = () => {
+    const allSelected = databases.every((db) => selectedNames.has(db.name));
+    if (allSelected) {
+      onSelectedNamesChange(new Set());
+    } else {
+      onSelectedNamesChange(new Set(databases.map((db) => db.name)));
+    }
+  };
+
+  const allSelected =
+    databases.length > 0 && databases.every((db) => selectedNames.has(db.name));
+  const someSelected =
+    databases.some((db) => selectedNames.has(db.name)) && !allSelected;
+
+  return (
+    <div className="flex flex-col gap-y-2">
+      <SearchInput
+        placeholder={t("database.filter-database")}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+
+      {loading ? (
+        <div className="flex justify-center py-8 text-control-light">
+          <Loader2 className="size-5 animate-spin" />
+        </div>
+      ) : databases.length === 0 ? (
+        <div className="flex justify-center py-8 text-control-light">
+          {t("common.no-data")}
+        </div>
+      ) : (
+        <>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-control-light">
+                <th className="py-2 pl-3 pr-2 w-10">
+                  <Checkbox
+                    checked={someSelected ? "indeterminate" : allSelected}
+                    onCheckedChange={toggleAll}
+                  />
+                </th>
+                <th className="py-2 pr-4 font-medium">
+                  {t("common.database")}
+                </th>
+                <th className="py-2 pr-4 font-medium">
+                  {t("common.instance")}
+                </th>
+                <th className="py-2 pr-4 font-medium">
+                  {t("common.environment")}
+                </th>
+                <th className="py-2 pr-4 font-medium whitespace-nowrap">
+                  {t("common.status")}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {databases.map((db) => {
+                const { databaseName } = extractDatabaseResourceName(db.name);
+                const inst = getInstanceResource(db);
+                const env = getDatabaseEnvironment(db);
+                const isSelected = selectedNames.has(db.name);
+                return (
+                  <tr
+                    key={db.name}
+                    className={cn(
+                      "border-b cursor-pointer hover:bg-control-bg",
+                      isSelected && "bg-accent/5"
+                    )}
+                    onClick={() => toggleDatabase(db.name)}
+                  >
+                    <td className="py-2 pl-3 pr-2">
+                      <Checkbox checked={isSelected} />
+                    </td>
+                    <td className="py-2 pr-4">
+                      <div className="flex items-center gap-x-1.5">
+                        {inst && (
+                          <EngineIcon engine={inst.engine} className="size-4" />
+                        )}
+                        <span>{databaseName}</span>
+                      </div>
+                    </td>
+                    <td className="py-2 pr-4">{inst?.title}</td>
+                    <td className="py-2 pr-4">
+                      {env && <EnvironmentLabel environmentName={env.name} />}
+                    </td>
+                    <td className="py-2 pr-4">
+                      {db.syncStatus === SyncStatus.FAILED ? (
+                        <Tooltip
+                          content={
+                            db.syncError || t("database.sync-status-failed")
+                          }
+                        >
+                          <XCircle className="size-4 text-error" />
+                        </Tooltip>
+                      ) : (
+                        <CheckCircle className="size-4 text-success" />
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          {hasMore && (
+            <div className="flex justify-center">
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={isFetchingMore}
+                onClick={() => doFetch(false)}
+              >
+                {isFetchingMore ? t("common.loading") : t("common.load-more")}
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DatabaseGroupSelector
+// ---------------------------------------------------------------------------
+
+function DatabaseGroupSelector({
+  projectName,
+  selectedGroup,
+  onSelectedGroupChange,
+}: {
+  projectName: string;
+  selectedGroup: string | undefined;
+  onSelectedGroupChange: (name: string | undefined) => void;
+}) {
+  const { t } = useTranslation();
+  const dbGroupStore = useDBGroupStore();
+  const [groups, setGroups] = useState<DatabaseGroup[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    dbGroupStore
+      .fetchDBGroupListByProjectName(projectName, DatabaseGroupView.BASIC)
+      .then((result) => {
+        setGroups(result);
+      })
+      .finally(() => setLoading(false));
+  }, [projectName, dbGroupStore]);
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-8 text-control-light">
+        <Loader2 className="size-5 animate-spin" />
+      </div>
+    );
+  }
+
+  if (groups.length === 0) {
+    return (
+      <div className="flex justify-center py-8 text-control-light">
+        {t("common.no-data")}
+      </div>
+    );
+  }
+
+  return (
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="border-b text-left text-control-light">
+          <th className="py-2 pr-2 w-8" />
+          <th className="py-2 pr-4 font-medium">
+            {t("common.database-group")}
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {groups.map((group) => {
+          const isSelected = selectedGroup === group.name;
+          return (
+            <tr
+              key={group.name}
+              className={cn(
+                "border-b cursor-pointer hover:bg-control-bg",
+                isSelected && "bg-accent/5"
+              )}
+              onClick={() =>
+                onSelectedGroupChange(isSelected ? undefined : group.name)
+              }
+            >
+              <td className="py-2 pr-2">
+                <input
+                  type="radio"
+                  checked={isSelected}
+                  readOnly
+                  className="accent-accent"
+                />
+              </td>
+              <td className="py-2 pr-4">
+                <div className="flex items-center gap-x-1.5">
+                  <FolderTree className="size-4 text-control-light shrink-0" />
+                  <span>{group.title}</span>
+                </div>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}

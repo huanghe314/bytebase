@@ -52,6 +52,16 @@ export const projectWebhookV1TypeItemList = (): ProjectWebhookV1TypeItem[] => {
       supportDirectMessage: true,
     },
     {
+      type: WebhookType.GOOGLE_CHAT,
+      name: t("common.google-chat"),
+      urlPrefix: "https://chat.googleapis.com",
+      urlPlaceholder:
+        "https://chat.googleapis.com/v1/spaces/.../messages?key=...&token=...",
+      docUrl:
+        "https://developers.google.com/workspace/chat/quickstart/webhooks",
+      supportDirectMessage: false,
+    },
+    {
       type: WebhookType.DINGTALK,
       name: t("common.dingtalk"),
       urlPrefix: "https://oapi.dingtalk.com",
@@ -115,6 +125,12 @@ export const projectWebhookV1ActivityItemList =
         title: t("project.webhook.activity-item.issue-sent-back.title"),
         label: t("project.webhook.activity-item.issue-sent-back.label"),
         activity: Activity_Type.ISSUE_SENT_BACK,
+        supportDirectMessage: true,
+      },
+      {
+        title: t("project.webhook.activity-item.issue-approved.title"),
+        label: t("project.webhook.activity-item.issue-approved.label"),
+        activity: Activity_Type.ISSUE_APPROVED,
         supportDirectMessage: true,
       },
       {

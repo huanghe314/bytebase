@@ -242,6 +242,9 @@ func (s *ProjectService) CreateProject(ctx context.Context, req *connect.Request
 		user,
 	)
 	if err != nil {
+		if strings.Contains(err.Error(), "duplicate key") {
+			return nil, connect.NewError(connect.CodeAlreadyExists, errors.Errorf("project ID %q already exists", req.Msg.ProjectId))
+		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(convertToProject(project)), nil
@@ -595,7 +598,7 @@ func (s *ProjectService) SetIamPolicy(ctx context.Context, req *connect.Request[
 		return nil, connect.NewError(connect.CodeAborted, errors.Errorf("there is concurrent update to the project iam policy, please refresh and try again"))
 	}
 
-	if err := validateIAMPolicy(ctx, s.store, req.Msg, oldIamPolicyMsg); err != nil {
+	if err := validateIAMPolicy(ctx, s.store, !s.profile.SaaS, req.Msg, oldIamPolicyMsg); err != nil {
 		return nil, err
 	}
 
@@ -1059,6 +1062,7 @@ func getBindingIdentifier(role string, condition *expr.Expr) string {
 func validateIAMPolicy(
 	ctx context.Context,
 	stores *store.Store,
+	allowAllUsers bool,
 	msg *v1pb.SetIamPolicyRequest,
 	oldPolicyMessage *store.IamPolicyMessage,
 ) error {
@@ -1098,6 +1102,18 @@ func validateIAMPolicy(
 		identifier := getBindingIdentifier(binding.Role, binding.Condition)
 		if !existingBindings[identifier] {
 			bindings = append(bindings, binding)
+		}
+	}
+
+	// If allUsers is not allowed in IAM policies, members must be explicitly added.
+	if !allowAllUsers {
+		for _, binding := range bindings {
+			for _, member := range binding.Members {
+				if member == common.AllUsers {
+					return connect.NewError(connect.CodeInvalidArgument,
+						errors.New("allUsers is not allowed in workspace IAM policy in SaaS mode, add members explicitly"))
+				}
+			}
 		}
 	}
 

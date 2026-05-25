@@ -38,7 +38,20 @@ type protectedResourceMetadata struct {
 func (s *Service) getBaseURL(c *echo.Context) string {
 	ctx := c.Request().Context()
 
-	workspaceID, _ := s.getWorkspaceFromRequest(c)
+	// The --external-url CLI flag (profile.ExternalURL) short-circuits the
+	// lookup. Otherwise on self-hosted we resolve the singleton workspace ID
+	// first so GetEffectiveExternalURL can find the DB-backed
+	// workspace_profile.external_url setting. On SaaS there is no singleton
+	// — the CLI flag is required.
+	if s.profile.ExternalURL != "" {
+		return strings.TrimSuffix(s.profile.ExternalURL, "/")
+	}
+	workspaceID := ""
+	if !s.profile.SaaS {
+		if ws, err := s.store.GetWorkspaceID(ctx); err == nil {
+			workspaceID = ws
+		}
+	}
 	externalURL, err := utils.GetEffectiveExternalURL(ctx, s.store, s.profile, workspaceID)
 	if err != nil {
 		slog.Warn("failed to get external url for OAuth2", log.BBError(err))
@@ -62,12 +75,13 @@ func (s *Service) getBaseURL(c *echo.Context) string {
 
 func (s *Service) handleDiscovery(c *echo.Context) error {
 	baseURL := s.getBaseURL(c)
+	oauthBase := fmt.Sprintf("%s/api/oauth2", baseURL)
 	metadata := &authorizationServerMetadata{
 		Issuer:                            baseURL,
-		AuthorizationEndpoint:             fmt.Sprintf("%s/api/workspaces/:workspaceID/oauth2/authorize", baseURL),
-		TokenEndpoint:                     fmt.Sprintf("%s/api/workspaces/:workspaceID/oauth2/token", baseURL),
-		RegistrationEndpoint:              fmt.Sprintf("%s/api/workspaces/:workspaceID/oauth2/register", baseURL),
-		RevocationEndpoint:                fmt.Sprintf("%s/api/workspaces/:workspaceID/oauth2/revoke", baseURL),
+		AuthorizationEndpoint:             fmt.Sprintf("%s/authorize", oauthBase),
+		TokenEndpoint:                     fmt.Sprintf("%s/token", oauthBase),
+		RegistrationEndpoint:              fmt.Sprintf("%s/register", oauthBase),
+		RevocationEndpoint:                fmt.Sprintf("%s/revoke", oauthBase),
 		ResponseTypesSupported:            []string{"code"},
 		GrantTypesSupported:               []string{"authorization_code", "refresh_token"},
 		CodeChallengeMethodsSupported:     []string{"S256"},
@@ -78,10 +92,29 @@ func (s *Service) handleDiscovery(c *echo.Context) error {
 
 // handleProtectedResourceMetadata returns RFC 9728 protected resource metadata.
 // This tells clients which authorization server protects this resource.
+//
+// RFC 9728 §3.3 requires the `resource` value to match the resource the client
+// is accessing. We support both:
+//   - GET /.well-known/oauth-protected-resource         → resource = baseURL
+//   - GET /.well-known/oauth-protected-resource/<path>  → resource = baseURL + /<path>
+//
+// The path-suffixed form lets the `/mcp` endpoint advertise metadata that
+// strict clients validate against the resource URL they actually requested.
 func (s *Service) handleProtectedResourceMetadata(c *echo.Context) error {
 	baseURL := s.getBaseURL(c)
+
+	const wellKnownPrefix = "/.well-known/oauth-protected-resource"
+	resource := baseURL
+	if subPath := strings.TrimPrefix(c.Request().URL.Path, wellKnownPrefix); subPath != "" && subPath != "/" {
+		// Ensure leading slash and trim any trailing slash.
+		if !strings.HasPrefix(subPath, "/") {
+			subPath = "/" + subPath
+		}
+		resource = baseURL + strings.TrimRight(subPath, "/")
+	}
+
 	metadata := &protectedResourceMetadata{
-		Resource:               baseURL,
+		Resource:               resource,
 		AuthorizationServers:   []string{baseURL},
 		BearerMethodsSupported: []string{"header"},
 	}

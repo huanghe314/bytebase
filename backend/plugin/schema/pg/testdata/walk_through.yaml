@@ -30,13 +30,13 @@
                 {
                   "name":  "id",
                   "position":  1,
-                  "type":  "integer"
+                  "type":  "int"
                 },
                 {
                   "name":  "name",
                   "position":  2,
                   "nullable":  true,
-                  "type":  "character varying(20)"
+                  "type":  "varchar(20)"
                 }
               ]
             }
@@ -44,12 +44,17 @@
           "views":  [
             {
               "name":  "v1",
-              "definition":  " SELECT id,\n    name\n   FROM test;",
+              "definition":  "SELECT id, name FROM test",
               "dependencyColumns":  [
                 {
                   "schema":  "public",
                   "table":  "test",
-                  "column":  "*"
+                  "column":  "id"
+                },
+                {
+                  "schema":  "public",
+                  "table":  "test",
+                  "column":  "name"
                 }
               ]
             }
@@ -66,3 +71,15 @@
   ignore_case_sensitive: false
   want: ""
   advice: null
+- statement: CREATE TABLE t_default_identifier(a text DEFAULT "status");
+  ignore_case_sensitive: false
+  want: ""
+  advice:
+    code: 260
+    content: "ERROR: cannot use column reference in DEFAULT expression (SQLSTATE 0A000)"
+- statement: CREATE TABLE t_default_column(a int, b int DEFAULT a);
+  ignore_case_sensitive: false
+  want: ""
+  advice:
+    code: 260
+    content: "ERROR: cannot use column reference in DEFAULT expression (SQLSTATE 0A000)"

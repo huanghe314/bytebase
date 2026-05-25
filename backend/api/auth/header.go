@@ -22,16 +22,15 @@ func GetTokenCookie(ctx context.Context, stores *store.Store, licenseService *en
 		}
 	}
 	isHTTPS := strings.HasPrefix(origin, "https")
-	tokenDuration := GetAccessTokenDuration(ctx, stores, licenseService, workspaceID)
+	// Cookie expiry matches the refresh token duration so that Refresh() can always
+	// extract the workspace from the expired JWT, even after long idle periods.
+	// The auth middleware rejects expired JWTs for API calls, so a stale cookie is harmless.
+	// The cookie is only read by Refresh() which verifies the signature but skips expiry.
+	cookieDuration := GetRefreshTokenDuration(ctx, stores, licenseService, workspaceID)
 	return &http.Cookie{
-		Name:  AccessTokenCookieName,
-		Value: token,
-		// CookieExpDuration expires slightly earlier than the jwt expiration. Client would be logged out if the user
-		// cookie expires, thus the client would always logout first before attempting to make a request with the expired jwt.
-		// Suppose we have a valid refresh token, we will refresh the token in 2 cases:
-		// 1. The access token is about to expire in <<refreshThresholdDuration>>
-		// 2. The access token has already expired, we refresh the token so that the ongoing request can pass through.
-		Expires: time.Now().Add(tokenDuration - 1*time.Second),
+		Name:    AccessTokenCookieName,
+		Value:   token,
+		Expires: time.Now().Add(cookieDuration),
 		Path:    "/",
 		// Http-only helps mitigate the risk of client side script accessing the protected cookie.
 		HttpOnly: true,
@@ -76,6 +75,10 @@ func GetRefreshTokenDuration(ctx context.Context, store *store.Store, licenseSer
 
 	if workspaceProfile.GetRefreshTokenDuration().GetSeconds() > 0 {
 		refreshTokenDuration = workspaceProfile.GetRefreshTokenDuration().AsDuration()
+	}
+
+	if err := licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_PASSWORD_RESTRICTIONS); err != nil {
+		return refreshTokenDuration
 	}
 	// Currently we implement the password rotation restriction in a simple way:
 	// 1. Only check if users need to reset their password during login.

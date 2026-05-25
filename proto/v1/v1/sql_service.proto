@@ -134,10 +134,11 @@ message QueryRequest {
   int32 limit = 3;
 
   // The id of data source.
-  // It is used for querying admin data source even if the instance has
-  // read-only data sources. Or it can be used to query a specific read-only
-  // data source.
-  string data_source_id = 4 [(google.api.field_behavior) = REQUIRED];
+  // If omitted, Query resolves the data source server-side by using the single
+  // read-only data source when exactly one exists, or the admin data source
+  // otherwise. It can also be set explicitly to query the admin data source or
+  // a specific read-only data source.
+  string data_source_id = 4;
 
   // Explain the statement.
   bool explain = 5;
@@ -297,8 +298,8 @@ message MaskingReason {
   // Additional context (e.g., "Matched global rule: PII Protection").
   string context = 5;
 
-  // Whether masking was due to classification level.
-  string classification_level = 6;
+  // The classification level that triggered masking.
+  int32 classification_level = 6;
 
   // Icon associated with the semantic type (if any).
   string semantic_type_icon = 7;
@@ -426,9 +427,10 @@ message ExportRequest {
   string password = 6;
 
   // The id of data source.
-  // It is used for querying admin data source even if the instance has
-  // read-only data sources. Or it can be used to query a specific read-only
-  // data source.
+  // If omitted, Export resolves the data source server-side by using the
+  // single read-only data source when exactly one exists, or the admin data
+  // source otherwise. It can also be set explicitly to export from the admin
+  // data source or a specific read-only data source.
   string data_source_id = 7;
 
   // The default schema to search objects. Equals to the current schema in
@@ -476,7 +478,7 @@ message SearchQueryHistoriesRequest {
   // - database: the database full name in "instances/{id}/databases/{name}" format, support "==" operator.
   // - instance: the instance full name in "instances/{id}" format, support "==" operator.
   // - type: the type, should be "QUERY" or "EXPORT", support "==" operator.
-  // - statement: the SQL statement, support ".matches()" operator.
+  // - statement: the SQL statement, support ".contains()" operator.
   //
   // For example:
   // project == "projects/{project}"
@@ -484,8 +486,8 @@ message SearchQueryHistoriesRequest {
   // instance == "instances/{instance}"
   // type == "QUERY"
   // type == "EXPORT"
-  // statement.matches("select")
-  // type == "QUERY" && statement.matches("select")
+  // statement.contains("select")
+  // type == "QUERY" && statement.contains("select")
   string filter = 3;
 }
 

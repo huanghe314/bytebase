@@ -1,54 +1,83 @@
 <template>
-  <NConfigProvider
-    :locale="generalLang"
-    :date-locale="dateLang"
-    :theme-overrides="themeOverrides"
-  >
-    <Watermark />
-
-    <NNotificationProvider
-      :max="MAX_NOTIFICATION_DISPLAY_COUNT"
-      placement="bottom-right"
-    >
-      <NDialogProvider>
-        <OverlayStackManager>
-          <NotificationContext>
-            <AuthContext>
-              <router-view />
-            </AuthContext>
-          </NotificationContext>
-        </OverlayStackManager>
-      </NDialogProvider>
-    </NNotificationProvider>
-  </NConfigProvider>
+  <AuthContext>
+    <router-view />
+  </AuthContext>
 </template>
 
 <script lang="ts" setup>
 import { Code, ConnectError } from "@connectrpc/connect";
 import { cloneDeep, isEqual } from "lodash-es";
 import {
-  NConfigProvider,
-  NDialogProvider,
-  NNotificationProvider,
-} from "naive-ui";
-import { onErrorCaptured, watch, watchEffect } from "vue";
+  onErrorCaptured,
+  onMounted,
+  onUnmounted,
+  watch,
+  watchEffect,
+} from "vue";
 import { useRoute, useRouter } from "vue-router";
-import Watermark from "@/components/misc/Watermark.vue";
-import { dateLang, generalLang, themeOverrides } from "../naive-ui.config";
 import AuthContext from "./AuthContext.vue";
-import OverlayStackManager from "./components/misc/OverlayStackManager.vue";
 import { overrideAppProfile } from "./customAppProfile";
-import NotificationContext from "./NotificationContext.vue";
-import { t } from "./plugins/i18n";
-import { useNotificationStore } from "./store";
-import { isDev } from "./utils";
-
-// Show at most 3 notifications to prevent excessive notification when shit hits the fan.
-const MAX_NOTIFICATION_DISPLAY_COUNT = 3;
+import { locale, t } from "./plugins/i18n";
+import {
+  type ReactQuickstartResetDetail,
+  ReactShellBridgeEvent,
+} from "./react/shell-bridge";
+import { useNotificationStore, useUIStateStore } from "./store";
+import { isDev, setDocumentTitle } from "./utils";
 
 const route = useRoute();
 const router = useRouter();
 const notificationStore = useNotificationStore();
+const uiStateStore = useUIStateStore();
+
+const handleReactLocaleChange = (event: Event) => {
+  const lang = (event as CustomEvent<unknown>).detail;
+  if (typeof lang === "string") {
+    locale.value = lang;
+    if (route.meta.title) {
+      setDocumentTitle(route.meta.title(route));
+    }
+  }
+};
+
+const handleReactQuickstartReset = (event: Event) => {
+  const keys = (event as CustomEvent<ReactQuickstartResetDetail>).detail?.keys;
+  if (!Array.isArray(keys)) {
+    return;
+  }
+  void Promise.all(
+    keys
+      .filter((key): key is string => typeof key === "string")
+      .map((key) =>
+        uiStateStore.saveIntroStateByKey({
+          key,
+          newState: false,
+        })
+      )
+  );
+};
+
+onMounted(() => {
+  window.addEventListener(
+    ReactShellBridgeEvent.localeChange,
+    handleReactLocaleChange
+  );
+  window.addEventListener(
+    ReactShellBridgeEvent.quickstartReset,
+    handleReactQuickstartReset
+  );
+});
+
+onUnmounted(() => {
+  window.removeEventListener(
+    ReactShellBridgeEvent.localeChange,
+    handleReactLocaleChange
+  );
+  window.removeEventListener(
+    ReactShellBridgeEvent.quickstartReset,
+    handleReactQuickstartReset
+  );
+});
 
 watchEffect(async () => {
   // Override app profile.

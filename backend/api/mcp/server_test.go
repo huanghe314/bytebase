@@ -18,7 +18,10 @@ import (
 
 func TestMCPAuthMiddleware(t *testing.T) {
 	secret := "test-secret-key"
-	profile := &config.Profile{Mode: common.ReleaseModeDev}
+	// ExternalURL short-circuits utils.GetEffectiveExternalURL away from
+	// the nil store; it's also the canonical URL the WWW-Authenticate
+	// resource_metadata pointer should resolve to.
+	profile := &config.Profile{Mode: common.ReleaseModeDev, ExternalURL: "https://bb.example.com"}
 
 	tests := []struct {
 		name           string
@@ -84,6 +87,22 @@ func TestMCPAuthMiddleware(t *testing.T) {
 
 			require.Equal(t, tc.expectedStatus, rec.Code)
 			require.Contains(t, strings.ToLower(rec.Body.String()), strings.ToLower(tc.expectedBody))
+
+			// Every 401 must carry an RFC 9728 / MCP-authorization-spec
+			// WWW-Authenticate header so unauthenticated clients can
+			// auto-discover the authorization server.
+			wwwAuth := rec.Header().Get("WWW-Authenticate")
+			require.NotEmpty(t, wwwAuth, "401 response missing WWW-Authenticate header")
+			require.Contains(t, wwwAuth, "Bearer")
+			require.Contains(t, wwwAuth, `realm="OAuth"`)
+			require.Contains(t, wwwAuth, "resource_metadata=")
+			require.Contains(t, wwwAuth, `error="invalid_token"`)
+			// The resource_metadata URL must (a) use the configured external
+			// URL rather than the inbound request Host (proxied-deployment
+			// phishing-pivot fix) and (b) include the /mcp path suffix so
+			// RFC 9728 §3.3 strict clients receive metadata whose `resource`
+			// field matches the URL they were accessing.
+			require.Contains(t, wwwAuth, "https://bb.example.com/.well-known/oauth-protected-resource/mcp")
 		})
 	}
 }

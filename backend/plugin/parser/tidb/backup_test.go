@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
+	"github.com/bytebase/bytebase/backend/common/yamltest"
 	"github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	"github.com/bytebase/bytebase/backend/store/model"
@@ -73,10 +74,7 @@ func TestBackup(t *testing.T) {
 		}
 	}
 	if record {
-		byteValue, err := yaml.Marshal(tests)
-		a.NoError(err)
-		err = os.WriteFile(filepath, byteValue, 0644)
-		a.NoError(err)
+		yamltest.Record(t, filepath, tests)
 	}
 }
 
@@ -99,6 +97,50 @@ func buildFixedMockDatabaseMetadataGetterAndLister() (base.GetDatabaseMetadataFu
 							Generation: &store.GenerationMetadata{
 								Expression: "a + b",
 							},
+						},
+					},
+					Indexes: []*store.IndexMetadata{
+						{
+							Name:    "PRIMARY",
+							Primary: true,
+							Unique:  true,
+							Expressions: []string{
+								"b",
+							},
+						},
+						{
+							Name:   "uk_a",
+							Unique: true,
+							Expressions: []string{
+								"a",
+							},
+						},
+						// Unique key on a generated column (c_generated = a + b).
+						// Used by TestGenerateRestoreSQLGeneratedColumnUKSkipped to
+						// pin that hasDisjointUniqueKey skips UKs whose
+						// expressions reference generated columns. Pre-fix this
+						// UK would false-positive as disjoint via naive string
+						// comparison; post-fix it's correctly skipped.
+						{
+							Name:   "uk_c_generated",
+							Unique: true,
+							Expressions: []string{
+								"c_generated",
+							},
+						},
+						// Unique key with empty Expressions — represents the
+						// TiDB-metadata shape for some expression/functional
+						// index parts that don't populate key.Column (per
+						// backend/plugin/schema/tidb/get_database_metadata.go).
+						// Used by TestGenerateRestoreSQLEmptyExpressionsUKSkipped
+						// to pin that hasDisjointUniqueKey skips empty-
+						// Expressions UKs. Pre-fix: disjoint([]) returns
+						// vacuously true, false-positive disjoint. Post-fix:
+						// empty-Expressions UKs are skipped explicitly.
+						{
+							Name:        "uk_empty_expressions",
+							Unique:      true,
+							Expressions: nil,
 						},
 					},
 				},
@@ -143,6 +185,22 @@ func buildFixedMockDatabaseMetadataGetterAndLister() (base.GetDatabaseMetadataFu
 							Name: "c",
 						},
 					},
+					Indexes: []*store.IndexMetadata{
+						{
+							Name:    "PRIMARY",
+							Primary: true,
+							Expressions: []string{
+								"c",
+							},
+						},
+						{
+							Name:   "PRIMARY",
+							Unique: true,
+							Expressions: []string{
+								"a",
+							},
+						},
+					},
 				},
 				{
 					Name: "test2",
@@ -155,6 +213,20 @@ func buildFixedMockDatabaseMetadataGetterAndLister() (base.GetDatabaseMetadataFu
 						},
 						{
 							Name: "c",
+						},
+					},
+				},
+				{
+					Name: "t3",
+					Columns: []*store.ColumnMetadata{
+						{
+							Name: "a",
+						},
+						{
+							Name: "b",
+						},
+						{
+							Name: "d",
 						},
 					},
 				},

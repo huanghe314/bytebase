@@ -3,32 +3,6 @@
 
 package v1
 
-func (x *GetResourcePackageRequest) Equal(y *GetResourcePackageRequest) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Name != y.Name {
-		return false
-	}
-	return true
-}
-
-func (x *ResourcePackage) Equal(y *ResourcePackage) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if string(x.Logo) != string(y.Logo) {
-		return false
-	}
-	return true
-}
-
 func (x *SetupSampleRequest) Equal(y *SetupSampleRequest) bool {
 	if x == y {
 		return true
@@ -40,16 +14,6 @@ func (x *SetupSampleRequest) Equal(y *SetupSampleRequest) bool {
 }
 
 func (x *GetActuatorInfoRequest) Equal(y *GetActuatorInfoRequest) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	return true
-}
-
-func (x *GetWorkspaceActuatorInfoRequest) Equal(y *GetWorkspaceActuatorInfoRequest) bool {
 	if x == y {
 		return true
 	}
@@ -88,6 +52,12 @@ func (x *Restriction) Equal(y *Restriction) bool {
 	if !x.PasswordRestriction.Equal(y.PasswordRestriction) {
 		return false
 	}
+	if x.AllowEmailCodeSignin != y.AllowEmailCodeSignin {
+		return false
+	}
+	if x.PasswordResetEnabled != y.PasswordResetEnabled {
+		return false
+	}
 	return true
 }
 
@@ -110,9 +80,6 @@ func (x *ActuatorInfo) Equal(y *ActuatorInfo) bool {
 	if x.Saas != y.Saas {
 		return false
 	}
-	if x.Demo != y.Demo {
-		return false
-	}
 	if x.Host != y.Host {
 		return false
 	}
@@ -120,9 +87,6 @@ func (x *ActuatorInfo) Equal(y *ActuatorInfo) bool {
 		return false
 	}
 	if x.ExternalUrl != y.ExternalUrl {
-		return false
-	}
-	if x.NeedAdminSetup != y.NeedAdminSetup {
 		return false
 	}
 	if p, q := x.LastActiveTime, y.LastActiveTime; (p == nil && q != nil) || (p != nil && (q == nil || p.Seconds != q.Seconds || p.Nanos != q.Nanos)) {
@@ -164,6 +128,9 @@ func (x *ActuatorInfo) Equal(y *ActuatorInfo) bool {
 		return false
 	}
 	if x.DefaultProject != y.DefaultProject {
+		return false
+	}
+	if x.UserCountInIam != y.UserCountInIam {
 		return false
 	}
 	return true

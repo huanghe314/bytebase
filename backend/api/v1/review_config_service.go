@@ -45,6 +45,9 @@ func (s *ReviewConfigService) CreateReviewConfig(ctx context.Context, req *conne
 
 	created, err := s.store.CreateReviewConfig(ctx, reviewConfigMessage)
 	if err != nil {
+		if strings.Contains(err.Error(), "duplicate key") {
+			return nil, connect.NewError(connect.CodeAlreadyExists, errors.Errorf("review config ID %q already exists", reviewConfigMessage.ID))
+		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	result, err := s.convertToV1ReviewConfig(ctx, created)
@@ -188,12 +191,11 @@ func (s *ReviewConfigService) DeleteReviewConfig(ctx context.Context, req *conne
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to marshal tag policy"))
 		}
-		patch := string(payloadBytes)
 		if _, err := s.store.UpdatePolicy(ctx, &store.UpdatePolicyMessage{
 			ResourceType: policy.ResourceType,
 			Resource:     policy.Resource,
 			Workspace:    policy.Workspace,
-			Payload:      &patch,
+			Payload:      new(string(payloadBytes)),
 		}); err != nil {
 			return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to update tag policy"))
 		}
@@ -449,6 +451,7 @@ func validateSQLReviewRule(rule *v1pb.SQLReviewRule) error {
 		storepb.SQLReviewRule_STATEMENT_WHERE_NO_LEADING_WILDCARD_LIKE,
 		storepb.SQLReviewRule_STATEMENT_DISALLOW_ON_DEL_CASCADE,
 		storepb.SQLReviewRule_STATEMENT_DISALLOW_RM_TBL_CASCADE,
+		storepb.SQLReviewRule_STATEMENT_DISALLOW_TRUNCATE,
 		storepb.SQLReviewRule_STATEMENT_DISALLOW_COMMIT,
 		storepb.SQLReviewRule_STATEMENT_DISALLOW_LIMIT,
 		storepb.SQLReviewRule_STATEMENT_DISALLOW_ORDER_BY,

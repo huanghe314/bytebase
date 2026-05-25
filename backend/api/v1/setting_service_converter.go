@@ -118,6 +118,19 @@ func convertToSettingMessage(setting *store.SettingMessage) (*v1pb.Setting, erro
 				},
 			},
 		}, nil
+	case storepb.SettingName_EMAIL:
+		storeValue, ok := setting.Value.(*storepb.EmailSetting)
+		if !ok {
+			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("invalid setting value type for %s", setting.Name))
+		}
+		return &v1pb.Setting{
+			Name: settingName,
+			Value: &v1pb.SettingValue{
+				Value: &v1pb.SettingValue_Email{
+					Email: convertToEmailSetting(storeValue),
+				},
+			},
+		}, nil
 	default:
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("unsupported setting %v", setting.Name))
 	}
@@ -157,6 +170,8 @@ func convertStoreSettingNameToV1(storeName storepb.SettingName) v1pb.Setting_Set
 		return v1pb.Setting_SEMANTIC_TYPES
 	case storepb.SettingName_ENVIRONMENT:
 		return v1pb.Setting_ENVIRONMENT
+	case storepb.SettingName_EMAIL:
+		return v1pb.Setting_EMAIL
 	case storepb.SettingName_SYSTEM:
 		// Backend-only setting, not exposed in v1 API
 	default:
@@ -184,6 +199,8 @@ func convertV1SettingNameToStore(v1Name v1pb.Setting_SettingName) storepb.Settin
 		return storepb.SettingName_SEMANTIC_TYPES
 	case v1pb.Setting_ENVIRONMENT:
 		return storepb.SettingName_ENVIRONMENT
+	case v1pb.Setting_EMAIL:
+		return storepb.SettingName_EMAIL
 	default:
 		return storepb.SettingName_SETTING_NAME_UNSPECIFIED
 	}
@@ -236,7 +253,7 @@ func convertWorkspaceProfileSetting(v1Setting *v1pb.WorkspaceProfileSetting) *st
 	storeSetting := &storepb.WorkspaceProfileSetting{
 		ExternalUrl:            v1Setting.ExternalUrl,
 		DisallowSignup:         v1Setting.DisallowSignup,
-		Require_2Fa:            v1Setting.Require_2Fa,
+		Require_2Fa:            v1Setting.RequireMfa,
 		RefreshTokenDuration:   v1Setting.RefreshTokenDuration,
 		AccessTokenDuration:    v1Setting.AccessTokenDuration,
 		InactiveSessionTimeout: v1Setting.InactiveSessionTimeout,
@@ -245,12 +262,12 @@ func convertWorkspaceProfileSetting(v1Setting *v1pb.WorkspaceProfileSetting) *st
 		EnforceIdentityDomain:  v1Setting.EnforceIdentityDomain,
 		DatabaseChangeMode:     storepb.WorkspaceProfileSetting_DatabaseChangeMode(v1Setting.DatabaseChangeMode),
 		DisallowPasswordSignin: v1Setting.DisallowPasswordSignin,
+		AllowEmailCodeSignin:   v1Setting.AllowEmailCodeSignin,
 		EnableMetricCollection: v1Setting.EnableMetricCollection,
 		EnableAuditLogStdout:   v1Setting.EnableAuditLogStdout,
 		Watermark:              v1Setting.Watermark,
 		DirectorySyncToken:     v1Setting.DirectorySyncToken,
-		BrandingLogo:           v1Setting.BrandingLogo,
-		PasswordRestriction:    convertPasswordRestrictionSetting(v1Setting.PasswordRestriction),
+		PasswordRestriction:    convertToStorePasswordRestriction(v1Setting.PasswordRestriction),
 		EnableDebug:            v1Setting.EnableDebug,
 		SqlResultSize:          v1Setting.SqlResultSize,
 		QueryTimeout:           v1Setting.QueryTimeout,
@@ -309,7 +326,7 @@ func convertToWorkspaceProfileSetting(storeSetting *storepb.WorkspaceProfileSett
 	return &v1pb.WorkspaceProfileSetting{
 		ExternalUrl:            storeSetting.ExternalUrl,
 		DisallowSignup:         storeSetting.DisallowSignup,
-		Require_2Fa:            storeSetting.Require_2Fa,
+		RequireMfa:             storeSetting.Require_2Fa,
 		RefreshTokenDuration:   storeSetting.RefreshTokenDuration,
 		AccessTokenDuration:    storeSetting.AccessTokenDuration,
 		InactiveSessionTimeout: storeSetting.InactiveSessionTimeout,
@@ -318,11 +335,11 @@ func convertToWorkspaceProfileSetting(storeSetting *storepb.WorkspaceProfileSett
 		EnforceIdentityDomain:  storeSetting.EnforceIdentityDomain,
 		DatabaseChangeMode:     v1pb.DatabaseChangeMode(storeSetting.DatabaseChangeMode),
 		DisallowPasswordSignin: storeSetting.DisallowPasswordSignin,
+		AllowEmailCodeSignin:   storeSetting.AllowEmailCodeSignin,
 		EnableMetricCollection: storeSetting.EnableMetricCollection,
 		EnableAuditLogStdout:   storeSetting.EnableAuditLogStdout,
 		Watermark:              storeSetting.Watermark,
 		DirectorySyncToken:     storeSetting.DirectorySyncToken,
-		BrandingLogo:           storeSetting.BrandingLogo,
 		PasswordRestriction:    convertToPasswordRestrictionSetting(storeSetting.PasswordRestriction),
 		Announcement:           convertToV1Announcement(storeSetting.Announcement),
 		EnableDebug:            storeSetting.EnableDebug,
@@ -490,9 +507,8 @@ func convertDataClassificationSettingLevels(levels []*v1pb.DataClassificationSet
 	storeLevels := make([]*storepb.DataClassificationSetting_DataClassificationConfig_Level, len(levels))
 	for i, level := range levels {
 		storeLevels[i] = &storepb.DataClassificationSetting_DataClassificationConfig_Level{
-			Id:          level.Id,
-			Title:       level.Title,
-			Description: level.Description,
+			Title: level.Title,
+			Level: level.Level,
 		}
 	}
 	return storeLevels
@@ -506,10 +522,9 @@ func convertDataClassificationSettingClassification(classification map[string]*v
 	storeClassification := make(map[string]*storepb.DataClassificationSetting_DataClassificationConfig_DataClassification, len(classification))
 	for k, v := range classification {
 		storeClassification[k] = &storepb.DataClassificationSetting_DataClassificationConfig_DataClassification{
-			Id:          v.Id,
-			Title:       v.Title,
-			Description: v.Description,
-			LevelId:     v.LevelId,
+			Id:    v.Id,
+			Title: v.Title,
+			Level: v.Level,
 		}
 	}
 	return storeClassification
@@ -549,9 +564,8 @@ func convertToDataClassificationSettingLevels(levels []*storepb.DataClassificati
 	v1Levels := make([]*v1pb.DataClassificationSetting_DataClassificationConfig_Level, len(levels))
 	for i, level := range levels {
 		v1Levels[i] = &v1pb.DataClassificationSetting_DataClassificationConfig_Level{
-			Id:          level.Id,
-			Title:       level.Title,
-			Description: level.Description,
+			Title: level.Title,
+			Level: level.Level,
 		}
 	}
 	return v1Levels
@@ -565,10 +579,9 @@ func convertToDataClassificationSettingClassification(classification map[string]
 	v1Classification := make(map[string]*v1pb.DataClassificationSetting_DataClassificationConfig_DataClassification, len(classification))
 	for k, v := range classification {
 		v1Classification[k] = &v1pb.DataClassificationSetting_DataClassificationConfig_DataClassification{
-			Id:          v.Id,
-			Title:       v.Title,
-			Description: v.Description,
-			LevelId:     v.LevelId,
+			Id:    v.Id,
+			Title: v.Title,
+			Level: v.Level,
 		}
 	}
 	return v1Classification
@@ -716,7 +729,7 @@ func convertToAlgorithmRangeMaskSlices(storeSlices []*storepb.Algorithm_RangeMas
 	return v1Slices
 }
 
-func convertPasswordRestrictionSetting(v1Setting *v1pb.WorkspaceProfileSetting_PasswordRestriction) *storepb.WorkspaceProfileSetting_PasswordRestriction {
+func convertToStorePasswordRestriction(v1Setting *v1pb.WorkspaceProfileSetting_PasswordRestriction) *storepb.WorkspaceProfileSetting_PasswordRestriction {
 	if v1Setting == nil {
 		return nil
 	}
@@ -777,4 +790,52 @@ func convertToAISetting(storeSetting *storepb.AISetting) *v1pb.AISetting {
 		Model:   storeSetting.Model,
 		Version: storeSetting.Version,
 	}
+}
+
+func convertEmailSetting(v1Setting *v1pb.EmailSetting) *storepb.EmailSetting {
+	if v1Setting == nil {
+		return nil
+	}
+	storeSetting := &storepb.EmailSetting{
+		From:     v1Setting.From,
+		FromName: v1Setting.FromName,
+		Type:     storepb.EmailSetting_Type(v1Setting.Type),
+	}
+	if v1SMTP := v1Setting.GetSmtp(); v1SMTP != nil {
+		storeSetting.Config = &storepb.EmailSetting_Smtp{
+			Smtp: &storepb.EmailSetting_SMTPConfig{
+				Host:           v1SMTP.Host,
+				Port:           v1SMTP.Port,
+				Username:       v1SMTP.Username,
+				Password:       v1SMTP.Password,
+				Encryption:     storepb.EmailSetting_SMTPConfig_Encryption(v1SMTP.Encryption),
+				Authentication: storepb.EmailSetting_SMTPConfig_Authentication(v1SMTP.Authentication),
+			},
+		}
+	}
+	return storeSetting
+}
+
+func convertToEmailSetting(storeSetting *storepb.EmailSetting) *v1pb.EmailSetting {
+	if storeSetting == nil {
+		return nil
+	}
+	v1Setting := &v1pb.EmailSetting{
+		From:     storeSetting.From,
+		FromName: storeSetting.FromName,
+		Type:     v1pb.EmailSetting_Type(storeSetting.Type),
+	}
+	if storeSMTP := storeSetting.GetSmtp(); storeSMTP != nil {
+		v1Setting.Config = &v1pb.EmailSetting_Smtp{
+			Smtp: &v1pb.EmailSetting_SMTPConfig{
+				Host:           storeSMTP.Host,
+				Port:           storeSMTP.Port,
+				Username:       storeSMTP.Username,
+				Password:       "", // INPUT_ONLY: never return password
+				Encryption:     v1pb.EmailSetting_SMTPConfig_Encryption(storeSMTP.Encryption),
+				Authentication: v1pb.EmailSetting_SMTPConfig_Authentication(storeSMTP.Authentication),
+			},
+		}
+	}
+	return v1Setting
 }

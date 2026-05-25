@@ -552,9 +552,10 @@ type QueryRequest struct {
 	// The maximum number of rows to return.
 	Limit int32 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
 	// The id of data source.
-	// It is used for querying admin data source even if the instance has
-	// read-only data sources. Or it can be used to query a specific read-only
-	// data source.
+	// If omitted, Query resolves the data source server-side by using the single
+	// read-only data source when exactly one exists, or the admin data source
+	// otherwise. It can also be set explicitly to query the admin data source or
+	// a specific read-only data source.
 	DataSourceId string `protobuf:"bytes,4,opt,name=data_source_id,json=dataSourceId,proto3" json:"data_source_id,omitempty"`
 	// Explain the statement.
 	Explain bool `protobuf:"varint,5,opt,name=explain,proto3" json:"explain,omitempty"`
@@ -960,8 +961,8 @@ type MaskingReason struct {
 	Algorithm string `protobuf:"bytes,4,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
 	// Additional context (e.g., "Matched global rule: PII Protection").
 	Context string `protobuf:"bytes,5,opt,name=context,proto3" json:"context,omitempty"`
-	// Whether masking was due to classification level.
-	ClassificationLevel string `protobuf:"bytes,6,opt,name=classification_level,json=classificationLevel,proto3" json:"classification_level,omitempty"`
+	// The classification level that triggered masking.
+	ClassificationLevel int32 `protobuf:"varint,6,opt,name=classification_level,json=classificationLevel,proto3" json:"classification_level,omitempty"`
 	// Icon associated with the semantic type (if any).
 	SemanticTypeIcon string `protobuf:"bytes,7,opt,name=semantic_type_icon,json=semanticTypeIcon,proto3" json:"semantic_type_icon,omitempty"`
 	unknownFields    protoimpl.UnknownFields
@@ -1033,11 +1034,11 @@ func (x *MaskingReason) GetContext() string {
 	return ""
 }
 
-func (x *MaskingReason) GetClassificationLevel() string {
+func (x *MaskingReason) GetClassificationLevel() int32 {
 	if x != nil {
 		return x.ClassificationLevel
 	}
-	return ""
+	return 0
 }
 
 func (x *MaskingReason) GetSemanticTypeIcon() string {
@@ -1476,9 +1477,10 @@ type ExportRequest struct {
 	// The zip password provide by users.
 	Password string `protobuf:"bytes,6,opt,name=password,proto3" json:"password,omitempty"`
 	// The id of data source.
-	// It is used for querying admin data source even if the instance has
-	// read-only data sources. Or it can be used to query a specific read-only
-	// data source.
+	// If omitted, Export resolves the data source server-side by using the
+	// single read-only data source when exactly one exists, or the admin data
+	// source otherwise. It can also be set explicitly to export from the admin
+	// data source or a specific read-only data source.
 	DataSourceId string `protobuf:"bytes,7,opt,name=data_source_id,json=dataSourceId,proto3" json:"data_source_id,omitempty"`
 	// The default schema to search objects. Equals to the current schema in
 	// Oracle and search path in Postgres.
@@ -1744,7 +1746,7 @@ type SearchQueryHistoriesRequest struct {
 	// - database: the database full name in "instances/{id}/databases/{name}" format, support "==" operator.
 	// - instance: the instance full name in "instances/{id}" format, support "==" operator.
 	// - type: the type, should be "QUERY" or "EXPORT", support "==" operator.
-	// - statement: the SQL statement, support ".matches()" operator.
+	// - statement: the SQL statement, support ".contains()" operator.
 	//
 	// For example:
 	// project == "projects/{project}"
@@ -1752,8 +1754,8 @@ type SearchQueryHistoriesRequest struct {
 	// instance == "instances/{instance}"
 	// type == "QUERY"
 	// type == "EXPORT"
-	// statement.matches("select")
-	// type == "QUERY" && statement.matches("select")
+	// statement.contains("select")
+	// type == "QUERY" && statement.contains("select")
 	Filter        string `protobuf:"bytes,3,opt,name=filter,proto3" json:"filter,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2708,13 +2710,13 @@ const file_v1_sql_service_proto_rawDesc = "" +
 	"\n" +
 	"_container\"J\n" +
 	"\x14AdminExecuteResponse\x122\n" +
-	"\aresults\x18\x01 \x03(\v2\x18.bytebase.v1.QueryResultR\aresults\"\xd0\x02\n" +
+	"\aresults\x18\x01 \x03(\v2\x18.bytebase.v1.QueryResultR\aresults\"\xcb\x02\n" +
 	"\fQueryRequest\x121\n" +
 	"\x04name\x18\x01 \x01(\tB\x1d\xe0A\x02\xfaA\x17\n" +
 	"\x15bytebase.com/DatabaseR\x04name\x12\x1c\n" +
 	"\tstatement\x18\x02 \x01(\tR\tstatement\x12\x14\n" +
-	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12)\n" +
-	"\x0edata_source_id\x18\x04 \x01(\tB\x03\xe0A\x02R\fdataSourceId\x12\x18\n" +
+	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12$\n" +
+	"\x0edata_source_id\x18\x04 \x01(\tR\fdataSourceId\x12\x18\n" +
 	"\aexplain\x18\x05 \x01(\bR\aexplain\x12\x1b\n" +
 	"\x06schema\x18\x06 \x01(\tH\x00R\x06schema\x88\x01\x01\x12;\n" +
 	"\fquery_option\x18\a \x01(\v2\x18.bytebase.v1.QueryOptionR\vqueryOption\x12!\n" +
@@ -2801,7 +2803,7 @@ const file_v1_sql_service_proto_rawDesc = "" +
 	"\x0fmasking_rule_id\x18\x03 \x01(\tR\rmaskingRuleId\x12\x1c\n" +
 	"\talgorithm\x18\x04 \x01(\tR\talgorithm\x12\x18\n" +
 	"\acontext\x18\x05 \x01(\tR\acontext\x121\n" +
-	"\x14classification_level\x18\x06 \x01(\tR\x13classificationLevel\x12,\n" +
+	"\x14classification_level\x18\x06 \x01(\x05R\x13classificationLevel\x12,\n" +
 	"\x12semantic_type_icon\x18\a \x01(\tR\x10semanticTypeIcon\"9\n" +
 	"\bQueryRow\x12-\n" +
 	"\x06values\x18\x01 \x03(\v2\x15.bytebase.v1.RowValueR\x06values\"\xf9\x06\n" +

@@ -128,9 +128,6 @@ func (x *WorkspaceProfileSetting) Equal(y *WorkspaceProfileSetting) bool {
 	if x.DirectorySyncToken != y.DirectorySyncToken {
 		return false
 	}
-	if x.BrandingLogo != y.BrandingLogo {
-		return false
-	}
 	if !x.PasswordRestriction.Equal(y.PasswordRestriction) {
 		return false
 	}
@@ -144,6 +141,9 @@ func (x *WorkspaceProfileSetting) Equal(y *WorkspaceProfileSetting) bool {
 		return false
 	}
 	if p, q := x.QueryTimeout, y.QueryTimeout; (p == nil && q != nil) || (p != nil && (q == nil || p.Seconds != q.Seconds || p.Nanos != q.Nanos)) {
+		return false
+	}
+	if x.AllowEmailCodeSignin != y.AllowEmailCodeSignin {
 		return false
 	}
 	return true
@@ -195,13 +195,10 @@ func (x *DataClassificationSetting_DataClassificationConfig_Level) Equal(y *Data
 	if x == nil || y == nil {
 		return x == nil && y == nil
 	}
-	if x.Id != y.Id {
-		return false
-	}
 	if x.Title != y.Title {
 		return false
 	}
-	if x.Description != y.Description {
+	if x.Level != y.Level {
 		return false
 	}
 	return true
@@ -220,10 +217,7 @@ func (x *DataClassificationSetting_DataClassificationConfig_DataClassification) 
 	if x.Title != y.Title {
 		return false
 	}
-	if x.Description != y.Description {
-		return false
-	}
-	if p, q := x.LevelId, y.LevelId; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
+	if p, q := x.Level, y.Level; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
 		return false
 	}
 	return true
@@ -660,6 +654,56 @@ func (x *EnvironmentSetting) Equal(y *EnvironmentSetting) bool {
 		if !x.Environments[i].Equal(y.Environments[i]) {
 			return false
 		}
+	}
+	return true
+}
+
+func (x *EmailSetting_SMTPConfig) Equal(y *EmailSetting_SMTPConfig) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if x.Host != y.Host {
+		return false
+	}
+	if x.Port != y.Port {
+		return false
+	}
+	if x.Username != y.Username {
+		return false
+	}
+	if x.Password != y.Password {
+		return false
+	}
+	if x.Encryption != y.Encryption {
+		return false
+	}
+	if x.Authentication != y.Authentication {
+		return false
+	}
+	return true
+}
+
+func (x *EmailSetting) Equal(y *EmailSetting) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if x.From != y.From {
+		return false
+	}
+	if x.FromName != y.FromName {
+		return false
+	}
+	if x.Type != y.Type {
+		return false
+	}
+	if !x.GetSmtp().Equal(y.GetSmtp()) {
+		return false
 	}
 	return true
 }

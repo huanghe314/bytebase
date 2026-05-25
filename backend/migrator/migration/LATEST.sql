@@ -11,9 +11,18 @@ CREATE TABLE server_config (
 
 CREATE TABLE workspace (
     resource_id text PRIMARY KEY,
-    name        text NOT NULL,
+    -- Stored as WorkspacePayload (proto/store/store/workspace.proto)
+    payload     jsonb NOT NULL DEFAULT '{}',
     created_at  timestamptz NOT NULL DEFAULT now(),
     deleted     boolean NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE subscription (
+    workspace   text        NOT NULL REFERENCES workspace(resource_id) PRIMARY KEY,
+    -- Stored as SubscriptionPayload (proto/store/store/subscription.proto)
+    payload     jsonb       NOT NULL DEFAULT '{}',
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE principal (
@@ -21,6 +30,7 @@ CREATE TABLE principal (
     deleted boolean NOT NULL DEFAULT FALSE,
     created_at timestamptz NOT NULL DEFAULT now(),
     name text NOT NULL,
+    -- golbal unique
     email text NOT NULL,
     password_hash text NOT NULL,
     phone text NOT NULL DEFAULT '',
@@ -43,17 +53,18 @@ CREATE TABLE setting (
     -- name: SYSTEM, WORKSPACE_PROFILE, WORKSPACE_APPROVAL,
     -- APP_IM, AI, DATA_CLASSIFICATION, SEMANTIC_TYPES, ENVIRONMENT
     -- Enum: SettingName (proto/store/store/setting.proto)
-    name text NOT NULL PRIMARY KEY,
+    name text NOT NULL,
     workspace text NOT NULL REFERENCES workspace(resource_id),
     -- Stored as JSON marshalled by protojson.Marshal (camelCase keys)
-    value jsonb NOT NULL
+    value jsonb NOT NULL,
+    PRIMARY KEY (workspace, name)
 );
 
-CREATE UNIQUE INDEX idx_setting_unique_workspace_name ON setting(workspace, name);
 CREATE INDEX idx_setting_workspace ON setting(workspace);
 
 -- Role
 CREATE TABLE role (
+    -- golbal unique
     resource_id text NOT NULL PRIMARY KEY,
     workspace text NOT NULL REFERENCES workspace(resource_id),
     name text NOT NULL,
@@ -87,16 +98,17 @@ CREATE TABLE policy (
     -- TAG: TagPolicy
     payload jsonb NOT NULL DEFAULT '{}',
     inherit_from_parent boolean NOT NULL DEFAULT TRUE,
-    PRIMARY KEY (resource_type, resource, type)
+    PRIMARY KEY (workspace, resource_type, resource, type)
 );
 
 CREATE INDEX idx_policy_workspace ON policy(workspace);
-CREATE UNIQUE INDEX idx_policy_unique_workspace_resource ON policy(workspace, resource_type, resource, type);
 
 -- idp stores generic identity provider.
 CREATE TABLE idp (
+    -- golbal unique
     resource_id text NOT NULL PRIMARY KEY,
-    workspace text NOT NULL REFERENCES workspace(resource_id),
+    -- NULL for global IDPs (SaaS login), non-NULL for workspace-scoped IDPs.
+    workspace text REFERENCES workspace(resource_id),
     name text NOT NULL,
     domain text NOT NULL,
     type text NOT NULL CONSTRAINT idp_type_check CHECK (type IN ('OAUTH2', 'OIDC', 'LDAP')),
@@ -106,6 +118,7 @@ CREATE TABLE idp (
 );
 
 CREATE TABLE user_group (
+    -- golbal unique
     id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
     workspace text NOT NULL REFERENCES workspace(resource_id),
     email text,
@@ -119,6 +132,7 @@ CREATE UNIQUE INDEX idx_user_group_unique_email ON user_group(workspace, email) 
 
 -- review config table.
 CREATE TABLE review_config (
+    -- golbal unique
     id text NOT NULL PRIMARY KEY,
     workspace text NOT NULL REFERENCES workspace(resource_id),
     enabled boolean NOT NULL DEFAULT TRUE,
@@ -128,6 +142,7 @@ CREATE TABLE review_config (
 );
 
 CREATE TABLE audit_log (
+    -- golbal unique
     resource_id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
     workspace text NOT NULL REFERENCES workspace(resource_id),
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -144,6 +159,7 @@ CREATE INDEX idx_audit_log_payload_resource ON audit_log((payload->>'resource'))
 CREATE INDEX idx_audit_log_payload_user ON audit_log((payload->>'user'));
 
 CREATE TABLE export_archive (
+    -- golbal unique
     resource_id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
     workspace text NOT NULL REFERENCES workspace(resource_id),
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -157,6 +173,7 @@ CREATE TABLE export_archive (
 -----------------------
 
 CREATE TABLE project (
+    -- golbal unique
     resource_id text NOT NULL PRIMARY KEY,
     workspace text NOT NULL REFERENCES workspace(resource_id),
     deleted boolean NOT NULL DEFAULT FALSE,
@@ -173,6 +190,7 @@ CREATE TABLE service_account (
     deleted boolean NOT NULL DEFAULT FALSE,
     created_at timestamptz NOT NULL DEFAULT now(),
     name text NOT NULL,
+    -- golbal unique
     email text NOT NULL PRIMARY KEY,
     workspace text NOT NULL REFERENCES workspace(resource_id),
     service_key_hash text NOT NULL,
@@ -188,6 +206,7 @@ CREATE TABLE workload_identity (
     deleted boolean NOT NULL DEFAULT FALSE,
     created_at timestamptz NOT NULL DEFAULT now(),
     name text NOT NULL,
+    -- golbal unique
     email text NOT NULL PRIMARY KEY,
     workspace text NOT NULL REFERENCES workspace(resource_id),
     project text REFERENCES project(resource_id),
@@ -201,6 +220,7 @@ CREATE INDEX idx_workload_identity_workspace ON workload_identity(workspace);
 
 -- Project Hook
 CREATE TABLE project_webhook (
+    -- golbal unique
     resource_id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
     project text NOT NULL REFERENCES project(resource_id),
     -- Stored as ProjectWebhook (proto/store/store/project_webhook.proto)
@@ -216,6 +236,7 @@ CREATE TABLE sheet_blob (
 
 -- plan table stores the plan for a project
 CREATE TABLE plan (
+    -- unique and auto-increase per project
     id bigint NOT NULL,
     deleted boolean NOT NULL DEFAULT FALSE,
     creator text NOT NULL,
@@ -234,6 +255,7 @@ CREATE INDEX idx_plan_creator ON plan(creator);
 CREATE INDEX idx_plan_config_has_rollout ON plan ((config->>'hasRollout'));
 
 CREATE TABLE plan_check_run (
+    -- unique and auto-increase per project
     id bigint NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
@@ -264,6 +286,7 @@ CREATE TABLE plan_webhook_delivery (
 
 -- issue
 CREATE TABLE issue (
+    -- unique and auto-increase per project
     id bigint NOT NULL,
     creator text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -289,6 +312,7 @@ CREATE INDEX idx_issue_creator ON issue(creator);
 CREATE INDEX idx_issue_ts_vector ON issue USING GIN(ts_vector);
 
 CREATE TABLE issue_comment (
+    -- global unique
     resource_id text NOT NULL DEFAULT gen_random_uuid()::text,
     creator text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -306,6 +330,7 @@ CREATE UNIQUE INDEX idx_issue_comment_unique_resource_id ON issue_comment(resour
 
 -- worksheet table stores worksheets in SQL Editor.
 CREATE TABLE worksheet (
+    -- global unique
     resource_id text NOT NULL DEFAULT gen_random_uuid()::text,
     creator text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -338,6 +363,7 @@ CREATE INDEX idx_worksheet_organizer_payload ON worksheet_organizer USING GIN(pa
 
 CREATE TABLE db_group (
     project text NOT NULL REFERENCES project(resource_id),
+    -- project-level unique
     resource_id text NOT NULL,
     name text NOT NULL DEFAULT '',
     -- Stored as google.type.Expr (from Google Common Expression Language)
@@ -366,6 +392,7 @@ CREATE INDEX idx_release_project_release_id ON release(project, release_id);
 CREATE INDEX idx_release_category ON release(project, category);
 
 CREATE TABLE access_grant (
+    -- global unique
     id text PRIMARY KEY,
     project text NOT NULL REFERENCES project(resource_id),
     creator text NOT NULL,
@@ -380,6 +407,7 @@ CREATE TABLE access_grant (
 CREATE INDEX idx_access_grant_project_creator_expire_time ON access_grant(project, creator, expire_time);
 
 CREATE TABLE query_history (
+    -- global unique
     resource_id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
     creator text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -400,6 +428,7 @@ CREATE INDEX idx_query_history_creator_created_at_project ON query_history(creat
 -----------------------
 
 CREATE TABLE instance (
+    -- global unique
     resource_id text NOT NULL PRIMARY KEY,
     workspace text NOT NULL REFERENCES workspace(resource_id),
     deleted boolean NOT NULL DEFAULT FALSE,
@@ -440,6 +469,7 @@ CREATE TABLE db_schema (
 );
 
 CREATE TABLE revision (
+    -- global unique
     resource_id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
     instance text NOT NULL,
     db_name text NOT NULL,
@@ -456,6 +486,7 @@ CREATE UNIQUE INDEX idx_revision_unique_instance_db_name_type_version_deleted_at
 CREATE INDEX idx_revision_instance_db_name_type_version ON revision(instance, db_name, (payload->>'type'), version);
 
 CREATE TABLE sync_history (
+    -- global unique
     resource_id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
     created_at timestamptz NOT NULL DEFAULT now(),
     instance text NOT NULL,
@@ -469,6 +500,7 @@ CREATE TABLE sync_history (
 CREATE INDEX idx_sync_history_instance_db_name_created_at ON sync_history (instance, db_name, created_at);
 
 CREATE TABLE changelog (
+    -- global unique
     resource_id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
     created_at timestamptz NOT NULL DEFAULT now(),
     instance text NOT NULL,
@@ -498,6 +530,7 @@ ALTER SEQUENCE instance_change_history_id_seq RESTART WITH 101;
 
 -- task table stores the task for a plan
 CREATE TABLE task (
+    -- unique and auto-increase per project
     id bigint NOT NULL,
     project text NOT NULL REFERENCES project(resource_id),
     plan_id bigint NOT NULL,
@@ -515,6 +548,7 @@ CREATE INDEX idx_task_plan_id_environment ON task(project, plan_id, environment)
 
 -- task run table stores the task run
 CREATE TABLE task_run (
+    -- unique and auto-increase per project
     id bigint NOT NULL,
     creator text,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -566,7 +600,10 @@ CREATE TABLE task_run_log (
 
 CREATE TABLE oauth2_client (
     client_id text PRIMARY KEY,
-    workspace text NOT NULL REFERENCES workspace(resource_id),
+    -- workspace is nullable: clients registered via unauthenticated DCR are
+    -- workspace-agnostic and get bound to a workspace at consent time on the
+    -- issued authorization code / refresh token.
+    workspace text REFERENCES workspace(resource_id),
     client_secret_hash text NOT NULL,
     config jsonb NOT NULL,
     last_active_at timestamptz NOT NULL DEFAULT now()
@@ -576,6 +613,9 @@ CREATE TABLE oauth2_authorization_code (
     code text PRIMARY KEY,
     client_id text NOT NULL REFERENCES oauth2_client(client_id) ON DELETE CASCADE,
     user_email text NOT NULL REFERENCES principal(email) ON UPDATE CASCADE,
+    -- Workspace selected at consent time. Carried through into the issued
+    -- access token's workspace_id claim.
+    workspace text REFERENCES workspace(resource_id),
     config jsonb NOT NULL,
     expires_at timestamptz NOT NULL
 );
@@ -584,6 +624,9 @@ CREATE TABLE oauth2_refresh_token (
     token_hash text PRIMARY KEY,
     client_id text NOT NULL REFERENCES oauth2_client(client_id) ON DELETE CASCADE,
     user_email text NOT NULL REFERENCES principal(email) ON UPDATE CASCADE,
+    -- Workspace inherited from the authorization code that originally issued
+    -- this refresh token; preserved across refresh.
+    workspace text REFERENCES workspace(resource_id),
     expires_at timestamptz NOT NULL
 );
 
@@ -601,6 +644,23 @@ CREATE TABLE web_refresh_token (
 
 CREATE INDEX idx_web_refresh_token_user_email ON web_refresh_token(user_email);
 CREATE INDEX idx_web_refresh_token_expires_at ON web_refresh_token(expires_at);
+
+CREATE TABLE email_verification_code (
+    email         text NOT NULL,
+    -- Stored as EmailVerificationCodePurpose enum name (proto/store/store/email_verification_code.proto)
+    purpose       text NOT NULL,
+    code_hash     text NOT NULL,
+    attempts      int  NOT NULL DEFAULT 0,
+    expires_at    timestamptz NOT NULL,
+    last_sent_at  timestamptz NOT NULL,
+    -- Workspace context captured at send time. Used at verify time for gate checks
+    -- (disallow_signup, allow_email_code_signin) and for provisionWorkspaceForNewUser.
+    -- NULL for SaaS brand-new signup (no workspace exists yet — provision creates one).
+    workspace     text,
+    PRIMARY KEY (email, purpose)
+);
+
+CREATE INDEX idx_email_verification_code_expires_at ON email_verification_code (expires_at);
 
 -----------------------
 -- Seed data

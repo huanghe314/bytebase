@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.6/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.4.14/schema.json",
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
     "ignoreUnknown": true,
@@ -288,7 +288,14 @@
     },
     {
       "includes": ["*.json", "**/*.json", "*.json5", "**/*.json5"],
-      "javascript": { "globals": [] }
+      "javascript": { "globals": [] },
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noDuplicateObjectKeys": "error"
+          }
+        }
+      }
     },
     {
       "includes": ["*.yaml", "**/*.yaml", "*.yml", "**/*.yml"],

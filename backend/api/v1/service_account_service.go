@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/bytebase/bytebase/backend/common"
+	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/iam"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -21,13 +22,15 @@ import (
 type ServiceAccountService struct {
 	v1connect.UnimplementedServiceAccountServiceHandler
 	store      *store.Store
+	profile    *config.Profile
 	iamManager *iam.Manager
 }
 
 // NewServiceAccountService creates a new ServiceAccountService.
-func NewServiceAccountService(store *store.Store, iamManager *iam.Manager) *ServiceAccountService {
+func NewServiceAccountService(store *store.Store, profile *config.Profile, iamManager *iam.Manager) *ServiceAccountService {
 	return &ServiceAccountService{
 		store:      store,
+		profile:    profile,
 		iamManager: iamManager,
 	}
 }
@@ -52,6 +55,10 @@ func (s *ServiceAccountService) CreateServiceAccount(ctx context.Context, reques
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("invalid parent format %q, expected projects/{project} or workspaces/{id}", parent))
 	}
 
+	if projectID == nil && s.profile.SaaS {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("donot support create workload identity in workspace"))
+	}
+
 	serviceAccountID := request.Msg.ServiceAccountId
 	if serviceAccountID == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("service_account_id is required"))
@@ -68,6 +75,9 @@ func (s *ServiceAccountService) CreateServiceAccount(ctx context.Context, reques
 		projectIDStr = *projectID
 	}
 	email := common.BuildServiceAccountEmail(serviceAccountID, projectIDStr)
+	if err := validateServiceAccountEmail(email); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, invalidAccountEmailError("service account", email, err))
+	}
 
 	// Check for duplicate email
 	existingSA, err := s.store.GetServiceAccount(ctx, common.GetWorkspaceIDFromContext(ctx), email)
@@ -115,6 +125,9 @@ func (s *ServiceAccountService) GetServiceAccount(ctx context.Context, request *
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	if err := validateServiceAccountEmail(email); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, invalidAccountEmailError("service account", email, err))
+	}
 
 	sa, err := s.store.GetServiceAccount(ctx, common.GetWorkspaceIDFromContext(ctx), email)
 	if err != nil {
@@ -143,8 +156,7 @@ func (s *ServiceAccountService) ListServiceAccounts(ctx context.Context, request
 	case strings.HasPrefix(parent, common.WorkspacePrefix):
 		// workspace-level list: parent = "workspaces/{id}"
 		// use empty string to filter workspace-level SAs
-		emptyProjectID := ""
-		projectID = &emptyProjectID
+		projectID = new("")
 	default:
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("invalid parent format %q, expected projects/{project} or workspaces/{id}", parent))
 	}
@@ -208,6 +220,9 @@ func (s *ServiceAccountService) UpdateServiceAccount(ctx context.Context, reques
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	if err := validateServiceAccountEmail(email); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, invalidAccountEmailError("service account", email, err))
+	}
 
 	sa, err := s.store.GetServiceAccount(ctx, common.GetWorkspaceIDFromContext(ctx), email)
 	if err != nil {
@@ -239,8 +254,7 @@ func (s *ServiceAccountService) UpdateServiceAccount(ctx context.Context, reques
 			if err != nil {
 				return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to hash service key"))
 			}
-			passwordHashStr := string(passwordHash)
-			patch.ServiceKeyHash = &passwordHashStr
+			patch.ServiceKeyHash = new(string(passwordHash))
 		default:
 			// Ignore unknown fields
 		}
@@ -264,6 +278,9 @@ func (s *ServiceAccountService) DeleteServiceAccount(ctx context.Context, reques
 	email, err := common.GetServiceAccountEmail(request.Msg.Name)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	if err := validateServiceAccountEmail(email); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, invalidAccountEmailError("service account", email, err))
 	}
 
 	sa, err := s.store.GetServiceAccount(ctx, common.GetWorkspaceIDFromContext(ctx), email)
@@ -290,6 +307,9 @@ func (s *ServiceAccountService) UndeleteServiceAccount(ctx context.Context, requ
 	email, err := common.GetServiceAccountEmail(request.Msg.Name)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	if err := validateServiceAccountEmail(email); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, invalidAccountEmailError("service account", email, err))
 	}
 
 	sa, err := s.store.GetServiceAccount(ctx, common.GetWorkspaceIDFromContext(ctx), email)

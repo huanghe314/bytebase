@@ -6,15 +6,15 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/antlr4-go/antlr/v4"
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/proto"
 
-	parser "github.com/bytebase/parser/postgresql"
+	omnipg "github.com/bytebase/omni/pg"
+	"github.com/bytebase/omni/pg/ast"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	parserbase "github.com/bytebase/bytebase/backend/plugin/parser/base"
-	pgparser "github.com/bytebase/bytebase/backend/plugin/parser/pg"
 	"github.com/bytebase/bytebase/backend/plugin/schema"
 )
 
@@ -37,18 +37,31 @@ SET row_security = off;
 )
 
 func init() {
-	schema.RegisterGetDatabaseDefinition(storepb.Engine_POSTGRES, GetDatabaseDefinition)
-	schema.RegisterGetSchemaDefinition(storepb.Engine_POSTGRES, GetSchemaDefinition)
-	schema.RegisterGetTableDefinition(storepb.Engine_POSTGRES, GetTableDefinition)
-	schema.RegisterGetViewDefinition(storepb.Engine_POSTGRES, GetViewDefinition)
-	schema.RegisterGetMaterializedViewDefinition(storepb.Engine_POSTGRES, GetMaterializedViewDefinition)
-	schema.RegisterGetFunctionDefinition(storepb.Engine_POSTGRES, GetFunctionDefinition)
-	schema.RegisterGetSequenceDefinition(storepb.Engine_POSTGRES, GetSequenceDefinition)
-	schema.RegisterGetMultiFileDatabaseDefinition(storepb.Engine_POSTGRES, GetMultiFileDatabaseDefinition)
+	for _, engine := range []storepb.Engine{storepb.Engine_POSTGRES, storepb.Engine_COCKROACHDB} {
+		schema.RegisterGetDatabaseDefinition(engine, GetDatabaseDefinition)
+		schema.RegisterGetSchemaDefinition(engine, GetSchemaDefinition)
+		schema.RegisterGetTableDefinition(engine, GetTableDefinition)
+		schema.RegisterGetViewDefinition(engine, GetViewDefinition)
+		schema.RegisterGetMaterializedViewDefinition(engine, GetMaterializedViewDefinition)
+		schema.RegisterGetFunctionDefinition(engine, GetFunctionDefinition)
+		schema.RegisterGetSequenceDefinition(engine, GetSequenceDefinition)
+		schema.RegisterGetMultiFileDatabaseDefinition(engine, GetMultiFileDatabaseDefinition)
+	}
 }
 
 func GetDatabaseDefinition(ctx schema.GetDefinitionContext, metadata *storepb.DatabaseSchemaMetadata) (string, error) {
 	metadata = filterBackupSchemaIfNecessary(ctx, metadata)
+
+	// Clone before mutating: the caller's *DatabaseSchemaMetadata is often a
+	// shared pointer returned from store.dbSchemaCache (see
+	// backend/store/model/database.go:GetProto), so concurrent callers could
+	// race on in-place normalization writes below.
+	metadata = proto.CloneOf(metadata)
+
+	// Repair historical non-canonical metadata shapes (e.g. index key
+	// expressions stored without outer parens) so emission produces valid SQL.
+	// See legacy_normalize.go for removal criteria.
+	normalizeLegacyMetadata(metadata)
 
 	if len(metadata.Schemas) == 0 {
 		return "", nil
@@ -946,6 +959,79 @@ func escapeSingleQuote(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
 }
 
+// signatureTypesOnly strips parameter names from a function/procedure signature,
+// keeping only types. PostgreSQL's COMMENT ON FUNCTION/PROCEDURE requires
+// type-only signatures: "func(integer, text)" not "func(id integer, name text)".
+//
+// It works by wrapping the signature in a CREATE FUNCTION statement, parsing it
+// with omni to discover parameter names, then removing those names from the
+// original signature text to preserve the original type spelling.
+func signatureTypesOnly(signature string) string {
+	openParen := strings.Index(signature, "(")
+	if openParen < 0 {
+		return signature
+	}
+	closeParen := strings.LastIndex(signature, ")")
+	if closeParen <= openParen {
+		return signature
+	}
+	funcName := signature[:openParen]
+	paramStr := signature[openParen+1 : closeParen]
+	if strings.TrimSpace(paramStr) == "" {
+		return signature
+	}
+
+	// Parse the signature as a CREATE FUNCTION to extract param names from AST.
+	sql := fmt.Sprintf("CREATE FUNCTION %s RETURNS void LANGUAGE sql AS 'SELECT 1'", signature)
+	stmts, err := omnipg.Parse(sql)
+	if err != nil {
+		return signature
+	}
+	fn, ok := stmts[0].AST.(*ast.CreateFunctionStmt)
+	if !ok || fn.Parameters == nil {
+		return signature
+	}
+
+	// Collect parameter names from AST.
+	var paramNames []string
+	for _, item := range fn.Parameters.Items {
+		if fp, ok := item.(*ast.FunctionParameter); ok && fp.Name != "" {
+			paramNames = append(paramNames, fp.Name)
+		}
+	}
+
+	// Strip parameter names from the original text, preserving original type spelling.
+	rawParams := strings.Split(paramStr, ",")
+	var typesOnly []string
+	nameIdx := 0
+	for _, raw := range rawParams {
+		param := strings.TrimSpace(raw)
+		words := strings.Fields(param)
+		if len(words) == 0 {
+			continue
+		}
+		// Skip mode keywords (IN, OUT, INOUT, VARIADIC).
+		startIdx := 0
+		for startIdx < len(words) {
+			w := strings.ToLower(words[startIdx])
+			if w == "in" || w == "out" || w == "inout" || w == "variadic" {
+				startIdx++
+			} else {
+				break
+			}
+		}
+		// Check if first non-mode word matches a known param name from AST.
+		if startIdx < len(words) && nameIdx < len(paramNames) && words[startIdx] == paramNames[nameIdx] {
+			typesOnly = append(typesOnly, strings.Join(words[startIdx+1:], " "))
+			nameIdx++
+		} else {
+			typesOnly = append(typesOnly, strings.Join(words[startIdx:], " "))
+		}
+	}
+
+	return funcName + "(" + strings.Join(typesOnly, ", ") + ")"
+}
+
 func writeEnumComment(out io.Writer, schema string, enum *storepb.EnumTypeMetadata) error {
 	if _, err := io.WriteString(out, `COMMENT ON TYPE "`); err != nil {
 		return err
@@ -1128,12 +1214,16 @@ func writeRules(out io.Writer, _ string, _ string, rules []*storepb.RuleMetadata
 	return nil
 }
 
+// objectIDSeparator joins schema + object into a map/graph key. NUL cannot
+// legally appear in a PostgreSQL identifier, so this avoids ambiguity when
+// either half itself contains a dot (e.g. a table literally named "a.b").
+const objectIDSeparator = "\x00"
+
 func getSchemaNameFromID(id string) string {
-	parts := strings.Split(id, ".")
-	if len(parts) != 2 {
-		return ""
+	if schema, _, ok := strings.Cut(id, objectIDSeparator); ok {
+		return schema
 	}
-	return parts[0]
+	return ""
 }
 
 func writeColumnIdentityGeneration(out io.Writer, schema string, generationTypes storepb.ColumnMetadata_IdentityGeneration, sequence *storepb.SequenceMetadata) error {
@@ -1367,7 +1457,7 @@ func funcIdentity(f *storepb.FunctionMetadata) string {
 func getObjectID(schema string, object string) string {
 	var buf strings.Builder
 	_, _ = buf.WriteString(schema)
-	_, _ = buf.WriteString(".")
+	_, _ = buf.WriteString(objectIDSeparator)
 	_, _ = buf.WriteString(object)
 	return buf.String()
 }
@@ -1455,14 +1545,22 @@ func writeCreateTable(out io.Writer, schema string, tableName string, columns []
 		return err
 	}
 
-	for i, column := range columns {
-		if i > 0 {
-			if _, err := io.WriteString(out, ","); err != nil {
-				return err
-			}
+	// first tracks whether we've written any element inside the parens yet so
+	// the leading comma on constraints is suppressed when there are no columns
+	// (e.g. tables that only carry CHECK constraints).
+	first := true
+	writeItemSep := func() error {
+		if first {
+			first = false
+			_, err := io.WriteString(out, "\n    ")
+			return err
 		}
+		_, err := io.WriteString(out, ",\n    ")
+		return err
+	}
 
-		if _, err := io.WriteString(out, "\n    "); err != nil {
+	for _, column := range columns {
+		if err := writeItemSep(); err != nil {
 			return err
 		}
 
@@ -1500,7 +1598,9 @@ func writeCreateTable(out io.Writer, schema string, tableName string, columns []
 	}
 
 	for _, check := range checks {
-		_, _ = io.WriteString(out, ",\n    ")
+		if err := writeItemSep(); err != nil {
+			return err
+		}
 		_, _ = io.WriteString(out, `CONSTRAINT "`)
 		_, _ = io.WriteString(out, check.Name)
 		_, _ = io.WriteString(out, `" CHECK `)
@@ -1508,7 +1608,9 @@ func writeCreateTable(out io.Writer, schema string, tableName string, columns []
 	}
 
 	for _, exclude := range excludes {
-		_, _ = io.WriteString(out, ",\n    ")
+		if err := writeItemSep(); err != nil {
+			return err
+		}
 		_, _ = io.WriteString(out, `CONSTRAINT "`)
 		_, _ = io.WriteString(out, exclude.Name)
 		_, _ = io.WriteString(out, `" `)
@@ -1872,6 +1974,10 @@ func writeIndexKeyList(out io.Writer, index *storepb.IndexMetadata) error {
 			}
 		}
 
+		// expression is expected to be in canonical pg_get_indexdef form —
+		// see IndexMetadata.expressions in proto/store/store/database.proto.
+		// normalizeLegacyMetadata (called at the top of GetDatabaseDefinition)
+		// repairs historical rows that pre-date the contract.
 		if _, err := io.WriteString(out, expression); err != nil {
 			return err
 		}
@@ -1927,7 +2033,7 @@ func writeIndexComment(out io.Writer, schema string, index *storepb.IndexMetadat
 		return err
 	}
 
-	_, err := io.WriteString(out, `';\n\n`)
+	_, err := io.WriteString(out, "';\n\n")
 	return err
 }
 
@@ -2240,47 +2346,26 @@ func writeFunction(out io.Writer, schema string, function *storepb.FunctionMetad
 	return nil
 }
 
-// isDefinitionProcedure checks if the definition string represents a PROCEDURE (not a FUNCTION)
-// Returns true if it's a PROCEDURE, false if it's a FUNCTION
-// This function uses AST-based parsing for robust detection
+// isDefinitionProcedure checks if the definition string represents a PROCEDURE (not a FUNCTION).
+// Uses omni parser: procedures have a DefElem{Defname: "isProcedure"} in Options.
 func isDefinitionProcedure(definition string) bool {
 	if definition == "" {
 		return false
 	}
-
-	// Parse the definition to get AST
-	parseResults, err := pgparser.ParsePostgreSQL(definition)
-	if err != nil {
-		// If parsing fails, fall back to string-based detection
-		// This should rarely happen for valid definitions
-		upperDef := strings.ToUpper(definition)
-		return strings.Contains(upperDef, " PROCEDURE ") ||
-			strings.HasPrefix(upperDef, "CREATE PROCEDURE") ||
-			strings.HasPrefix(upperDef, "CREATE OR REPLACE PROCEDURE")
-	}
-
-	// For function/procedure definition, we expect exactly one statement
-	if len(parseResults) != 1 {
+	stmts, err := omnipg.Parse(definition)
+	if err != nil || len(stmts) == 0 {
 		return false
 	}
-
-	tree := parseResults[0].Tree
-	if tree == nil {
+	fn, ok := stmts[0].AST.(*ast.CreateFunctionStmt)
+	if !ok || fn == nil || fn.Options == nil {
 		return false
 	}
-
-	// Walk the AST to find CREATE FUNCTION/PROCEDURE statement
-	var result *parser.CreatefunctionstmtContext
-	extractor := &functionExtractor{result: &result}
-	antlr.NewParseTreeWalker().Walk(extractor, tree)
-
-	if result == nil {
-		return false
+	for _, item := range fn.Options.Items {
+		if def, ok := item.(*ast.DefElem); ok && def.Defname == "isProcedure" {
+			return true
+		}
 	}
-
-	// Check if it's a PROCEDURE by examining the AST node
-	// CreatefunctionstmtContext has both FUNCTION() and PROCEDURE() methods
-	return result.PROCEDURE() != nil
+	return false
 }
 
 func writeFunctionComment(out io.Writer, schema string, function *storepb.FunctionMetadata) error {
@@ -2302,7 +2387,7 @@ func writeFunctionComment(out io.Writer, schema string, function *storepb.Functi
 		return err
 	}
 
-	if _, err := io.WriteString(out, function.Signature); err != nil {
+	if _, err := io.WriteString(out, signatureTypesOnly(function.Signature)); err != nil {
 		return err
 	}
 
@@ -3069,26 +3154,31 @@ func writeCreateTableSDL(out io.Writer, schemaName string, table *storepb.TableM
 		return err
 	}
 
-	// Write columns
-	for i, column := range table.Columns {
-		if i > 0 {
-			if _, err := io.WriteString(out, ","); err != nil {
-				return err
-			}
-		}
-
-		if _, err := io.WriteString(out, "\n    "); err != nil {
+	// first tracks whether any element has been written inside the parens so
+	// the separator on constraints is suppressed when there are no columns.
+	first := true
+	writeItemSep := func() error {
+		if first {
+			first = false
+			_, err := io.WriteString(out, "\n    ")
 			return err
 		}
+		_, err := io.WriteString(out, ",\n    ")
+		return err
+	}
 
-		// Use the extracted writeColumnSDL function
+	// Write columns
+	for _, column := range table.Columns {
+		if err := writeItemSep(); err != nil {
+			return err
+		}
 		if err := writeColumnSDL(out, column, table.Name, sequences); err != nil {
 			return err
 		}
 	}
 
 	// Write table constraints
-	if err := writeTableConstraintsSDL(out, table); err != nil {
+	if err := writeTableConstraintsSDL(out, table, writeItemSep); err != nil {
 		return err
 	}
 
@@ -3096,11 +3186,11 @@ func writeCreateTableSDL(out io.Writer, schemaName string, table *storepb.TableM
 	return err
 }
 
-func writeTableConstraintsSDL(out io.Writer, table *storepb.TableMetadata) error {
+func writeTableConstraintsSDL(out io.Writer, table *storepb.TableMetadata, writeSep func() error) error {
 	// Write primary key constraint
 	for _, index := range table.Indexes {
 		if index.Primary {
-			if _, err := io.WriteString(out, ",\n    "); err != nil {
+			if err := writeSep(); err != nil {
 				return err
 			}
 			if err := writePrimaryKeyConstraintSDL(out, index); err != nil {
@@ -3112,7 +3202,7 @@ func writeTableConstraintsSDL(out io.Writer, table *storepb.TableMetadata) error
 	// Write unique constraints
 	for _, index := range table.Indexes {
 		if index.Unique && !index.Primary && index.IsConstraint {
-			if _, err := io.WriteString(out, ",\n    "); err != nil {
+			if err := writeSep(); err != nil {
 				return err
 			}
 			if err := writeUniqueKeyConstraintSDL(out, index); err != nil {
@@ -3123,7 +3213,7 @@ func writeTableConstraintsSDL(out io.Writer, table *storepb.TableMetadata) error
 
 	// Write check constraints
 	for _, check := range table.CheckConstraints {
-		if _, err := io.WriteString(out, ",\n    "); err != nil {
+		if err := writeSep(); err != nil {
 			return err
 		}
 		if err := writeCheckConstraintSDL(out, check); err != nil {
@@ -3133,7 +3223,7 @@ func writeTableConstraintsSDL(out io.Writer, table *storepb.TableMetadata) error
 
 	// Write EXCLUDE constraints
 	for _, exclude := range table.ExcludeConstraints {
-		if _, err := io.WriteString(out, ",\n    "); err != nil {
+		if err := writeSep(); err != nil {
 			return err
 		}
 		if err := writeExcludeConstraintSDL(out, exclude); err != nil {
@@ -3143,7 +3233,7 @@ func writeTableConstraintsSDL(out io.Writer, table *storepb.TableMetadata) error
 
 	// Write foreign key constraints
 	for _, fk := range table.ForeignKeys {
-		if _, err := io.WriteString(out, ",\n    "); err != nil {
+		if err := writeSep(); err != nil {
 			return err
 		}
 		if err := writeForeignKeyConstraintSDL(out, fk); err != nil {
@@ -3233,15 +3323,14 @@ func writeIndexInternal(out io.Writer, schema string, table string, index *store
 	}
 
 	// Write INCLUDE and WHERE clauses from the full index definition (from pg_get_indexdef).
-	// SQL syntax order: (keys) INCLUDE (cols) WHERE (predicate)
 	if index.Definition != "" {
-		comparer := &PostgreSQLIndexComparer{}
-		if includeClause := comparer.ExtractIncludeClauseFromIndexDef(index.Definition); includeClause != "" {
+		includeClause, whereClause := extractIndexClauses(index.Definition)
+		if includeClause != "" {
 			if _, err := fmt.Fprintf(out, " %s", includeClause); err != nil {
 				return err
 			}
 		}
-		if whereClause := comparer.ExtractWhereClauseFromIndexDef(index.Definition); whereClause != "" {
+		if whereClause != "" {
 			if _, err := fmt.Fprintf(out, " WHERE %s", whereClause); err != nil {
 				return err
 			}
@@ -3548,6 +3637,17 @@ func writeForeignKeyConstraintSDL(out io.Writer, fk *storepb.ForeignKeyMetadata)
 // GetMultiFileDatabaseDefinition generates multi-file SDL schema for PostgreSQL.
 func GetMultiFileDatabaseDefinition(ctx schema.GetDefinitionContext, metadata *storepb.DatabaseSchemaMetadata) (*schema.MultiFileSchemaResult, error) {
 	metadata = filterBackupSchemaIfNecessary(ctx, metadata)
+
+	// Clone before mutating: the caller's *DatabaseSchemaMetadata is often a
+	// shared pointer returned from store.dbSchemaCache (see
+	// backend/store/model/database.go:GetProto), so concurrent callers could
+	// race on in-place normalization writes below.
+	metadata = proto.CloneOf(metadata)
+
+	// Repair historical non-canonical metadata shapes (e.g. index key
+	// expressions stored without outer parens) so emission produces valid SQL.
+	// See legacy_normalize.go for removal criteria.
+	normalizeLegacyMetadata(metadata)
 
 	if len(metadata.Schemas) == 0 {
 		return &schema.MultiFileSchemaResult{Files: []schema.File{}}, nil
@@ -4127,7 +4227,7 @@ func writeFunctionCommentSDL(out io.Writer, schemaName string, function *storepb
 	if _, err := io.WriteString(out, `".`); err != nil {
 		return err
 	}
-	if _, err := io.WriteString(out, function.Signature); err != nil {
+	if _, err := io.WriteString(out, signatureTypesOnly(function.Signature)); err != nil {
 		return err
 	}
 	if _, err := io.WriteString(out, ` IS '`); err != nil {
@@ -4254,4 +4354,67 @@ func writeTriggerCommentSDL(out io.Writer, schemaName, tableName string, trigger
 
 	_, err := io.WriteString(out, "\n\n")
 	return err
+}
+
+// extractIndexClauses parses a CREATE INDEX statement using the omni parser and
+// extracts the INCLUDE clause and WHERE clause as strings.
+func extractIndexClauses(definition string) (includeClause, whereClause string) {
+	stmts, err := omnipg.Parse(definition)
+	if err != nil || len(stmts) == 0 {
+		return "", ""
+	}
+	idx, ok := stmts[0].AST.(*ast.IndexStmt)
+	if !ok || idx == nil {
+		return "", ""
+	}
+
+	// Extract INCLUDE columns using Loc to preserve original quoting.
+	if idx.IndexIncludingParams != nil {
+		var cols []string
+		for _, item := range idx.IndexIncludingParams.Items {
+			if elem, ok := item.(*ast.IndexElem); ok && elem.Loc.Start >= 0 && elem.Loc.End > elem.Loc.Start {
+				cols = append(cols, definition[elem.Loc.Start:elem.Loc.End])
+			}
+		}
+		if len(cols) > 0 {
+			includeClause = "INCLUDE (" + strings.Join(cols, ", ") + ")"
+		}
+	}
+
+	// Extract WHERE clause using AST node Loc for precise extraction.
+	if idx.WhereClause != nil {
+		loc := ast.NodeLoc(idx.WhereClause)
+		if loc.Start >= 0 && loc.End > loc.Start && loc.End <= len(definition) {
+			raw := definition[loc.Start:loc.End]
+			// Strip outer parentheses if the entire predicate is wrapped.
+			if strings.HasPrefix(raw, "(") && strings.HasSuffix(raw, ")") {
+				inner := raw[1 : len(raw)-1]
+				// Only strip if parentheses are balanced.
+				if isBalancedParens(inner) {
+					raw = inner
+				}
+			}
+			whereClause = strings.TrimSpace(raw)
+		}
+	}
+
+	return includeClause, whereClause
+}
+
+// isBalancedParens checks if a string has balanced parentheses.
+func isBalancedParens(s string) bool {
+	depth := 0
+	for _, c := range s {
+		switch c {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth < 0 {
+				return false
+			}
+		default:
+		}
+	}
+	return depth == 0
 }

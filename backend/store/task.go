@@ -49,8 +49,11 @@ func (t *TaskMessage) GetDatabaseName() string {
 
 // TaskFind is the API message for finding tasks.
 type TaskFind struct {
-	ID  *int64
-	IDs *[]int64
+	// Workspace filters tasks by the parent project's workspace.
+	// Empty string skips filtering (for cross-workspace queries like runners).
+	Workspace string
+	ID        *int64
+	IDs       *[]int64
 
 	// Related fields
 	ProjectID    string
@@ -64,6 +67,15 @@ type TaskFind struct {
 	TypeList *[]storepb.Task_Type
 
 	LatestTaskRunStatusList *[]storepb.TaskRun_Status
+}
+
+// TaskStatusCount holds aggregated task counts grouped by plan, environment and API-visible status.
+type TaskStatusCount struct {
+	ProjectID   string
+	PlanID      int64
+	Environment string
+	Status      string
+	Count       int32
 }
 
 // GetTaskByID gets a task by ID.
@@ -276,11 +288,14 @@ func (*Store) listTasksImpl(ctx context.Context, txn *sql.Tx, find *TaskFind) ([
 				task_run.updated_at,
 				task_run.run_at
 			FROM task_run
-			WHERE task_run.task_id = task.id
+			WHERE task_run.project = task.project AND task_run.task_id = task.id
 			ORDER BY task_run.id DESC
 			LIMIT 1
 		) AS latest_task_run ON TRUE
 		WHERE task.project = ?`, storepb.TaskRun_NOT_STARTED.String(), find.ProjectID)
+	if find.Workspace != "" {
+		q.Space("AND task.project IN (SELECT resource_id FROM project WHERE workspace = ?)", find.Workspace)
+	}
 	if v := find.ID; v != nil {
 		q.Space("AND task.id = ?", *v)
 	}
@@ -389,6 +404,77 @@ func (s *Store) ListTasks(ctx context.Context, find *TaskFind) ([]*TaskMessage, 
 		return nil, err
 	}
 	return tasks, nil
+}
+
+// ListTaskStatusCountByPlanIDs returns aggregated task counts by project, plan, environment and API-visible status.
+func (s *Store) ListTaskStatusCountByPlanIDs(ctx context.Context, projectIDs []string, planIDs []int64) ([]*TaskStatusCount, error) {
+	if len(projectIDs) == 0 || len(planIDs) == 0 {
+		return nil, nil
+	}
+
+	q := qb.Q().Space(`
+		SELECT
+			t.project,
+			t.plan_id,
+			t.environment,
+			t.status,
+			COUNT(*)::INT
+		FROM (
+			SELECT
+				task.project,
+				task.plan_id,
+				COALESCE(task.environment, '') AS environment,
+				CASE
+					WHEN COALESCE((task.payload->>'skipped')::BOOLEAN, FALSE) THEN ?
+					WHEN latest_task_run.status IS NULL THEN ?
+					WHEN latest_task_run.status = ? THEN ?
+					ELSE latest_task_run.status
+				END AS status
+			FROM task
+			LEFT JOIN LATERAL (
+				SELECT task_run.status
+				FROM task_run
+				WHERE task_run.project = task.project
+				  AND task_run.task_id = task.id
+				ORDER BY task_run.id DESC
+				LIMIT 1
+			) AS latest_task_run ON TRUE
+			WHERE task.project = ANY(?)
+			  AND task.plan_id = ANY(?)
+		) AS t
+		GROUP BY t.project, t.plan_id, t.environment, t.status
+		ORDER BY t.project, t.plan_id, t.environment
+	`,
+		storepb.TaskRun_SKIPPED.String(),
+		storepb.TaskRun_NOT_STARTED.String(),
+		storepb.TaskRun_AVAILABLE.String(),
+		storepb.TaskRun_PENDING.String(),
+		projectIDs,
+		planIDs,
+	)
+	query, args, err := q.ToSQL()
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to build sql")
+	}
+
+	rows, err := s.GetDB().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to list task status counts")
+	}
+	defer rows.Close()
+
+	var results []*TaskStatusCount
+	for rows.Next() {
+		var result TaskStatusCount
+		if err := rows.Scan(&result.ProjectID, &result.PlanID, &result.Environment, &result.Status, &result.Count); err != nil {
+			return nil, errors.Wrapf(err, "failed to scan task status count")
+		}
+		results = append(results, &result)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 // BatchSkipTasks batch skip tasks.

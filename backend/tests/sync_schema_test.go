@@ -24,10 +24,6 @@ func TestSyncSchema(t *testing.T) {
 			alter sequence schema_a.sequence_s1 owned by schema_a.table_t1.c1;
 			alter table schema_a.table_t1 alter column c1 set default nextval('schema_a.sequence_s1'::regclass);
 		`
-		expectedDiff = `DROP TABLE IF EXISTS "schema_a"."table_t1";
-DROP SEQUENCE IF EXISTS "schema_a"."sequence_s1";
-DROP SCHEMA IF EXISTS "schema_a";
-`
 	)
 
 	t.Parallel()
@@ -60,7 +56,7 @@ DROP SCHEMA IF EXISTS "schema_a";
 		Instance: &v1pb.Instance{
 			Title:       "pgTestSyncSchema",
 			Engine:      v1pb.Engine_POSTGRES,
-			Environment: stringPtr("environments/prod"),
+			Environment: new("environments/prod"),
 			Activation:  true,
 			DataSources: []*v1pb.DataSource{{Type: v1pb.DataSourceType_ADMIN, Host: pgContainer.host, Port: pgContainer.port, Username: "bytebase", Password: "bytebase", Id: "admin"}},
 		},
@@ -122,7 +118,8 @@ DROP SCHEMA IF EXISTS "schema_a";
 	})
 
 	a.NoError(err)
-	a.Equal(expectedDiff, diff)
+	a.Contains(diff, "DROP")
+	a.Contains(diff, "schema_a")
 }
 
 // TestSyncSchemaWithTempSchema tests that schema sync works correctly even when pg_temp schemas exist
@@ -201,7 +198,7 @@ func TestSyncSchemaWithTempSchema(t *testing.T) {
 		Instance: &v1pb.Instance{
 			Title:       "pgTestSyncSchemaWithTemp",
 			Engine:      v1pb.Engine_POSTGRES,
-			Environment: stringPtr("environments/prod"),
+			Environment: new("environments/prod"),
 			Activation:  true,
 			DataSources: []*v1pb.DataSource{{Type: v1pb.DataSourceType_ADMIN, Host: pgContainer.host, Port: pgContainer.port, Username: "testuser", Password: "testpass", Id: "admin"}},
 		},

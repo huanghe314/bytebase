@@ -35,8 +35,7 @@ These flags apply to the main `bytebase-action` command and its subcommands (`ch
     -   For `check` command: outputs detailed check results including advices, affected rows, and risk levels
     -   For `rollout` command: outputs created resource names (release, plan, rollout)
 
--   **`--url`**: The Bytebase instance URL.
-    -   Default: `https://demo.bytebase.com`
+-   **`--url`**: The Bytebase instance URL. Required.
 
 -   **`--service-account`**: The service account email.
     -   Default: `""` (empty string). If not provided via flag, reads from the `BYTEBASE_SERVICE_ACCOUNT` environment variable.
@@ -44,6 +43,12 @@ These flags apply to the main `bytebase-action` command and its subcommands (`ch
 -   **`--service-account-secret`**: The service account password.
     -   Default: `""` (empty string). If not provided via flag, reads from the `BYTEBASE_SERVICE_ACCOUNT_SECRET` environment variable.
     -   *Note: Setting the environment variable `BYTEBASE_SERVICE_ACCOUNT_SECRET` is the recommended way to handle the secret.*
+
+-   **`--custom-header`**: A custom HTTP header to include in Bytebase API requests.
+    -   Format: `Name: value`
+    -   Can be specified multiple times.
+    -   This is useful when the Bytebase URL is protected by a header-based access proxy such as Cloudflare Access.
+    -   Example: `--custom-header="Cookie: CF_Authorization=${CF_AUTHORIZATION_COOKIE}"`
 
 -   **`--project`**: The target Bytebase project name.
     -   Format: `projects/{project}`
@@ -222,4 +227,3 @@ When using declarative mode, you must follow these steps:
    -- Incorrect: unnamed index
    CREATE INDEX ON public.users(email);
    ```
-

@@ -41,6 +41,9 @@
   
     - [AuditLog.Severity](#bytebase-store-AuditLog-Severity)
   
+- [store/auth.proto](#store_auth-proto)
+    - [EmailVerificationCodePurpose](#bytebase-store-EmailVerificationCodePurpose)
+  
 - [store/changelog.proto](#store_changelog-proto)
     - [ChangelogPayload](#bytebase-store-ChangelogPayload)
   
@@ -152,22 +155,22 @@
     - [Issue.Status](#bytebase-store-Issue-Status)
     - [Issue.Type](#bytebase-store-Issue-Type)
   
-- [store/issue_comment.proto](#store_issue_comment-proto)
-    - [IssueCommentPayload](#bytebase-store-IssueCommentPayload)
-    - [IssueCommentPayload.Approval](#bytebase-store-IssueCommentPayload-Approval)
-    - [IssueCommentPayload.IssueUpdate](#bytebase-store-IssueCommentPayload-IssueUpdate)
-    - [IssueCommentPayload.PlanSpecUpdate](#bytebase-store-IssueCommentPayload-PlanSpecUpdate)
-  
-- [store/oauth2.proto](#store_oauth2-proto)
-    - [OAuth2AuthorizationCodeConfig](#bytebase-store-OAuth2AuthorizationCodeConfig)
-    - [OAuth2ClientConfig](#bytebase-store-OAuth2ClientConfig)
-  
 - [store/plan.proto](#store_plan-proto)
     - [PlanConfig](#bytebase-store-PlanConfig)
     - [PlanConfig.ChangeDatabaseConfig](#bytebase-store-PlanConfig-ChangeDatabaseConfig)
     - [PlanConfig.CreateDatabaseConfig](#bytebase-store-PlanConfig-CreateDatabaseConfig)
     - [PlanConfig.ExportDataConfig](#bytebase-store-PlanConfig-ExportDataConfig)
     - [PlanConfig.Spec](#bytebase-store-PlanConfig-Spec)
+  
+- [store/issue_comment.proto](#store_issue_comment-proto)
+    - [IssueCommentPayload](#bytebase-store-IssueCommentPayload)
+    - [IssueCommentPayload.Approval](#bytebase-store-IssueCommentPayload-Approval)
+    - [IssueCommentPayload.IssueUpdate](#bytebase-store-IssueCommentPayload-IssueUpdate)
+    - [IssueCommentPayload.PlanUpdate](#bytebase-store-IssueCommentPayload-PlanUpdate)
+  
+- [store/oauth2.proto](#store_oauth2-proto)
+    - [OAuth2AuthorizationCodeConfig](#bytebase-store-OAuth2AuthorizationCodeConfig)
+    - [OAuth2ClientConfig](#bytebase-store-OAuth2ClientConfig)
   
 - [store/plan_check_run.proto](#store_plan_check_run-proto)
     - [ChangedResourceDatabase](#bytebase-store-ChangedResourceDatabase)
@@ -260,6 +263,8 @@
     - [DataClassificationSetting.DataClassificationConfig.ClassificationEntry](#bytebase-store-DataClassificationSetting-DataClassificationConfig-ClassificationEntry)
     - [DataClassificationSetting.DataClassificationConfig.DataClassification](#bytebase-store-DataClassificationSetting-DataClassificationConfig-DataClassification)
     - [DataClassificationSetting.DataClassificationConfig.Level](#bytebase-store-DataClassificationSetting-DataClassificationConfig-Level)
+    - [EmailSetting](#bytebase-store-EmailSetting)
+    - [EmailSetting.SMTPConfig](#bytebase-store-EmailSetting-SMTPConfig)
     - [EnvironmentSetting](#bytebase-store-EnvironmentSetting)
     - [EnvironmentSetting.Environment](#bytebase-store-EnvironmentSetting-Environment)
     - [EnvironmentSetting.Environment.TagsEntry](#bytebase-store-EnvironmentSetting-Environment-TagsEntry)
@@ -274,6 +279,9 @@
   
     - [AISetting.Provider](#bytebase-store-AISetting-Provider)
     - [Algorithm.InnerOuterMask.MaskType](#bytebase-store-Algorithm-InnerOuterMask-MaskType)
+    - [EmailSetting.SMTPConfig.Authentication](#bytebase-store-EmailSetting-SMTPConfig-Authentication)
+    - [EmailSetting.SMTPConfig.Encryption](#bytebase-store-EmailSetting-SMTPConfig-Encryption)
+    - [EmailSetting.Type](#bytebase-store-EmailSetting-Type)
     - [SettingName](#bytebase-store-SettingName)
     - [WorkspaceApprovalSetting.Rule.Source](#bytebase-store-WorkspaceApprovalSetting-Rule-Source)
     - [WorkspaceProfileSetting.Announcement.AlertLevel](#bytebase-store-WorkspaceProfileSetting-Announcement-AlertLevel)
@@ -283,6 +291,13 @@
     - [Signal](#bytebase-store-Signal)
   
     - [Signal.Type](#bytebase-store-Signal-Type)
+  
+- [store/subscription.proto](#store_subscription-proto)
+    - [SubscriptionPayload](#bytebase-store-SubscriptionPayload)
+  
+    - [SubscriptionPayload.BillingInterval](#bytebase-store-SubscriptionPayload-BillingInterval)
+    - [SubscriptionPayload.Plan](#bytebase-store-SubscriptionPayload-Plan)
+    - [SubscriptionPayload.Status](#bytebase-store-SubscriptionPayload-Status)
   
 - [store/task.proto](#store_task-proto)
     - [Task](#bytebase-store-Task)
@@ -309,6 +324,8 @@
     - [TaskRunLog.ComputeDiffStart](#bytebase-store-TaskRunLog-ComputeDiffStart)
     - [TaskRunLog.DatabaseSyncEnd](#bytebase-store-TaskRunLog-DatabaseSyncEnd)
     - [TaskRunLog.DatabaseSyncStart](#bytebase-store-TaskRunLog-DatabaseSyncStart)
+    - [TaskRunLog.GhostMigrationEnd](#bytebase-store-TaskRunLog-GhostMigrationEnd)
+    - [TaskRunLog.GhostMigrationStart](#bytebase-store-TaskRunLog-GhostMigrationStart)
     - [TaskRunLog.PriorBackupEnd](#bytebase-store-TaskRunLog-PriorBackupEnd)
     - [TaskRunLog.PriorBackupStart](#bytebase-store-TaskRunLog-PriorBackupStart)
     - [TaskRunLog.ReleaseFileExecute](#bytebase-store-TaskRunLog-ReleaseFileExecute)
@@ -330,6 +347,9 @@
   
 - [store/worksheet.proto](#store_worksheet-proto)
     - [WorkSheetOrganizerPayload](#bytebase-store-WorkSheetOrganizerPayload)
+  
+- [store/workspace.proto](#store_workspace-proto)
+    - [WorkspacePayload](#bytebase-store-WorkspacePayload)
   
 - [Scalar Value Types](#scalar-value-types)
 
@@ -627,6 +647,7 @@ VCSType represents the type of version control system.
 | FEISHU | 5 | Feishu integration. |
 | WECOM | 6 | WeCom (WeChat Work) integration. |
 | LARK | 7 | Lark integration. |
+| GOOGLE_CHAT | 8 | Google Chat integration. |
 
 
  
@@ -848,6 +869,36 @@ Metadata about the request.
 | CRITICAL | 6 |  |
 | ALERT | 7 |  |
 | EMERGENCY | 8 |  |
+
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="store_auth-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## store/auth.proto
+
+
+ 
+
+
+<a name="bytebase-store-EmailVerificationCodePurpose"></a>
+
+### EmailVerificationCodePurpose
+EmailVerificationCodePurpose distinguishes login codes from password reset codes.
+Stored as the enum name string in email_verification_code.purpose column.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| EMAIL_VERIFICATION_CODE_PURPOSE_UNSPECIFIED | 0 |  |
+| LOGIN | 1 |  |
+| PASSWORD_RESET | 2 |  |
 
 
  
@@ -1336,7 +1387,9 @@ IndexMetadata is the metadata for indexes.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | name | [string](#string) |  | The name of the index. |
-| expressions | [string](#string) | repeated | The expressions are the ordered columns or expressions of an index. This could refer to a column or an expression. |
+| expressions | [string](#string) | repeated | The expressions are the ordered columns or expressions of an index.
+
+For PostgreSQL, the canonical shape for each entry matches pg_get_indexdef(oid, col, true) — the tightest `index_elem` grammar form: - column key: bare identifier e.g. &#34;id&#34;, `&#34;Name&#34;` - function-call key: bare func_expr_windowless e.g. &#34;lower(name)&#34; - expression key: parenthesized a_expr e.g. &#34;(payload -&gt;&gt; &#39;k&#39;::text)&#34; The DDL emitter writes entries verbatim into the CREATE INDEX key list. |
 | key_length | [int64](#int64) | repeated | The ordered list of key lengths for the index. If the key length is not specified, it is -1. |
 | descending | [bool](#bool) | repeated | The ordered list of descending flags for the index columns. |
 | type | [string](#string) |  | The type is the type of an index. |
@@ -2290,6 +2343,12 @@ OIDCIdentityProviderConfig is the structure for OIDC identity provider config.
 | obfuscated_ssl_cert | [string](#string) |  |  |
 | ssl_key | [string](#string) |  |  |
 | obfuscated_ssl_key | [string](#string) |  |  |
+| ssl_ca_path | [string](#string) |  |  |
+| obfuscated_ssl_ca_path | [string](#string) |  |  |
+| ssl_cert_path | [string](#string) |  |  |
+| obfuscated_ssl_cert_path | [string](#string) |  |  |
+| ssl_key_path | [string](#string) |  |  |
+| obfuscated_ssl_key_path | [string](#string) |  |  |
 | verify_tls_certificate | [bool](#bool) |  | verify_tls_certificate enables TLS certificate verification for SSL connections. Default is false (no verification) for backward compatibility. Set to true for secure connections (recommended for production). Only set to false for development or when certificates cannot be properly validated (e.g., self-signed certs, VPN environments). |
 | host | [string](#string) |  |  |
 | port | [string](#string) |  |  |
@@ -2738,145 +2797,6 @@ Type represents the category of issue.
 
 
 
-<a name="store_issue_comment-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## store/issue_comment.proto
-
-
-
-<a name="bytebase-store-IssueCommentPayload"></a>
-
-### IssueCommentPayload
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| comment | [string](#string) |  |  |
-| approval | [IssueCommentPayload.Approval](#bytebase-store-IssueCommentPayload-Approval) |  |  |
-| issue_update | [IssueCommentPayload.IssueUpdate](#bytebase-store-IssueCommentPayload-IssueUpdate) |  |  |
-| plan_spec_update | [IssueCommentPayload.PlanSpecUpdate](#bytebase-store-IssueCommentPayload-PlanSpecUpdate) |  |  |
-
-
-
-
-
-
-<a name="bytebase-store-IssueCommentPayload-Approval"></a>
-
-### IssueCommentPayload.Approval
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| status | [IssuePayloadApproval.Approver.Status](#bytebase-store-IssuePayloadApproval-Approver-Status) |  |  |
-
-
-
-
-
-
-<a name="bytebase-store-IssueCommentPayload-IssueUpdate"></a>
-
-### IssueCommentPayload.IssueUpdate
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| from_title | [string](#string) | optional |  |
-| to_title | [string](#string) | optional |  |
-| from_description | [string](#string) | optional |  |
-| to_description | [string](#string) | optional |  |
-| from_status | [Issue.Status](#bytebase-store-Issue-Status) | optional |  |
-| to_status | [Issue.Status](#bytebase-store-Issue-Status) | optional |  |
-| from_labels | [string](#string) | repeated |  |
-| to_labels | [string](#string) | repeated |  |
-
-
-
-
-
-
-<a name="bytebase-store-IssueCommentPayload-PlanSpecUpdate"></a>
-
-### IssueCommentPayload.PlanSpecUpdate
-Plan spec update event (tracks sheet changes to plan specs)
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| spec | [string](#string) |  | The spec that was updated Format: projects/{project}/plans/{plan}/specs/{spec} |
-| from_sheet_sha256 | [string](#string) | optional | The SHA256 hash of the previous sheet content (hex-encoded). |
-| to_sheet_sha256 | [string](#string) | optional | The SHA256 hash of the new sheet content (hex-encoded). |
-
-
-
-
-
- 
-
- 
-
- 
-
- 
-
-
-
-<a name="store_oauth2-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## store/oauth2.proto
-
-
-
-<a name="bytebase-store-OAuth2AuthorizationCodeConfig"></a>
-
-### OAuth2AuthorizationCodeConfig
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| redirect_uri | [string](#string) |  |  |
-| code_challenge | [string](#string) |  |  |
-| code_challenge_method | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="bytebase-store-OAuth2ClientConfig"></a>
-
-### OAuth2ClientConfig
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| client_name | [string](#string) |  |  |
-| redirect_uris | [string](#string) | repeated |  |
-| grant_types | [string](#string) | repeated |  |
-| token_endpoint_auth_method | [string](#string) |  |  |
-
-
-
-
-
- 
-
- 
-
- 
-
- 
-
-
-
 <a name="store_plan-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -2970,6 +2890,147 @@ Plan spec update event (tracks sheet changes to plan specs)
 | create_database_config | [PlanConfig.CreateDatabaseConfig](#bytebase-store-PlanConfig-CreateDatabaseConfig) |  |  |
 | change_database_config | [PlanConfig.ChangeDatabaseConfig](#bytebase-store-PlanConfig-ChangeDatabaseConfig) |  |  |
 | export_data_config | [PlanConfig.ExportDataConfig](#bytebase-store-PlanConfig-ExportDataConfig) |  |  |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="store_issue_comment-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## store/issue_comment.proto
+
+
+
+<a name="bytebase-store-IssueCommentPayload"></a>
+
+### IssueCommentPayload
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| comment | [string](#string) |  |  |
+| approval | [IssueCommentPayload.Approval](#bytebase-store-IssueCommentPayload-Approval) |  |  |
+| issue_update | [IssueCommentPayload.IssueUpdate](#bytebase-store-IssueCommentPayload-IssueUpdate) |  |  |
+| plan_update | [IssueCommentPayload.PlanUpdate](#bytebase-store-IssueCommentPayload-PlanUpdate) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-IssueCommentPayload-Approval"></a>
+
+### IssueCommentPayload.Approval
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| status | [IssuePayloadApproval.Approver.Status](#bytebase-store-IssuePayloadApproval-Approver-Status) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-IssueCommentPayload-IssueUpdate"></a>
+
+### IssueCommentPayload.IssueUpdate
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| from_title | [string](#string) | optional |  |
+| to_title | [string](#string) | optional |  |
+| from_description | [string](#string) | optional |  |
+| to_description | [string](#string) | optional |  |
+| from_status | [Issue.Status](#bytebase-store-Issue-Status) | optional |  |
+| to_status | [Issue.Status](#bytebase-store-Issue-Status) | optional |  |
+| from_labels | [string](#string) | repeated |  |
+| to_labels | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="bytebase-store-IssueCommentPayload-PlanUpdate"></a>
+
+### IssueCommentPayload.PlanUpdate
+PlanUpdate carries before/after snapshots of plan.config.specs,
+emitted once per PlanService.UpdatePlan call whose specs branch
+produces a non-cosmetic diff. The renderer computes per-spec
+add/remove/update from the snapshot pair.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| from_specs | [PlanConfig.Spec](#bytebase-store-PlanConfig-Spec) | repeated |  |
+| to_specs | [PlanConfig.Spec](#bytebase-store-PlanConfig-Spec) | repeated |  |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="store_oauth2-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## store/oauth2.proto
+
+
+
+<a name="bytebase-store-OAuth2AuthorizationCodeConfig"></a>
+
+### OAuth2AuthorizationCodeConfig
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| redirect_uri | [string](#string) |  |  |
+| code_challenge | [string](#string) |  |  |
+| code_challenge_method | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-OAuth2ClientConfig"></a>
+
+### OAuth2ClientConfig
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| client_name | [string](#string) |  |  |
+| redirect_uris | [string](#string) | repeated |  |
+| grant_types | [string](#string) | repeated |  |
+| token_endpoint_auth_method | [string](#string) |  |  |
 
 
 
@@ -3085,6 +3146,7 @@ Plan spec update event (tracks sheet changes to plan specs)
 | code | [int32](#int32) |  |  |
 | target | [string](#string) |  | Target identification for consolidated results Format: instances/{instance}/databases/{database} |
 | type | [PlanCheckType](#bytebase-store-PlanCheckType) |  |  |
+| sheet_sha256 | [string](#string) |  | sheet_sha256 is the content hash of the SQL sheet used to produce this result. Empty for checks that are not tied to a SQL sheet. |
 | sql_summary_report | [PlanCheckRunResult.Result.SqlSummaryReport](#bytebase-store-PlanCheckRunResult-Result-SqlSummaryReport) |  |  |
 | sql_review_report | [PlanCheckRunResult.Result.SqlReviewReport](#bytebase-store-PlanCheckRunResult-Result-SqlReviewReport) |  |  |
 
@@ -3518,6 +3580,7 @@ Activity type enumeration.
 | ISSUE_SENT_BACK | 12 | ISSUE_SENT_BACK represents an issue being sent back by an approver. |
 | PIPELINE_FAILED | 13 | PIPELINE_FAILED represents a pipeline failure event. |
 | PIPELINE_COMPLETED | 14 | PIPELINE_COMPLETED represents a pipeline completion event. |
+| ISSUE_APPROVED | 15 | ISSUE_APPROVED represents an issue being fully approved. |
 
 
  
@@ -3896,6 +3959,7 @@ The severity level for SQL review rules.
 | ADVICE_ONLINE_MIGRATION | 108 |  |
 | BUILTIN_PRIOR_BACKUP_CHECK | 109 |  |
 | BUILTIN_WALK_THROUGH_CHECK | 110 |  |
+| STATEMENT_DISALLOW_TRUNCATE | 111 |  |
 
 
  
@@ -3922,7 +3986,7 @@ The severity level for SQL review rules.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | release | [string](#string) |  | Format: projects/{project}/releases/{release} Can be empty. |
-| file | [string](#string) |  | Format: projects/{project}/releases/{release}/files/{id} Can be empty. |
+| file | [string](#string) |  | The file filepath. Can be empty. |
 | sheet_sha256 | [string](#string) |  | The SHA256 hash of the sheet content (hex-encoded). |
 | task_run | [string](#string) |  | The task run associated with the revision. Can be empty. Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun} |
 | type | [SchemaChangeType](#bytebase-store-SchemaChangeType) |  | The type of the revision. |
@@ -4290,7 +4354,7 @@ All other settings live in per-workspace WORKSPACE_PROFILE.
 | ----- | ---- | ----- | ----------- |
 | id | [string](#string) |  | id is the uuid for classification. Each project can chose one classification config. |
 | title | [string](#string) |  |  |
-| levels | [DataClassificationSetting.DataClassificationConfig.Level](#bytebase-store-DataClassificationSetting-DataClassificationConfig-Level) | repeated | levels is user defined level list for classification. The order for the level decides its priority. |
+| levels | [DataClassificationSetting.DataClassificationConfig.Level](#bytebase-store-DataClassificationSetting-DataClassificationConfig-Level) | repeated | levels is user defined level list for classification. |
 | classification | [DataClassificationSetting.DataClassificationConfig.ClassificationEntry](#bytebase-store-DataClassificationSetting-DataClassificationConfig-ClassificationEntry) | repeated | classification is the id - DataClassification map. The id should in [0-9]&#43;-[0-9]&#43;-[0-9]&#43; format. |
 
 
@@ -4324,8 +4388,7 @@ All other settings live in per-workspace WORKSPACE_PROFILE.
 | ----- | ---- | ----- | ----------- |
 | id | [string](#string) |  | id is the classification id in [0-9]&#43;-[0-9]&#43;-[0-9]&#43; format. |
 | title | [string](#string) |  |  |
-| description | [string](#string) |  |  |
-| level_id | [string](#string) | optional |  |
+| level | [int32](#int32) | optional | The sensitivity level. Maps to Level.level. |
 
 
 
@@ -4340,9 +4403,46 @@ All other settings live in per-workspace WORKSPACE_PROFILE.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| id | [string](#string) |  |  |
 | title | [string](#string) |  |  |
-| description | [string](#string) |  |  |
+| level | [int32](#int32) |  | The numeric level for ordering. Higher = more sensitive. |
+
+
+
+
+
+
+<a name="bytebase-store-EmailSetting"></a>
+
+### EmailSetting
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| from | [string](#string) |  |  |
+| from_name | [string](#string) |  |  |
+| type | [EmailSetting.Type](#bytebase-store-EmailSetting-Type) |  |  |
+| smtp | [EmailSetting.SMTPConfig](#bytebase-store-EmailSetting-SMTPConfig) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-EmailSetting-SMTPConfig"></a>
+
+### EmailSetting.SMTPConfig
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| host | [string](#string) |  |  |
+| port | [int32](#int32) |  |  |
+| username | [string](#string) |  |  |
+| password | [string](#string) |  |  |
+| encryption | [EmailSetting.SMTPConfig.Encryption](#bytebase-store-EmailSetting-SMTPConfig-Encryption) |  |  |
+| authentication | [EmailSetting.SMTPConfig.Authentication](#bytebase-store-EmailSetting-SMTPConfig-Authentication) |  |  |
 
 
 
@@ -4503,12 +4603,12 @@ All other settings live in per-workspace WORKSPACE_PROFILE.
 | enable_audit_log_stdout | [bool](#bool) |  | Whether to enable audit logging to stdout in structured JSON format. Requires TEAM or ENTERPRISE license. |
 | watermark | [bool](#bool) |  | Whether to display watermark on pages. Requires ENTERPRISE license. |
 | directory_sync_token | [string](#string) |  | The token for directory sync authentication. |
-| branding_logo | [string](#string) |  | The branding logo as a data URI (e.g. data:image/png;base64,...). |
 | password_restriction | [WorkspaceProfileSetting.PasswordRestriction](#bytebase-store-WorkspaceProfileSetting-PasswordRestriction) |  | Password restriction settings. |
 | access_token_duration | [google.protobuf.Duration](#google-protobuf-Duration) |  | The duration for access token. Default is 1 hour. |
 | enable_debug | [bool](#bool) |  | Whether debug mode is enabled. |
 | sql_result_size | [int64](#int64) |  | The maximum result size limit in bytes for query and export, works for the SQL Editor and Export Center. The default value is 100MB, we will use the default value if the setting not exists, or the limit &lt;= 0. |
 | query_timeout | [google.protobuf.Duration](#google-protobuf-Duration) |  | The query timeout duration for query and export, works for the SQL Editor and Export Center. |
+| allow_email_code_signin | [bool](#bool) |  | Allow signin/signup using email &#43; a 6-digit one-time verification code. Requires the EMAIL setting to be configured on the workspace. |
 
 
 
@@ -4583,6 +4683,47 @@ All other settings live in per-workspace WORKSPACE_PROFILE.
 
 
 
+<a name="bytebase-store-EmailSetting-SMTPConfig-Authentication"></a>
+
+### EmailSetting.SMTPConfig.Authentication
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| AUTHENTICATION_UNSPECIFIED | 0 |  |
+| AUTHENTICATION_NONE | 1 |  |
+| PLAIN | 2 |  |
+| LOGIN | 3 |  |
+| CRAM_MD5 | 4 |  |
+
+
+
+<a name="bytebase-store-EmailSetting-SMTPConfig-Encryption"></a>
+
+### EmailSetting.SMTPConfig.Encryption
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ENCRYPTION_UNSPECIFIED | 0 |  |
+| ENCRYPTION_NONE | 1 |  |
+| STARTTLS | 2 |  |
+| SSL_TLS | 3 |  |
+
+
+
+<a name="bytebase-store-EmailSetting-Type"></a>
+
+### EmailSetting.Type
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| TYPE_UNSPECIFIED | 0 |  |
+| SMTP | 1 |  |
+
+
+
 <a name="bytebase-store-SettingName"></a>
 
 ### SettingName
@@ -4599,6 +4740,7 @@ All other settings live in per-workspace WORKSPACE_PROFILE.
 | DATA_CLASSIFICATION | 6 |  |
 | SEMANTIC_TYPES | 7 |  |
 | ENVIRONMENT | 8 |  |
+| EMAIL | 9 |  |
 
 
 
@@ -4688,6 +4830,86 @@ Type represents the type of signal.
 | TYPE_UNSPECIFIED | 0 |  |
 | CANCEL_PLAN_CHECK_RUN | 1 |  |
 | CANCEL_TASK_RUN | 2 |  |
+
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="store_subscription-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## store/subscription.proto
+
+
+
+<a name="bytebase-store-SubscriptionPayload"></a>
+
+### SubscriptionPayload
+SubscriptionPayload stores all subscription data for a workspace.
+Serialized as JSONB in the subscription table&#39;s payload column.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| status | [SubscriptionPayload.Status](#bytebase-store-SubscriptionPayload-Status) |  | Lifecycle |
+| started_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| expires_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| plan | [SubscriptionPayload.Plan](#bytebase-store-SubscriptionPayload-Plan) |  | Billing details |
+| interval | [SubscriptionPayload.BillingInterval](#bytebase-store-SubscriptionPayload-BillingInterval) |  |  |
+| seat | [int32](#int32) |  |  |
+| instance_count | [int32](#int32) |  |  |
+| stripe_subscription_id | [string](#string) |  | Stripe integration |
+| stripe_customer_id | [string](#string) |  |  |
+
+
+
+
+
+ 
+
+
+<a name="bytebase-store-SubscriptionPayload-BillingInterval"></a>
+
+### SubscriptionPayload.BillingInterval
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| BILLING_INTERVAL_UNSPECIFIED | 0 |  |
+| MONTH | 1 |  |
+| YEAR | 2 |  |
+
+
+
+<a name="bytebase-store-SubscriptionPayload-Plan"></a>
+
+### SubscriptionPayload.Plan
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| PLAN_UNSPECIFIED | 0 |  |
+| TEAM | 1 |  |
+| ENTERPRISE | 2 |  |
+
+
+
+<a name="bytebase-store-SubscriptionPayload-Status"></a>
+
+### SubscriptionPayload.Status
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| STATUS_UNSPECIFIED | 0 |  |
+| ACTIVE | 1 |  |
+| PAUSED | 2 |  |
+| CANCELED | 3 |  |
 
 
  
@@ -4939,6 +5161,8 @@ Table identifies a database table.
 | compute_diff_start | [TaskRunLog.ComputeDiffStart](#bytebase-store-TaskRunLog-ComputeDiffStart) |  |  |
 | compute_diff_end | [TaskRunLog.ComputeDiffEnd](#bytebase-store-TaskRunLog-ComputeDiffEnd) |  |  |
 | release_file_execute | [TaskRunLog.ReleaseFileExecute](#bytebase-store-TaskRunLog-ReleaseFileExecute) |  |  |
+| ghost_migration_start | [TaskRunLog.GhostMigrationStart](#bytebase-store-TaskRunLog-GhostMigrationStart) |  |  |
+| ghost_migration_end | [TaskRunLog.GhostMigrationEnd](#bytebase-store-TaskRunLog-GhostMigrationEnd) |  |  |
 
 
 
@@ -5021,6 +5245,31 @@ Table identifies a database table.
 <a name="bytebase-store-TaskRunLog-DatabaseSyncStart"></a>
 
 ### TaskRunLog.DatabaseSyncStart
+
+
+
+
+
+
+
+<a name="bytebase-store-TaskRunLog-GhostMigrationEnd"></a>
+
+### TaskRunLog.GhostMigrationEnd
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| error | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-TaskRunLog-GhostMigrationStart"></a>
+
+### TaskRunLog.GhostMigrationStart
 
 
 
@@ -5165,6 +5414,8 @@ Table identifies a database table.
 | COMPUTE_DIFF_START | 12 |  |
 | COMPUTE_DIFF_END | 13 |  |
 | RELEASE_FILE_EXECUTE | 14 |  |
+| GHOST_MIGRATION_START | 15 |  |
+| GHOST_MIGRATION_END | 16 |  |
 
 
  
@@ -5212,6 +5463,7 @@ MFAConfig is the MFA configuration for a user.
 | last_login_time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 | last_change_password_time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 | source | [string](#string) |  | The source indicates where the user comes from. For now we support Entra ID SCIM sync, so the source could be Entra ID. |
+| last_login_workspace | [string](#string) |  | The workspace resource ID the user last logged into. Used to auto-select workspace on next login instead of requiring a workspace picker. |
 
 
 
@@ -5289,6 +5541,38 @@ ProviderType identifies the CI/CD platform.
 | ----- | ---- | ----- | ----------- |
 | starred | [bool](#bool) |  |  |
 | folders | [string](#string) | repeated | The folder path for a worksheet. For example, if the folders is [A, B, C], means the worksheet is in the A/B/C subfolder. |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="store_workspace-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## store/workspace.proto
+
+
+
+<a name="bytebase-store-WorkspacePayload"></a>
+
+### WorkspacePayload
+WorkspacePayload stores workspace-level metadata.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| title | [string](#string) |  |  |
+| logo | [string](#string) |  |  |
 
 
 

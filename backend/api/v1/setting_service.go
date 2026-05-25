@@ -23,6 +23,7 @@ import (
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
+	"github.com/bytebase/bytebase/backend/plugin/mailer"
 	"github.com/bytebase/bytebase/backend/plugin/webhook/dingtalk"
 	"github.com/bytebase/bytebase/backend/plugin/webhook/feishu"
 	"github.com/bytebase/bytebase/backend/plugin/webhook/lark"
@@ -65,7 +66,7 @@ func (s *SettingService) ListSettings(ctx context.Context, _ *connect.Request[v1
 
 	response := &v1pb.ListSettingsResponse{}
 	for _, setting := range settings {
-		if isSettingDisallowed(setting.Name) {
+		if s.isSettingDisallowed(setting.Name) {
 			continue
 		}
 		settingMessage, err := convertToSettingMessage(setting)
@@ -91,7 +92,7 @@ func (s *SettingService) GetSetting(ctx context.Context, request *connect.Reques
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("invalid setting name: %v", err))
 	}
-	if isSettingDisallowed(storeSettingName) {
+	if s.isSettingDisallowed(storeSettingName) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("setting is not available"))
 	}
 
@@ -141,7 +142,7 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("invalid setting name: %v", err))
 	}
-	if isSettingDisallowed(storeSettingName) {
+	if s.isSettingDisallowed(storeSettingName) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("setting is not available"))
 	}
 	if s.profile.IsFeatureUnavailable(settingName) {
@@ -208,7 +209,7 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 				log.LogLevel.Set(level)
 			case "value.workspace_profile.disallow_signup":
 				if s.profile.SaaS {
-					return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("feature %s is unavailable in current mode", settingName))
+					return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("the disallow_signup cannot be changed in SaaS mode"))
 				}
 				if payload.DisallowSignup {
 					if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_DISALLOW_SELF_SERVICE_SIGNUP); err != nil {
@@ -218,7 +219,7 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 				oldSetting.DisallowSignup = payload.DisallowSignup
 			case "value.workspace_profile.external_url":
 				if s.profile.SaaS {
-					return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("feature %s is unavailable in current mode", settingName))
+					return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("the external_url cannot be changed in SaaS mode"))
 				}
 				// Prevent changing external URL via UI when it's set via command-line flag
 				if s.profile.ExternalURL != "" {
@@ -232,7 +233,7 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 					payload.ExternalUrl = externalURL
 				}
 				oldSetting.ExternalUrl = payload.ExternalUrl
-			case "value.workspace_profile.require_2fa":
+			case "value.workspace_profile.require_mfa":
 				if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_TWO_FA); err != nil {
 					return nil, connect.NewError(connect.CodePermissionDenied, err)
 				}
@@ -285,14 +286,32 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 				oldSetting.EnforceIdentityDomain = payload.EnforceIdentityDomain
 			case "value.workspace_profile.database_change_mode":
 				oldSetting.DatabaseChangeMode = payload.DatabaseChangeMode
+			case "value.workspace_profile.allow_email_code_signin":
+				if s.profile.SaaS {
+					return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("allow_email_code_signin cannot be changed in SaaS mode"))
+				}
+				if payload.AllowEmailCodeSignin {
+					emailSetting, err := s.store.GetSetting(ctx, workspaceID, storepb.SettingName_EMAIL)
+					if err != nil {
+						return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to load email setting"))
+					}
+					if emailSetting == nil {
+						return nil, connect.NewError(connect.CodeFailedPrecondition, errors.Errorf("cannot enable email code signin without an EMAIL setting"))
+					}
+				}
+				oldSetting.AllowEmailCodeSignin = payload.AllowEmailCodeSignin
 			case "value.workspace_profile.disallow_password_signin":
+				if s.profile.SaaS {
+					return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("the disallow_password_signin cannot be changed in SaaS mode"))
+				}
 				if payload.DisallowPasswordSignin {
 					// We should still allow users to turn it off.
 					if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_DISALLOW_PASSWORD_SIGNIN); err != nil {
 						return nil, connect.NewError(connect.CodePermissionDenied, err)
 					}
 
-					identityProviders, err := s.store.ListIdentityProviders(ctx, &store.FindIdentityProviderMessage{Workspace: common.GetWorkspaceIDFromContext(ctx)})
+					settingWsID := common.GetWorkspaceIDFromContext(ctx)
+					identityProviders, err := s.store.ListIdentityProviders(ctx, &store.FindIdentityProviderMessage{Workspace: &settingWsID})
 					if err != nil {
 						return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to list identity providers: %v", err))
 					}
@@ -329,11 +348,6 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 					payload.DirectorySyncToken = uuid.New().String()
 				}
 				oldSetting.DirectorySyncToken = payload.DirectorySyncToken
-			case "value.workspace_profile.branding_logo":
-				if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_CUSTOM_LOGO); err != nil {
-					return nil, connect.NewError(connect.CodePermissionDenied, err)
-				}
-				oldSetting.BrandingLogo = payload.BrandingLogo
 			case "value.workspace_profile.password_restriction":
 				if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_PASSWORD_RESTRICTIONS); err != nil {
 					return nil, connect.NewError(connect.CodePermissionDenied, err)
@@ -482,8 +496,33 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 		if len(payload.Configs) > 1 {
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("only support define 1 classification config for now"))
 		}
-		if len(payload.Configs) == 1 && len(payload.Configs[0].Classification) == 0 {
-			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("missing classification map"))
+		if len(payload.Configs) == 1 {
+			config := payload.Configs[0]
+			if len(config.Classification) == 0 {
+				return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("missing classification map"))
+			}
+			if len(config.Levels) == 0 {
+				return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("levels must not be empty"))
+			}
+			// Validate that level numbers are unique and consecutive starting from 1.
+			seen := make(map[int32]bool, len(config.Levels))
+			for _, level := range config.Levels {
+				if seen[level.Level] {
+					return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("duplicate level number: %d", level.Level))
+				}
+				seen[level.Level] = true
+			}
+			for i := 1; i <= len(config.Levels); i++ {
+				if !seen[int32(i)] {
+					return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("levels must be consecutive integers starting from 1, missing level %d", i))
+				}
+			}
+			// Validate that classification level references are valid.
+			for id, c := range config.Classification {
+				if c.Level != nil && (*c.Level < 1 || *c.Level > int32(len(config.Levels))) {
+					return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("classification %q references invalid level %d", id, *c.Level))
+				}
+			}
 		}
 		resetClassification = true
 		storeSettingValue = payload
@@ -507,26 +546,47 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 		}
 		storeSettingValue = storeSemanticTypeSetting
 	case storepb.SettingName_AI:
-		aiSetting := convertAISetting(request.Msg.Setting.Value.GetAi())
-		if aiSetting.Enabled {
-			if aiSetting.Endpoint == "" || aiSetting.Model == "" {
+		if s.profile.SaaS {
+			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("the AI setting cannot be changed in SaaS mode"))
+		}
+		if request.Msg.UpdateMask == nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("update mask is required"))
+		}
+		payload := convertAISetting(request.Msg.Setting.Value.GetAi())
+		oldAISetting, err := s.store.GetAISetting(ctx, workspaceID)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to find AI setting: %v", err))
+		}
+		// Clone to avoid mutating the cached store object if validation fails later.
+		oldAISetting = proto.CloneOf(oldAISetting)
+
+		for _, path := range request.Msg.UpdateMask.Paths {
+			switch path {
+			case "value.ai.enabled":
+				oldAISetting.Enabled = payload.Enabled
+			case "value.ai.provider":
+				oldAISetting.Provider = storepb.AISetting_Provider(payload.Provider)
+			case "value.ai.endpoint":
+				oldAISetting.Endpoint = payload.Endpoint
+			case "value.ai.api_key":
+				oldAISetting.ApiKey = payload.ApiKey
+			case "value.ai.model":
+				oldAISetting.Model = payload.Model
+			default:
+				return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("invalid update mask path %v", path))
+			}
+		}
+
+		if oldAISetting.Enabled {
+			if oldAISetting.Endpoint == "" || oldAISetting.Model == "" {
 				return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("API endpoint and model are required"))
 			}
-			if existedSetting != nil {
-				existedAISetting, err := convertToSettingMessage(existedSetting)
-				if err != nil {
-					return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to unmarshal existed ai setting with error: %v", err))
-				}
-				if aiSetting.ApiKey == "" {
-					aiSetting.ApiKey = existedAISetting.Value.GetAi().GetApiKey()
-				}
-			}
-			if aiSetting.ApiKey == "" {
+			if oldAISetting.ApiKey == "" {
 				return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("API key is required"))
 			}
 		}
 
-		storeSettingValue = aiSetting
+		storeSettingValue = oldAISetting
 	case storepb.SettingName_ENVIRONMENT:
 		if serr := s.validateEnvironments(ctx, workspaceID, request.Msg.Setting.Value.GetEnvironment().GetEnvironments()); serr != nil {
 			return nil, serr
@@ -553,6 +613,7 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 					return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to unset environment %v for instances", env.Id))
 				}
 				if err := s.store.BatchUpdateDatabases(ctx, nil, &store.BatchUpdateDatabases{
+					Workspace:           common.GetWorkspaceIDFromContext(ctx),
 					EnvironmentID:       &emptyStr,
 					FindByEnvironmentID: &env.Id,
 				}); err != nil {
@@ -562,6 +623,56 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 		}
 
 		storeSettingValue = environmentSetting
+	case storepb.SettingName_EMAIL:
+		if s.profile.SaaS {
+			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("email setting cannot be changed in SaaS mode"))
+		}
+		if request.Msg.UpdateMask == nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("update mask is required"))
+		}
+		payload := convertEmailSetting(request.Msg.Setting.Value.GetEmail())
+		if payload == nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("email setting is required"))
+		}
+
+		oldEmailSetting := &storepb.EmailSetting{}
+		if existing, err := s.store.GetSetting(ctx, workspaceID, storepb.SettingName_EMAIL); err != nil {
+			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to get email setting: %v", err))
+		} else if existing != nil {
+			oldEmailSetting = proto.CloneOf(existing.Value.(*storepb.EmailSetting))
+		}
+
+		for _, path := range request.Msg.UpdateMask.Paths {
+			switch path {
+			case "value.email.from":
+				oldEmailSetting.From = payload.From
+			case "value.email.from_name":
+				oldEmailSetting.FromName = payload.FromName
+			case "value.email.type":
+				oldEmailSetting.Type = payload.Type
+			case "value.email.smtp":
+				newSMTP := payload.GetSmtp()
+				if newSMTP == nil {
+					return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("smtp config is required when updating smtp"))
+				}
+				// Preserve existing password if new password is empty.
+				if newSMTP.Password == "" {
+					if oldSMTP := oldEmailSetting.GetSmtp(); oldSMTP != nil {
+						newSMTP.Password = oldSMTP.Password
+					}
+				}
+				oldEmailSetting.Config = &storepb.EmailSetting_Smtp{Smtp: newSMTP}
+			default:
+				return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("invalid update mask path %v", path))
+			}
+		}
+
+		// Validate the final state.
+		if err := validateEmailSetting(oldEmailSetting); err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+
+		storeSettingValue = oldEmailSetting
 	default:
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("unsupported setting %v", storeSettingName))
 	}
@@ -630,6 +741,50 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 	return connect.NewResponse(settingMessage), nil
 }
 
+// TestEmailSetting sends a test email using the provided config.
+func (s *SettingService) TestEmailSetting(ctx context.Context, req *connect.Request[v1pb.TestEmailSettingRequest]) (*connect.Response[v1pb.TestEmailSettingResponse], error) {
+	emailSetting := convertEmailSetting(req.Msg.EmailSetting)
+	if emailSetting == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("email_setting is required"))
+	}
+
+	// Substitute stored password if not provided.
+	if smtp := emailSetting.GetSmtp(); smtp != nil && smtp.Password == "" {
+		workspaceID := common.GetWorkspaceIDFromContext(ctx)
+		if existing, err := s.store.GetSetting(ctx, workspaceID, storepb.SettingName_EMAIL); err == nil && existing != nil {
+			if oldEmail, ok := existing.Value.(*storepb.EmailSetting); ok {
+				if oldSMTP := oldEmail.GetSmtp(); oldSMTP != nil {
+					smtp.Password = oldSMTP.Password
+				}
+			}
+		}
+	}
+
+	sender, err := mailer.NewSender(emailSetting)
+	if err != nil {
+		return connect.NewResponse(&v1pb.TestEmailSettingResponse{ //nolint:nilerr
+			Success: false,
+			Error:   err.Error(),
+		}), nil
+	}
+
+	err = sender.Send(ctx, &mailer.SendRequest{
+		To:       []string{req.Msg.To},
+		Subject:  "Bytebase email config test",
+		TextBody: "This is a test email from Bytebase to verify your email configuration.",
+	})
+	if err != nil {
+		return connect.NewResponse(&v1pb.TestEmailSettingResponse{ //nolint:nilerr
+			Success: false,
+			Error:   err.Error(),
+		}), nil
+	}
+
+	return connect.NewResponse(&v1pb.TestEmailSettingResponse{
+		Success: true,
+	}), nil
+}
+
 func (s *SettingService) checkSettingPermission(ctx context.Context, req connect.AnyRequest, perm permission.Permission) error {
 	user, ok := GetUserFromContext(ctx)
 	if !ok {
@@ -681,10 +836,15 @@ var disallowedDomains = map[string]bool{
 	"yeah.net":       true,
 }
 
-func isSettingDisallowed(name storepb.SettingName) bool {
+func (*SettingService) isSettingDisallowed(name storepb.SettingName) bool {
 	// Backend-only settings that should never be exposed via the API.
-	// SYSTEM: Internal system settings (auth secret, workspace ID, enterprise license)
-	return name == storepb.SettingName_SYSTEM
+	switch name {
+	case storepb.SettingName_SYSTEM:
+		// SYSTEM: Internal system settings (auth secret, workspace ID, enterprise license)
+		return true
+	default:
+		return false
+	}
 }
 
 func validateApprovalTemplate(template *v1pb.ApprovalTemplate) error {
@@ -725,6 +885,28 @@ func (s *SettingService) validateEnvironments(ctx context.Context, workspaceID s
 			}
 		}
 		used[env.Id] = true
+	}
+	return nil
+}
+
+func validateEmailSetting(setting *storepb.EmailSetting) error {
+	if setting.From == "" {
+		return errors.Errorf("from address is required")
+	}
+	switch setting.Type {
+	case storepb.EmailSetting_SMTP:
+		smtp := setting.GetSmtp()
+		if smtp == nil {
+			return errors.Errorf("smtp config is required when type is SMTP")
+		}
+		if smtp.Host == "" {
+			return errors.Errorf("smtp host is required")
+		}
+		if smtp.Port <= 0 {
+			return errors.Errorf("smtp port must be positive")
+		}
+	default:
+		return errors.Errorf("unsupported email type: %v", setting.Type)
 	}
 	return nil
 }

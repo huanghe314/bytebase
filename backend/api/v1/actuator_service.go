@@ -52,12 +52,23 @@ func NewActuatorService(
 }
 
 // GetActuatorInfo gets the actuator info.
+// Workspace resolution order: request.name -> JWT context -> default workspace (self-hosted).
 func (s *ActuatorService) GetActuatorInfo(
 	ctx context.Context,
-	_ *connect.Request[v1pb.GetActuatorInfoRequest],
+	req *connect.Request[v1pb.GetActuatorInfoRequest],
 ) (*connect.Response[v1pb.ActuatorInfo], error) {
 	var workspaceID string
-	if !s.profile.SaaS {
+	if req.Msg.Name != "" {
+		id, err := common.GetWorkspaceID(req.Msg.Name)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		workspaceID = id
+	}
+	if workspaceID == "" {
+		workspaceID = common.GetWorkspaceIDFromContext(ctx)
+	}
+	if workspaceID == "" && !s.profile.SaaS {
 		ws, err := s.store.GetWorkspaceID(ctx)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, err)
@@ -71,19 +82,6 @@ func (s *ActuatorService) GetActuatorInfo(
 	return connect.NewResponse(info), nil
 }
 
-// GetWorkspaceActuatorInfo gets workspace-scoped actuator info. Requires authentication.
-// Workspace validation is handled by the ACL layer (resource_reference on name field).
-func (s *ActuatorService) GetWorkspaceActuatorInfo(
-	ctx context.Context,
-	_ *connect.Request[v1pb.GetWorkspaceActuatorInfoRequest],
-) (*connect.Response[v1pb.ActuatorInfo], error) {
-	info, err := s.getServerInfo(ctx, common.GetWorkspaceIDFromContext(ctx))
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(info), nil
-}
-
 // DeleteCache deletes the cache.
 func (s *ActuatorService) DeleteCache(
 	_ context.Context,
@@ -91,40 +89,6 @@ func (s *ActuatorService) DeleteCache(
 ) (*connect.Response[emptypb.Empty], error) {
 	s.store.DeleteCache()
 	return connect.NewResponse(&emptypb.Empty{}), nil
-}
-
-// GetResourcePackage gets the theme resources.
-// Serves both /v1/actuator/resources and /v1/{name=workspaces/*}/actuator/resources.
-func (s *ActuatorService) GetResourcePackage(
-	ctx context.Context,
-	req *connect.Request[v1pb.GetResourcePackageRequest],
-) (*connect.Response[v1pb.ResourcePackage], error) {
-	var workspaceID string
-	if !s.profile.SaaS {
-		ws, err := s.store.GetWorkspaceID(ctx)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
-		}
-		workspaceID = ws
-	} else if req.Msg.Name == "" {
-		reqWorkspaceID, err := common.GetWorkspaceID(req.Msg.Name)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInvalidArgument, err)
-		}
-		workspaceID = reqWorkspaceID
-	}
-
-	pkg := &v1pb.ResourcePackage{}
-
-	if workspaceID != "" {
-		workspaceProfileSetting, err := s.store.GetWorkspaceProfileSetting(ctx, workspaceID)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to find workspace profile setting"))
-		}
-		pkg.Logo = []byte(workspaceProfileSetting.BrandingLogo)
-	}
-
-	return connect.NewResponse(pkg), nil
 }
 
 // SetupSample sets up the sample project and instance.
@@ -154,21 +118,27 @@ func (s *ActuatorService) SetupSample(
 }
 
 func (s *ActuatorService) getServerInfo(ctx context.Context, workspaceID string) (*v1pb.ActuatorInfo, error) {
+	restriction, err := getAccountRestriction(
+		ctx,
+		s.store,
+		s.licenseService,
+		s.profile.SaaS,
+		workspaceID,
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	serverInfo := v1pb.ActuatorInfo{
 		Version:             s.profile.Version,
 		GitCommit:           s.profile.GitCommit,
 		Saas:                s.profile.SaaS,
-		Demo:                s.profile.Demo,
 		LastActiveTime:      timestamppb.New(time.Unix(s.profile.LastActiveTS.Load(), 0)),
 		Docker:              s.profile.IsDocker,
 		ExternalUrlFromFlag: s.profile.ExternalURL != "",
 		ReplicaCount:        int32(s.licenseService.CountActiveReplicas(ctx)),
-		Restriction: &v1pb.Restriction{
-			PasswordRestriction: &v1pb.WorkspaceProfileSetting_PasswordRestriction{
-				MinLength: 8,
-			},
-		},
-		NeedAdminSetup: true,
+		Restriction:         restriction,
+		ExternalUrl:         s.profile.ExternalURL,
 	}
 
 	if workspaceID != "" {
@@ -191,27 +161,32 @@ func (s *ActuatorService) getServerInfo(ctx context.Context, workspaceID string)
 		}
 		serverInfo.UnlicensedFeatures = unlicensedFeaturesString
 
-		activeEndUserCount, err := s.store.CountActiveEndUsersPerWorkspace(ctx, workspaceID)
+		if !s.profile.SaaS {
+			activePrincipalCount, err := s.store.CountActivePrincipals(ctx)
+			if err != nil {
+				return nil, connect.NewError(connect.CodeInternal, err)
+			}
+			serverInfo.ActivatedUserCount = int32(activePrincipalCount)
+		}
+
+		iamPolicy, err := s.store.GetWorkspaceIamPolicy(ctx, workspaceID)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, err)
 		}
-		serverInfo.NeedAdminSetup = activeEndUserCount == 0
-		serverInfo.ActivatedUserCount = int32(activeEndUserCount)
-
-		setting, err := s.store.GetWorkspaceProfileSetting(ctx, workspaceID)
+		userCountInIam, err := countUsersInIamPolicy(ctx, s.store, workspaceID, iamPolicy.Policy, s.profile.SaaS)
 		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to find workspace setting"))
+			return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to count users in IAM policy"))
 		}
-		serverInfo.Restriction = &v1pb.Restriction{
-			PasswordRestriction:    convertPasswordRestriction(setting.GetPasswordRestriction()),
-			DisallowSignup:         setting.DisallowSignup,
-			DisallowPasswordSignin: setting.DisallowPasswordSignin,
-		}
+		serverInfo.UserCountInIam = int32(userCountInIam)
 
 		// Check if sample instances are available
 		hasSampleInstances, _ := s.store.HasSampleInstances(ctx, workspaceID)
 		serverInfo.EnableSample = hasSampleInstances
 
+		setting, err := s.store.GetWorkspaceProfileSetting(ctx, workspaceID)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to find workspace setting"))
+		}
 		// Prefer command-line flag over database value for external URL
 		externalURL := setting.ExternalUrl
 		if s.profile.ExternalURL != "" {
@@ -219,17 +194,21 @@ func (s *ActuatorService) getServerInfo(ctx context.Context, workspaceID string)
 		}
 		serverInfo.ExternalUrl = externalURL
 
-		activatedInstanceCount, err := s.store.GetActivatedInstanceCount(ctx, workspaceID)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to count activated instance"))
-		}
-		serverInfo.ActivatedInstanceCount = int32(activatedInstanceCount)
-
 		activeInstanceCount, err := s.store.CountActiveInstances(ctx, workspaceID)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to count total instance"))
 		}
 		serverInfo.TotalInstanceCount = int32(activeInstanceCount)
+
+		if s.licenseService.IsUnifiedInstanceLicense(ctx, workspaceID) {
+			serverInfo.ActivatedInstanceCount = int32(activeInstanceCount)
+		} else {
+			activatedInstanceCount, err := s.store.GetActivatedInstanceCount(ctx, workspaceID)
+			if err != nil {
+				return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to count activated instance"))
+			}
+			serverInfo.ActivatedInstanceCount = int32(activatedInstanceCount)
+		}
 	}
 
 	return &serverInfo, nil
@@ -239,7 +218,7 @@ func (s *ActuatorService) getUsedFeatures(ctx context.Context, workspaceID strin
 	var features []v1pb.PlanFeature
 
 	// idp
-	idps, err := s.store.ListIdentityProviders(ctx, &store.FindIdentityProviderMessage{Workspace: workspaceID})
+	idps, err := s.store.ListIdentityProviders(ctx, &store.FindIdentityProviderMessage{Workspace: &workspaceID})
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to list identity providers")
 	}
@@ -267,7 +246,8 @@ func (s *ActuatorService) getUsedFeatures(ctx context.Context, workspaceID strin
 	if setting.Watermark {
 		features = append(features, v1pb.PlanFeature_FEATURE_WATERMARK)
 	}
-	if setting.BrandingLogo != "" {
+	ws, err := s.store.GetWorkspaceByID(ctx, workspaceID)
+	if err == nil && ws != nil && ws.Payload.GetLogo() != "" {
 		features = append(features, v1pb.PlanFeature_FEATURE_CUSTOM_LOGO)
 	}
 
@@ -304,8 +284,8 @@ func (s *ActuatorService) getUnlicensedFeatures(ctx context.Context, workspaceID
 	return unlicensedFeatures
 }
 
-// convertPasswordRestriction converts store PasswordRestriction to v1 PasswordRestriction.
-func convertPasswordRestriction(pr *storepb.WorkspaceProfileSetting_PasswordRestriction) *v1pb.WorkspaceProfileSetting_PasswordRestriction {
+// convertToV1PasswordRestriction converts store PasswordRestriction to v1 PasswordRestriction.
+func convertToV1PasswordRestriction(pr *storepb.WorkspaceProfileSetting_PasswordRestriction) *v1pb.WorkspaceProfileSetting_PasswordRestriction {
 	if pr == nil {
 		return nil
 	}

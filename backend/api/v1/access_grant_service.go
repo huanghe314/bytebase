@@ -49,6 +49,7 @@ func (s *AccessGrantService) GetAccessGrant(ctx context.Context, request *connec
 	}
 
 	grant, err := s.store.GetAccessGrant(ctx, &store.FindAccessGrantMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ID:        &accessGrantID,
 		ProjectID: &projectID,
 	})
@@ -81,6 +82,7 @@ func (s *AccessGrantService) ListAccessGrants(ctx context.Context, request *conn
 	limitPlusOne := offset.limit + 1
 
 	find := &store.FindAccessGrantMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: &projectID,
 		Limit:     &limitPlusOne,
 		Offset:    &offset.offset,
@@ -180,8 +182,7 @@ func (s *AccessGrantService) CreateAccessGrant(ctx context.Context, request *con
 		if exp.ExpireTime == nil {
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("expire_time is required"))
 		}
-		t := exp.ExpireTime.AsTime()
-		expireTime = &t
+		expireTime = new(exp.ExpireTime.AsTime())
 	case *v1pb.AccessGrant_Ttl:
 		if exp.Ttl == nil {
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("ttl is required"))
@@ -250,7 +251,8 @@ func (s *AccessGrantService) CreateAccessGrant(ctx context.Context, request *con
 		if issue.Status == storepb.Issue_DONE {
 			// Refresh the grant if issue is completed.
 			grant, err = s.store.GetAccessGrant(ctx, &store.FindAccessGrantMessage{
-				ID: &grant.ID,
+				Workspace: common.GetWorkspaceIDFromContext(ctx),
+				ID:        &grant.ID,
 			})
 			if err != nil {
 				return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get access grant %v", grant.ID))
@@ -282,6 +284,7 @@ func activateAccessGrant(ctx context.Context, stores *store.Store, accessGrantNa
 	}
 
 	grant, err := stores.GetAccessGrant(ctx, &store.FindAccessGrantMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ID:        &accessGrantID,
 		ProjectID: &projectID,
 	})
@@ -292,15 +295,13 @@ func activateAccessGrant(ctx context.Context, stores *store.Store, accessGrantNa
 		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("access grant %q not found", accessGrantName))
 	}
 
-	status := storepb.AccessGrant_ACTIVE
 	update := &store.UpdateAccessGrantMessage{
-		Status: &status,
+		Status: new(storepb.AccessGrant_ACTIVE),
 	}
 
 	// If the grant was created with a TTL, compute expire_time at activation time.
 	if refreshExpireTime && grant.Payload != nil && grant.Payload.RequestedDuration != nil {
-		expireTime := time.Now().Add(grant.Payload.RequestedDuration.AsDuration())
-		update.ExpireTime = &expireTime
+		update.ExpireTime = new(time.Now().Add(grant.Payload.RequestedDuration.AsDuration()))
 	}
 
 	updated, err := stores.UpdateAccessGrant(ctx, accessGrantID, update)
@@ -323,6 +324,7 @@ func (s *AccessGrantService) RevokeAccessGrant(ctx context.Context, request *con
 	}
 
 	grant, err := s.store.GetAccessGrant(ctx, &store.FindAccessGrantMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ID:        &accessGrantID,
 		ProjectID: &projectID,
 	})
@@ -336,9 +338,8 @@ func (s *AccessGrantService) RevokeAccessGrant(ctx context.Context, request *con
 		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.Errorf("access grant %q is not in ACTIVE status", req.Name))
 	}
 
-	status := storepb.AccessGrant_REVOKED
 	updated, err := s.store.UpdateAccessGrant(ctx, accessGrantID, &store.UpdateAccessGrantMessage{
-		Status: &status,
+		Status: new(storepb.AccessGrant_REVOKED),
 	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to revoke access grant"))
@@ -371,6 +372,7 @@ func (s *AccessGrantService) SearchMyAccessGrants(ctx context.Context, request *
 	limitPlusOne := offset.limit + 1
 
 	find := &store.FindAccessGrantMessage{
+		Workspace: common.GetWorkspaceIDFromContext(ctx),
 		ProjectID: &projectID,
 		Creator:   &user.Email,
 		Limit:     &limitPlusOne,

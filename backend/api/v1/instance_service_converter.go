@@ -12,7 +12,7 @@ import (
 	"github.com/bytebase/bytebase/backend/store"
 )
 
-func convertToV1Instance(instance *store.InstanceMessage) *v1pb.Instance {
+func convertToV1Instance(instance *store.InstanceMessage, activation bool) *v1pb.Instance {
 	engine := convertToEngine(instance.Metadata.GetEngine())
 	dataSources := convertDataSources(instance.Metadata.GetDataSources())
 
@@ -25,7 +25,7 @@ func convertToV1Instance(instance *store.InstanceMessage) *v1pb.Instance {
 		DataSources:   dataSources,
 		State:         convertDeletedToState(instance.Deleted),
 		Environment:   buildEnvironmentName(instance.EnvironmentID),
-		Activation:    instance.Metadata.GetActivation(),
+		Activation:    activation,
 		SyncInterval:  instance.Metadata.GetSyncInterval(),
 		SyncDatabases: instance.Metadata.GetSyncDatabases(),
 		Roles:         convertInstanceRoles(instance, instance.Metadata.GetRoles()),
@@ -93,16 +93,15 @@ func convertToStoreInstance(instanceID string, instance *v1pb.Instance) (*store.
 	}, nil
 }
 
-func convertToV1InstanceResource(instanceMessage *store.InstanceMessage) *v1pb.InstanceResource {
-	instance := convertToV1Instance(instanceMessage)
+func convertToV1InstanceResource(instanceMessage *store.InstanceMessage, activation bool) *v1pb.InstanceResource {
 	return &v1pb.InstanceResource{
-		Name:          instance.Name,
-		Title:         instance.Title,
-		Engine:        instance.Engine,
-		EngineVersion: instance.EngineVersion,
-		DataSources:   instance.DataSources,
-		Activation:    instance.Activation,
-		Environment:   instance.Environment,
+		Name:          buildInstanceName(instanceMessage.ResourceID),
+		Title:         instanceMessage.Metadata.GetTitle(),
+		Engine:        convertToEngine(instanceMessage.Metadata.GetEngine()),
+		EngineVersion: instanceMessage.Metadata.GetVersion(),
+		DataSources:   convertDataSources(instanceMessage.Metadata.GetDataSources()),
+		Activation:    activation,
+		Environment:   buildEnvironmentName(instanceMessage.EnvironmentID),
 	}
 }
 
@@ -216,6 +215,12 @@ func convertDataSources(dataSources []*storepb.DataSource) []*v1pb.DataSource {
 			MasterName:                ds.GetMasterName(),
 			MasterUsername:            ds.GetMasterUsername(),
 			ExtraConnectionParameters: ds.GetExtraConnectionParameters(),
+			SslCaSet:                  ds.GetSslCa() != "",
+			SslCertSet:                ds.GetSslCert() != "",
+			SslKeySet:                 ds.GetSslKey() != "",
+			SslCaPathSet:              ds.GetSslCaPath() != "",
+			SslCertPathSet:            ds.GetSslCertPath() != "",
+			SslKeyPathSet:             ds.GetSslKeyPath() != "",
 		}
 
 		switch dataSource.AuthenticationType {
@@ -436,17 +441,16 @@ func convertV1RedisType(redisType v1pb.DataSource_RedisType) storepb.DataSource_
 }
 
 func convertRedisType(redisType storepb.DataSource_RedisType) v1pb.DataSource_RedisType {
-	authenticationType := v1pb.DataSource_STANDALONE
 	switch redisType {
 	case storepb.DataSource_STANDALONE:
-		authenticationType = v1pb.DataSource_STANDALONE
+		return v1pb.DataSource_STANDALONE
 	case storepb.DataSource_SENTINEL:
-		authenticationType = v1pb.DataSource_SENTINEL
+		return v1pb.DataSource_SENTINEL
 	case storepb.DataSource_CLUSTER:
-		authenticationType = v1pb.DataSource_CLUSTER
+		return v1pb.DataSource_CLUSTER
 	default:
+		return v1pb.DataSource_REDIS_TYPE_UNSPECIFIED
 	}
-	return authenticationType
 }
 
 func convertV1DataSource(dataSource *v1pb.DataSource) (*storepb.DataSource, error) {
@@ -468,6 +472,9 @@ func convertV1DataSource(dataSource *v1pb.DataSource) (*storepb.DataSource, erro
 		SslCa:                              dataSource.SslCa,
 		SslCert:                            dataSource.SslCert,
 		SslKey:                             dataSource.SslKey,
+		SslCaPath:                          dataSource.SslCaPath,
+		SslCertPath:                        dataSource.SslCertPath,
+		SslKeyPath:                         dataSource.SslKeyPath,
 		Host:                               dataSource.Host,
 		Port:                               dataSource.Port,
 		Database:                           dataSource.Database,

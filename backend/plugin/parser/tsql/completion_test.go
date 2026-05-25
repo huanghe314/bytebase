@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
+	"github.com/bytebase/bytebase/backend/common/yamltest"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	"github.com/bytebase/bytebase/backend/store/model"
@@ -101,11 +102,33 @@ func TestCompletion(t *testing.T) {
 	}
 
 	if record {
-		byteValue, err := yaml.Marshal(tests)
-		a.NoError(err)
-		err = os.WriteFile(filepath, byteValue, 0644)
-		a.NoError(err)
+		yamltest.Record(t, filepath, tests)
 	}
+}
+
+func TestCompletionOmniTableRefRule(t *testing.T) {
+	statement, caretLine, caretPosition := getCaretPosition("TRUNCATE TABLE |")
+	getter, lister := buildMockDatabaseMetadataGetterLister()
+	results, err := Completion(context.Background(), base.CompletionContext{
+		Scene:             base.SceneTypeAll,
+		DefaultDatabase:   "Company",
+		Metadata:          getter,
+		ListDatabaseNames: lister,
+	}, statement, caretLine, caretPosition)
+	require.NoError(t, err)
+
+	require.Contains(t, results, base.Candidate{
+		Text: "Employees",
+		Type: base.CandidateTypeTable,
+	})
+}
+
+func TestCompletionDoesNotDependOnANTLR(t *testing.T) {
+	content, err := os.ReadFile("completion.go")
+	require.NoError(t, err)
+	source := string(content)
+	require.NotContains(t, source, "github.com/antlr4-go/antlr/v4")
+	require.NotContains(t, source, "github.com/bytebase/parser/tsql")
 }
 
 func getCaretPosition(statement string) (string, int, int) {
@@ -162,6 +185,11 @@ var databaseMetadatas = []*storepb.DatabaseSchemaMetadata{
 						Name: "OrderSeq",
 					},
 				},
+				Procedures: []*storepb.ProcedureMetadata{
+					{
+						Name: "SyncEmployees",
+					},
+				},
 			},
 			{
 				Name: "MySchema",
@@ -178,6 +206,21 @@ var databaseMetadatas = []*storepb.DatabaseSchemaMetadata{
 								Type: "int",
 							},
 						},
+					},
+				},
+				Views: []*storepb.ViewMetadata{
+					{
+						Name: "SalaryView",
+					},
+				},
+				Sequences: []*storepb.SequenceMetadata{
+					{
+						Name: "SalarySeq",
+					},
+				},
+				Procedures: []*storepb.ProcedureMetadata{
+					{
+						Name: "SyncSalary",
 					},
 				},
 			},
@@ -201,6 +244,16 @@ var databaseMetadatas = []*storepb.DatabaseSchemaMetadata{
 								Type: "varchar",
 							},
 						},
+					},
+				},
+				Sequences: []*storepb.SequenceMetadata{
+					{
+						Name: "StudentSeq",
+					},
+				},
+				Procedures: []*storepb.ProcedureMetadata{
+					{
+						Name: "SyncStudents",
 					},
 				},
 			},

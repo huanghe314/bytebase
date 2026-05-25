@@ -9,6 +9,8 @@ description: Use when running SQL queries, executing SELECT/INSERT/UPDATE/DELETE
 
 Run SQL queries against databases managed by Bytebase.
 
+**Before writing SQL, call `get_schema(database=...)` to see the current shape.**
+
 ## Prerequisites
 
 - Know the instance and database name
@@ -25,16 +27,16 @@ Run SQL queries against databases managed by Bytebase.
    ```
    call_api(operationId="DatabaseService/ListDatabases", body={
      "parent": "workspaces/{id}",
-     "filter": "name.matches(\"db_name\")"
+     "filter": "name.contains(\"db_name\")"
    })
    ```
 
    Filter examples:
-   - `name.matches("employee")` - database name contains "employee"
+   - `name.contains("employee")` - database name contains "employee"
    - `project == "projects/{project-id}"` - databases in a project
    - `instance == "instances/{instance-id}"` - databases in an instance
    - `engine == "MYSQL"` - MySQL databases only
-   - `environment == "environments/prod" && name.matches("user")` - combine filters
+   - `environment == "environments/prod" && name.contains("user")` - combine filters
 
    **Extract `dataSourceId`** from `instanceResource.dataSources` in the response. Prefer `type: "READ_ONLY"` over `type: "ADMIN"` when available.
 

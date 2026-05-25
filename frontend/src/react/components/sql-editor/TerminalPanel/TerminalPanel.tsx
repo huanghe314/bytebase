@@ -1,0 +1,268 @@
+import { Loader2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { IStandaloneCodeEditor } from "@/react/components/monaco/types";
+import { ConnectionHolder } from "@/react/components/sql-editor/ConnectionHolder";
+import { EditorAction } from "@/react/components/sql-editor/EditorAction";
+import { ResultView } from "@/react/components/sql-editor/ResultView";
+import { useVueState } from "@/react/hooks/useVueState";
+import { useSQLEditorStore } from "@/react/stores/sqlEditor";
+import { useSQLEditorTabStore } from "@/react/stores/sqlEditor/tab-vue-state";
+import { getWebTerminalQuerySession } from "@/react/stores/sqlEditor/webTerminal-service";
+import { useDatabaseV1Store } from "@/store";
+import type { SQLEditorQueryParams, WebTerminalQueryItemV1 } from "@/types";
+import { CompactSQLEditor } from "./CompactSQLEditor";
+import { useHistory } from "./useHistory";
+
+/**
+ * React port of `frontend/src/views/sql-editor/EditorPanel/TerminalPanel/TerminalPanel.vue`.
+ *
+ * Hosts the admin-mode terminal: a top action bar, then a vertically
+ * scrolling stack of `<CompactSQLEditor>` + `<ResultView>` rows (one per
+ * historical query). Tail row is editable; older rows are read-only.
+ * When the underlying Pinia tab is disconnected we render
+ * `<ConnectionHolder>` instead (mirrors the Vue `v-if`).
+ *
+ * State source:
+ * - `webTerminalStore.getQueryStateByTab(currentTab).queryItemList` — the
+ *   per-tab list of query items (statements + their result sets).
+ * - `useHistory()` — the up/down arrow command-history Pinia composable.
+ *
+ * Auto-scroll: a ResizeObserver on the inner stack scrolls the outer
+ * container to the bottom whenever the stack grows (replacing Vue's
+ * `useElementSize` + watch).
+ */
+export function TerminalPanel() {
+  const { t } = useTranslation();
+  const tabStore = useSQLEditorTabStore();
+  const databaseStore = useDatabaseV1Store();
+  const updateWebTerminalQueryItem = useSQLEditorStore(
+    (s) => s.updateWebTerminalQueryItem
+  );
+  const replaceWebTerminalQueryItems = useSQLEditorStore(
+    (s) => s.replaceWebTerminalQueryItems
+  );
+
+  const isDisconnected = useVueState(() => tabStore.isDisconnected);
+  const currentTabId = useVueState(() => tabStore.currentTab?.id);
+
+  // Lazily create the per-tab session (WebSocket + timer + event bus)
+  // when this panel mounts for a new tab. The zustand selector below
+  // does its own subscription for re-renders; the session is only set
+  // up here so the controller and timer exist by the time the user
+  // hits Enter.
+  useEffect(() => {
+    const tab = tabStore.currentTab;
+    if (!tab) return;
+    getWebTerminalQuerySession(tab);
+  }, [tabStore, currentTabId]);
+
+  // Subscribe to the per-tab query items from the zustand slice — every
+  // mutation (push, status flip, resultSet attach) produces a new array
+  // reference, so the component re-renders without any Vue `watch`.
+  const queryList = useSQLEditorStore(
+    (s) =>
+      (currentTabId
+        ? s.webTerminalQueryItemsByTabId[currentTabId]
+        : undefined) ?? EMPTY_QUERY_LIST
+  );
+
+  // Poll the per-tab timer's expired flag every 250ms so the Cancel
+  // button appears once the running query passes the timeout. Cheap
+  // enough at this cadence; the timer object itself has no reactive
+  // hook to subscribe to.
+  const [expired, setExpired] = useState(false);
+  useEffect(() => {
+    const tick = () => {
+      const tab = tabStore.currentTab;
+      if (!tab) {
+        setExpired(false);
+        return;
+      }
+      setExpired(getWebTerminalQuerySession(tab).timer.expired());
+    };
+    tick();
+    const interval = setInterval(tick, 250);
+    return () => clearInterval(interval);
+  }, [tabStore, currentTabId]);
+
+  // Pre-fetch any database referenced by an existing query item so the
+  // ResultView can render `database.environment` etc. synchronously.
+  useEffect(() => {
+    void databaseStore.batchGetOrFetchDatabases(
+      queryList.map((q) => q?.params?.connection.database ?? "")
+    );
+  }, [queryList, databaseStore]);
+
+  const currentQuery = queryList[queryList.length - 1];
+  const isEditableQueryItem = (item: WebTerminalQueryItemV1) =>
+    item === currentQuery && item.status === "IDLE";
+
+  const { move: moveHistory } = useHistory();
+
+  const handleExecute = useCallback(
+    (params: SQLEditorQueryParams) => {
+      if (currentQuery?.status !== "IDLE") return;
+      if (!params.statement) {
+        console.warn("Empty query");
+        return;
+      }
+      const tab = tabStore.currentTab;
+      if (!tab) return;
+      const session = getWebTerminalQuerySession(tab);
+      void session.controller.events.emit("query", params);
+    },
+    [currentQuery, tabStore]
+  );
+
+  const handleClearScreen = useCallback(() => {
+    const tab = tabStore.currentTab;
+    if (!tab) return;
+    // Keep only the live (tail) query item; the slice replaces the
+    // whole array, so React re-renders via the existing selector.
+    const items =
+      useSQLEditorStore.getState().webTerminalQueryItemsByTabId[tab.id] ??
+      EMPTY_QUERY_LIST;
+    if (items.length <= 1) return;
+    replaceWebTerminalQueryItems(tab.id, items.slice(-1));
+  }, [tabStore, replaceWebTerminalQueryItems]);
+
+  const handleHistory = useCallback(
+    (direction: "up" | "down", editor: IStandaloneCodeEditor) => {
+      if (currentQuery?.status !== "IDLE") return;
+      moveHistory(direction);
+      requestAnimationFrame(() => {
+        const model = editor.getModel();
+        if (!model) return;
+        const lineNumber = model.getLineCount();
+        const column = model.getLineMaxColumn(lineNumber);
+        editor.setPosition({ lineNumber, column });
+      });
+    },
+    [currentQuery, moveHistory]
+  );
+
+  const handleCancelQuery = () => {
+    const tab = tabStore.currentTab;
+    if (!tab) return;
+    getWebTerminalQuerySession(tab).controller.abort();
+  };
+
+  // Auto-scroll the outer container to the bottom whenever the inner
+  // stack resizes. ResizeObserver replaces `@vueuse/core`'s
+  // `useElementSize` + `watch(queryListHeight, ...)`.
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const stackRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const stack = stackRef.current;
+    if (!stack) return;
+    const observer = new ResizeObserver(() => {
+      const container = containerRef.current;
+      if (container) {
+        requestAnimationFrame(() => {
+          container.scrollTo(0, container.scrollHeight);
+        });
+      }
+    });
+    observer.observe(stack);
+    return () => observer.disconnect();
+    // Re-bind when the active tab changes — the stack element may remount.
+  }, [currentTabId]);
+
+  // Build a stable handler list per-query for the editor onChange callback,
+  // since the editor inside `<CompactSQLEditor>` re-registers actions on
+  // identity change of these props. Each handler patches the item via
+  // the zustand slice — direct mutation is not safe with immutable items.
+  const handleChangeFor = useMemo(
+    () =>
+      new Map(
+        queryList.map((q) => {
+          const tabId = currentTabId;
+          return [
+            q.id,
+            (value: string) => {
+              if (!tabId) return;
+              updateWebTerminalQueryItem(tabId, q.id, { statement: value });
+            },
+          ];
+        })
+      ),
+    [queryList, currentTabId, updateWebTerminalQueryItem]
+  );
+
+  return (
+    <div className="flex h-full w-full flex-col justify-start items-stretch overflow-hidden bg-dark-bg">
+      <EditorAction />
+      {!isDisconnected ? (
+        <div
+          ref={containerRef}
+          className="w-full flex-1 overflow-y-auto bg-dark-bg"
+        >
+          <div ref={stackRef} className="w-full flex flex-col">
+            {queryList.map((query) => {
+              const editable = isEditableQueryItem(query);
+              const database = query.params?.connection.database
+                ? databaseStore.getDatabaseByName(
+                    query.params.connection.database
+                  )
+                : undefined;
+              return (
+                <div key={query.id} className="relative">
+                  <CompactSQLEditor
+                    content={query.statement}
+                    readonly={!editable}
+                    onChange={handleChangeFor.get(query.id) ?? noop}
+                    onExecute={handleExecute}
+                    onHistory={handleHistory}
+                    onClearScreen={handleClearScreen}
+                  />
+                  {query.params && query.resultSet && database && (
+                    <div className="p-2 w-full flex-1 min-h-0">
+                      <ResultView
+                        executeParams={query.params}
+                        resultSet={query.resultSet}
+                        database={database}
+                        loading={query.status === "RUNNING"}
+                        dark
+                      />
+                    </div>
+                  )}
+                  {query.resultSet?.error && (
+                    <div className="p-2 pb-1 text-md font-normal text-matrix-green-hover">
+                      {t("sql-editor.connection-lost")}
+                    </div>
+                  )}
+                  {query.status === "RUNNING" && (
+                    <div className="absolute inset-0 bg-black/20 flex justify-center items-center gap-2">
+                      <Loader2 className="size-5 animate-spin text-control-light" />
+                      {query === currentQuery && expired && (
+                        <button
+                          type="button"
+                          className="text-gray-400 cursor-pointer hover:underline text-sm select-none"
+                          onClick={handleCancelQuery}
+                        >
+                          {t("common.cancel")}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 flex flex-col min-h-0">
+          <ConnectionHolder />
+        </div>
+      )}
+    </div>
+  );
+}
+
+const noop = () => {};
+
+// Stable empty array reference so the zustand selector doesn't return a
+// fresh `[]` on every store change for unconnected tabs (would trigger
+// spurious re-renders).
+const EMPTY_QUERY_LIST: WebTerminalQueryItemV1[] = [];
