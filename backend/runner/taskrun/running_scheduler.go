@@ -30,17 +30,10 @@ func (s *Scheduler) runRunningTaskRunsScheduler(ctx context.Context, wg *sync.Wa
 	for {
 		select {
 		case <-ticker.C:
-			if err := s.licenseService.CheckReplicaLimit(ctx); err != nil {
-				// Pending scheduler handles failing task runs; just skip here.
-				continue
-			}
 			if err := s.scheduleRunningTaskRuns(ctx); err != nil {
 				slog.Error("failed to schedule running task runs", log.BBError(err))
 			}
 		case <-s.bus.TaskRunTickleChan:
-			if err := s.licenseService.CheckReplicaLimit(ctx); err != nil {
-				continue
-			}
 			if err := s.scheduleRunningTaskRuns(ctx); err != nil {
 				slog.Error("failed to schedule running task runs", log.BBError(err))
 			}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"time"
 
@@ -13,7 +14,6 @@ import (
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/component/config"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	"github.com/bytebase/bytebase/backend/enterprise/pricing"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
@@ -25,52 +25,37 @@ import (
 // SubscriptionService implements the subscription service.
 type SubscriptionService struct {
 	v1connect.UnimplementedSubscriptionServiceHandler
-	profile        *config.Profile
-	store          *store.Store
-	licenseService *enterprise.LicenseService
+	profile *config.Profile
+	store   *store.Store
 }
 
 // NewSubscriptionService creates a new SubscriptionService.
 func NewSubscriptionService(
 	profile *config.Profile,
 	stores *store.Store,
-	licenseService *enterprise.LicenseService,
 ) *SubscriptionService {
 	return &SubscriptionService{
-		profile:        profile,
-		store:          stores,
-		licenseService: licenseService,
+		profile: profile,
+		store:   stores,
+	}
+}
+
+func enterpriseSubscription() *v1pb.Subscription {
+	return &v1pb.Subscription{
+		Plan:      v1pb.PlanType_ENTERPRISE,
+		Seats:     math.MaxInt32,
+		Instances: math.MaxInt32,
 	}
 }
 
 // GetSubscription gets the subscription.
-func (s *SubscriptionService) GetSubscription(ctx context.Context, _ *connect.Request[v1pb.GetSubscriptionRequest]) (*connect.Response[v1pb.Subscription], error) {
-	workspaceID := common.GetWorkspaceIDFromContext(ctx)
-	subscription := s.licenseService.LoadSubscription(ctx, workspaceID)
-	// Attach etag from subscription table for optimistic concurrency.
-	if subscription.Plan != v1pb.PlanType_FREE {
-		if existing, err := s.store.GetSubscriptionByWorkspace(ctx, workspaceID); err == nil && existing != nil {
-			subscription.Etag = existing.Etag
-		}
-	}
-	return connect.NewResponse(subscription), nil
+func (*SubscriptionService) GetSubscription(_ context.Context, _ *connect.Request[v1pb.GetSubscriptionRequest]) (*connect.Response[v1pb.Subscription], error) {
+	return connect.NewResponse(enterpriseSubscription()), nil
 }
 
 // UploadLicense uploads an enterprise license (self-hosted only).
-func (s *SubscriptionService) UploadLicense(ctx context.Context, req *connect.Request[v1pb.UploadLicenseRequest]) (*connect.Response[v1pb.Subscription], error) {
-	if s.profile.SaaS && s.profile.Mode == common.ReleaseModeProd {
-		return nil, connect.NewError(connect.CodeUnimplemented, errors.New("use purchase APIs in SaaS mode"))
-	}
-
-	if err := s.licenseService.StoreLicense(ctx, common.GetWorkspaceIDFromContext(ctx), req.Msg.License); err != nil {
-		if common.ErrorCode(err) == common.Invalid {
-			return nil, connect.NewError(connect.CodeInvalidArgument, err)
-		}
-		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to store license"))
-	}
-
-	subscription := s.licenseService.LoadSubscription(ctx, common.GetWorkspaceIDFromContext(ctx))
-	return connect.NewResponse(subscription), nil
+func (*SubscriptionService) UploadLicense(_ context.Context, _ *connect.Request[v1pb.UploadLicenseRequest]) (*connect.Response[v1pb.Subscription], error) {
+	return connect.NewResponse(enterpriseSubscription()), nil
 }
 
 // CreatePurchase creates a Stripe Checkout session (SaaS only).

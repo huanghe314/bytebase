@@ -22,7 +22,6 @@ import (
 	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/iam"
 
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -33,19 +32,17 @@ import (
 // UserService implements the user service.
 type UserService struct {
 	v1connect.UnimplementedUserServiceHandler
-	store          *store.Store
-	licenseService *enterprise.LicenseService
-	profile        *config.Profile
-	iamManager     *iam.Manager
+	store      *store.Store
+	profile    *config.Profile
+	iamManager *iam.Manager
 }
 
 // NewUserService creates a new UserService.
-func NewUserService(store *store.Store, licenseService *enterprise.LicenseService, profile *config.Profile, iamManager *iam.Manager) *UserService {
+func NewUserService(store *store.Store, profile *config.Profile, iamManager *iam.Manager) *UserService {
 	return &UserService{
-		store:          store,
-		licenseService: licenseService,
-		profile:        profile,
-		iamManager:     iamManager,
+		store:      store,
+		profile:    profile,
+		iamManager: iamManager,
 	}
 }
 
@@ -226,7 +223,7 @@ func (s *UserService) CreateUser(ctx context.Context, request *connect.Request[v
 	workspaceID := common.GetWorkspaceIDFromContext(ctx)
 	email := request.Msg.User.Email
 
-	if err := validateEmailWithDomains(ctx, s.licenseService, s.store, workspaceID, email, false); err != nil {
+	if err := validateEmailWithDomains(ctx, s.store, workspaceID, email, false); err != nil {
 		return nil, err
 	}
 
@@ -283,7 +280,6 @@ func (s *UserService) validatePassword(ctx context.Context, workspaceID, passwor
 	restriction, err := getAccountRestriction(
 		ctx,
 		s.store,
-		s.licenseService,
 		s.profile.SaaS,
 		workspaceID,
 	)
@@ -688,7 +684,7 @@ func (s *UserService) UpdateEmail(ctx context.Context, request *connect.Request[
 	}
 
 	// Validate email format and domain restrictions
-	if err := validateEmailWithDomains(ctx, s.licenseService, s.store, common.GetWorkspaceIDFromContext(ctx), request.Msg.Email, false); err != nil {
+	if err := validateEmailWithDomains(ctx, s.store, common.GetWorkspaceIDFromContext(ctx), request.Msg.Email, false); err != nil {
 		return nil, err
 	}
 
@@ -758,18 +754,11 @@ func validateEndUserEmail(email string) error {
 	return nil
 }
 
-func validateEmailWithDomains(ctx context.Context, licenseService *enterprise.LicenseService, stores *store.Store, workspaceID, email string, checkDomainSetting bool) error {
+func validateEmailWithDomains(ctx context.Context, stores *store.Store, workspaceID, email string, checkDomainSetting bool) error {
 	if err := validateEndUserEmail(email); err != nil {
 		return err
 	}
-	if licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_USER_EMAIL_DOMAIN_RESTRICTION) != nil {
-		// nolint:nilerr
-		// feature not enabled, only validate email and skip domain restriction.
-		if err := common.ValidateEmail(email); err != nil {
-			return connect.NewError(connect.CodeInvalidArgument, errors.Errorf("invalid email: %v", err.Error()))
-		}
-		return nil
-	}
+	// All enterprise features are always enabled, no license check needed.
 	setting, err := stores.GetWorkspaceProfileSetting(ctx, workspaceID)
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to find workspace setting"))
@@ -894,7 +883,7 @@ func countUsersInIamPolicy(ctx context.Context, s *store.Store, workspaceID stri
 // userCountGuard checks seat limits before adding a new IAM member (e.g. SSO login).
 // Uses >= because the new user has not been counted yet.
 // If policy is nil, reads the current workspace IAM policy.
-func userCountGuard(ctx context.Context, s *store.Store, licenseService *enterprise.LicenseService, workspaceID string, policy *storepb.IamPolicy, saas bool) error {
+func userCountGuard(ctx context.Context, s *store.Store, workspaceID string, policy *storepb.IamPolicy, saas bool) error {
 	if policy == nil {
 		p, err := s.GetWorkspaceIamPolicy(ctx, workspaceID)
 		if err != nil {
@@ -902,14 +891,8 @@ func userCountGuard(ctx context.Context, s *store.Store, licenseService *enterpr
 		}
 		policy = p.Policy
 	}
-	userLimit := licenseService.GetUserLimit(ctx, workspaceID)
-	count, err := countUsersInIamPolicy(ctx, s, workspaceID, policy, saas)
-	if err != nil {
-		return connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to count users in IAM policy"))
-	}
-	if count >= userLimit {
-		return connect.NewError(connect.CodeResourceExhausted, errors.Errorf("workspace has %d users, reaching the limit of %d", count, userLimit))
-	}
+	// All enterprise features are always enabled, user limit is unlimited.
+	_, _ = countUsersInIamPolicy(ctx, s, workspaceID, policy, saas)
 	return nil
 }
 
@@ -924,7 +907,7 @@ func (s *UserService) preAddUserGuard(ctx context.Context, workspaceID string) e
 	if !policyContainsAllUsers(p.Policy) {
 		return nil
 	}
-	return userCountGuard(ctx, s.store, s.licenseService, workspaceID, p.Policy, s.profile.SaaS)
+	return userCountGuard(ctx, s.store, workspaceID, p.Policy, s.profile.SaaS)
 }
 
 func policyContainsAllUsers(policy *storepb.IamPolicy) bool {

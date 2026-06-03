@@ -11,12 +11,10 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/bytebase/bytebase/backend/api/auth"
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/sampleinstance"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -29,7 +27,6 @@ type ActuatorService struct {
 	v1connect.UnimplementedActuatorServiceHandler
 	store                 *store.Store
 	profile               *config.Profile
-	licenseService        *enterprise.LicenseService
 	schemaSyncer          *schemasync.Syncer
 	sampleInstanceManager *sampleinstance.Manager
 }
@@ -39,13 +36,11 @@ func NewActuatorService(
 	store *store.Store,
 	profile *config.Profile,
 	schemaSyncer *schemasync.Syncer,
-	licenseService *enterprise.LicenseService,
 	sampleInstanceManager *sampleinstance.Manager,
 ) *ActuatorService {
 	return &ActuatorService{
 		store:                 store,
 		profile:               profile,
-		licenseService:        licenseService,
 		schemaSyncer:          schemaSyncer,
 		sampleInstanceManager: sampleInstanceManager,
 	}
@@ -121,7 +116,6 @@ func (s *ActuatorService) getServerInfo(ctx context.Context, workspaceID string)
 	restriction, err := getAccountRestriction(
 		ctx,
 		s.store,
-		s.licenseService,
 		s.profile.SaaS,
 		workspaceID,
 	)
@@ -136,7 +130,6 @@ func (s *ActuatorService) getServerInfo(ctx context.Context, workspaceID string)
 		LastActiveTime:      timestamppb.New(time.Unix(s.profile.LastActiveTS.Load(), 0)),
 		Docker:              s.profile.IsDocker,
 		ExternalUrlFromFlag: s.profile.ExternalURL != "",
-		ReplicaCount:        int32(s.licenseService.CountActiveReplicas(ctx)),
 		Restriction:         restriction,
 		ExternalUrl:         s.profile.ExternalURL,
 	}
@@ -149,17 +142,6 @@ func (s *ActuatorService) getServerInfo(ctx context.Context, workspaceID string)
 			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get default project"))
 		}
 		serverInfo.DefaultProject = common.FormatProject(defaultProjectID)
-
-		usedFeatures, err := s.getUsedFeatures(ctx, workspaceID)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get used features"))
-		}
-		unlicensedFeatures := s.getUnlicensedFeatures(ctx, workspaceID, usedFeatures)
-		var unlicensedFeaturesString []string
-		for _, f := range unlicensedFeatures {
-			unlicensedFeaturesString = append(unlicensedFeaturesString, f.String())
-		}
-		serverInfo.UnlicensedFeatures = unlicensedFeaturesString
 
 		if !s.profile.SaaS {
 			activePrincipalCount, err := s.store.CountActivePrincipals(ctx)
@@ -200,88 +182,10 @@ func (s *ActuatorService) getServerInfo(ctx context.Context, workspaceID string)
 		}
 		serverInfo.TotalInstanceCount = int32(activeInstanceCount)
 
-		if s.licenseService.IsUnifiedInstanceLicense(ctx, workspaceID) {
-			serverInfo.ActivatedInstanceCount = int32(activeInstanceCount)
-		} else {
-			activatedInstanceCount, err := s.store.GetActivatedInstanceCount(ctx, workspaceID)
-			if err != nil {
-				return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to count activated instance"))
-			}
-			serverInfo.ActivatedInstanceCount = int32(activatedInstanceCount)
-		}
+		serverInfo.ActivatedInstanceCount = int32(activeInstanceCount)
 	}
 
 	return &serverInfo, nil
-}
-
-func (s *ActuatorService) getUsedFeatures(ctx context.Context, workspaceID string) ([]v1pb.PlanFeature, error) {
-	var features []v1pb.PlanFeature
-
-	// idp
-	idps, err := s.store.ListIdentityProviders(ctx, &store.FindIdentityProviderMessage{Workspace: &workspaceID})
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list identity providers")
-	}
-	// TODO(d): use fine-grained feature control for SSO.
-	if len(idps) > 0 {
-		features = append(features, v1pb.PlanFeature_FEATURE_ENTERPRISE_SSO)
-	}
-
-	setting, err := s.store.GetWorkspaceProfileSetting(ctx, workspaceID)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get workspace general setting")
-	}
-	if setting.DisallowSignup {
-		features = append(features, v1pb.PlanFeature_FEATURE_DISALLOW_SELF_SERVICE_SIGNUP)
-	}
-	if setting.Require_2Fa {
-		features = append(features, v1pb.PlanFeature_FEATURE_TWO_FA)
-	}
-	if setting.GetRefreshTokenDuration().GetSeconds() > 0 && float64(setting.GetRefreshTokenDuration().GetSeconds()) != auth.DefaultRefreshTokenDuration.Seconds() {
-		features = append(features, v1pb.PlanFeature_FEATURE_TOKEN_DURATION_CONTROL)
-	}
-	if setting.GetAnnouncement().GetText() != "" {
-		features = append(features, v1pb.PlanFeature_FEATURE_DASHBOARD_ANNOUNCEMENT)
-	}
-	if setting.Watermark {
-		features = append(features, v1pb.PlanFeature_FEATURE_WATERMARK)
-	}
-	ws, err := s.store.GetWorkspaceByID(ctx, workspaceID)
-	if err == nil && ws != nil && ws.Payload.GetLogo() != "" {
-		features = append(features, v1pb.PlanFeature_FEATURE_CUSTOM_LOGO)
-	}
-
-	// environment tier
-	environments, err := s.store.GetEnvironment(ctx, workspaceID)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get environment setting")
-	}
-	for _, env := range environments.GetEnvironments() {
-		if v, ok := env.Tags["protected"]; ok && v == "protected" {
-			features = append(features, v1pb.PlanFeature_FEATURE_ENVIRONMENT_TIERS)
-			break
-		}
-	}
-
-	// database group
-	databaseGroups, err := s.store.ListDatabaseGroups(ctx, &store.FindDatabaseGroupMessage{})
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list database groups")
-	}
-	if len(databaseGroups) > 0 {
-		features = append(features, v1pb.PlanFeature_FEATURE_DATABASE_GROUPS)
-	}
-	return features, nil
-}
-
-func (s *ActuatorService) getUnlicensedFeatures(ctx context.Context, workspaceID string, features []v1pb.PlanFeature) []v1pb.PlanFeature {
-	var unlicensedFeatures []v1pb.PlanFeature
-	for _, feature := range features {
-		if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, feature); err != nil {
-			unlicensedFeatures = append(unlicensedFeatures, feature)
-		}
-	}
-	return unlicensedFeatures
 }
 
 // convertToV1PasswordRestriction converts store PasswordRestriction to v1 PasswordRestriction.

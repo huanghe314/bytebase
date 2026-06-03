@@ -16,7 +16,6 @@ import (
 	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/iam"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -29,11 +28,10 @@ import (
 // WorkspaceService implements the workspace service.
 type WorkspaceService struct {
 	v1connect.UnimplementedWorkspaceServiceHandler
-	store          *store.Store
-	licenseService *enterprise.LicenseService
-	iamManager     *iam.Manager
-	profile        *config.Profile
-	authService    *AuthService
+	store       *store.Store
+	iamManager  *iam.Manager
+	profile     *config.Profile
+	authService *AuthService
 }
 
 // NewWorkspaceService creates a new WorkspaceService.
@@ -41,15 +39,13 @@ func NewWorkspaceService(
 	store *store.Store,
 	iamManager *iam.Manager,
 	profile *config.Profile,
-	licenseService *enterprise.LicenseService,
 	authService *AuthService,
 ) *WorkspaceService {
 	return &WorkspaceService{
-		store:          store,
-		iamManager:     iamManager,
-		profile:        profile,
-		licenseService: licenseService,
-		authService:    authService,
+		store:       store,
+		iamManager:  iamManager,
+		profile:     profile,
+		authService: authService,
 	}
 }
 
@@ -166,9 +162,6 @@ func (s *WorkspaceService) UpdateWorkspace(ctx context.Context, req *connect.Req
 			}
 			patch.Title = &ws.Title
 		case "logo":
-			if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_CUSTOM_LOGO); err != nil {
-				return nil, connect.NewError(connect.CodePermissionDenied, err)
-			}
 			patch.Logo = &ws.Logo
 		default:
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("unsupported field: %q", path))
@@ -399,23 +392,6 @@ func (s *WorkspaceService) SetIamPolicy(ctx context.Context, req *connect.Reques
 	)
 	if !containsActiveEndUser(users) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("workspace must have at least one admin"))
-	}
-
-	// Guard: count members in the new policy BEFORE saving.
-	// Allow over-limit workspaces to reduce seats incrementally (e.g. after license downgrade).
-	userLimit := s.licenseService.GetUserLimit(ctx, workspaceID)
-	newCount, err := countUsersInIamPolicy(ctx, s.store, workspaceID, iamPolicy, s.profile.SaaS)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to count users in IAM policy"))
-	}
-	if newCount > userLimit {
-		oldCount, err := countUsersInIamPolicy(ctx, s.store, workspaceID, policyMessage.Policy, s.profile.SaaS)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to count users in current IAM policy"))
-		}
-		if newCount >= oldCount {
-			return nil, connect.NewError(connect.CodeResourceExhausted, errors.Errorf("workspace has %d users, exceeding the limit of %d", newCount, userLimit))
-		}
 	}
 
 	payloadBytes, err := protojson.Marshal(iamPolicy)

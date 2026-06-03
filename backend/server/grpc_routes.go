@@ -30,7 +30,7 @@ import (
 	"github.com/bytebase/bytebase/backend/component/sampleinstance"
 	"github.com/bytebase/bytebase/backend/component/sheet"
 	"github.com/bytebase/bytebase/backend/component/webhook"
-	"github.com/bytebase/bytebase/backend/enterprise"
+
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
 	"github.com/bytebase/bytebase/backend/runner/schemasync"
@@ -43,7 +43,6 @@ func configureGrpcRouters(
 	stores *store.Store,
 	sheetManager *sheet.Manager,
 	dbFactory *dbfactory.DBFactory,
-	licenseService *enterprise.LicenseService,
 	profile *config.Profile,
 	bus *bus.Bus,
 	schemaSyncer *schemasync.Syncer,
@@ -88,36 +87,36 @@ func configureGrpcRouters(
 		}),
 	)
 	aiService := apiv1.NewAIService(stores)
-	accessGrantService := apiv1.NewAccessGrantService(stores, licenseService, webhookManager, bus)
-	actuatorService := apiv1.NewActuatorService(stores, profile, schemaSyncer, licenseService, sampleInstanceManager)
-	auditLogService := apiv1.NewAuditLogService(stores, licenseService)
-	authService := apiv1.NewAuthService(stores, secret, licenseService, profile, iamManager)
+	accessGrantService := apiv1.NewAccessGrantService(stores, webhookManager, bus)
+	actuatorService := apiv1.NewActuatorService(stores, profile, schemaSyncer, sampleInstanceManager)
+	auditLogService := apiv1.NewAuditLogService(stores)
+	authService := apiv1.NewAuthService(stores, secret, profile, iamManager)
 	celService := apiv1.NewCelService()
 	databaseCatalogService := apiv1.NewDatabaseCatalogService(stores)
-	databaseGroupService := apiv1.NewDatabaseGroupService(stores, licenseService)
-	databaseService := apiv1.NewDatabaseService(stores, schemaSyncer, profile, iamManager, licenseService)
-	groupService := apiv1.NewGroupService(stores, iamManager, licenseService)
-	identityProviderService := apiv1.NewIdentityProviderService(stores, licenseService, profile)
+	databaseGroupService := apiv1.NewDatabaseGroupService(stores)
+	databaseService := apiv1.NewDatabaseService(stores, schemaSyncer, profile, iamManager)
+	groupService := apiv1.NewGroupService(stores, iamManager)
+	identityProviderService := apiv1.NewIdentityProviderService(stores, profile)
 	instanceRoleService := apiv1.NewInstanceRoleService(stores)
-	instanceService := apiv1.NewInstanceService(stores, profile, licenseService, dbFactory, schemaSyncer, sampleInstanceManager)
-	issueService := apiv1.NewIssueService(stores, webhookManager, bus, licenseService, iamManager)
-	orgPolicyService := apiv1.NewOrgPolicyService(stores, licenseService, iamManager)
-	planService := apiv1.NewPlanService(stores, bus, iamManager, webhookManager, licenseService)
+	instanceService := apiv1.NewInstanceService(stores, profile, dbFactory, schemaSyncer, sampleInstanceManager)
+	issueService := apiv1.NewIssueService(stores, webhookManager, bus, iamManager)
+	orgPolicyService := apiv1.NewOrgPolicyService(stores, iamManager)
+	planService := apiv1.NewPlanService(stores, bus, iamManager, webhookManager)
 	projectService := apiv1.NewProjectService(stores, profile, iamManager)
 	releaseService := apiv1.NewReleaseService(stores, sheetManager, dbFactory)
 	reviewConfigService := apiv1.NewReviewConfigService(stores)
 	revisionService := apiv1.NewRevisionService(stores)
-	roleService := apiv1.NewRoleService(stores, iamManager, licenseService)
+	roleService := apiv1.NewRoleService(stores, iamManager)
 	rolloutService := apiv1.NewRolloutService(stores, dbFactory, bus, webhookManager, iamManager)
-	settingService := apiv1.NewSettingService(stores, profile, licenseService, iamManager)
+	settingService := apiv1.NewSettingService(stores, profile, iamManager)
 	sheetService := apiv1.NewSheetService(stores)
-	sqlService := apiv1.NewSQLService(stores, schemaSyncer, dbFactory, licenseService, iamManager)
-	subscriptionService := apiv1.NewSubscriptionService(profile, stores, licenseService)
-	userService := apiv1.NewUserService(stores, licenseService, profile, iamManager)
+	sqlService := apiv1.NewSQLService(stores, schemaSyncer, dbFactory, iamManager)
+	subscriptionService := apiv1.NewSubscriptionService(profile, stores)
+	userService := apiv1.NewUserService(stores, profile, iamManager)
 	serviceAccountService := apiv1.NewServiceAccountService(stores, profile, iamManager)
 	workloadIdentityService := apiv1.NewWorkloadIdentityService(stores, profile, iamManager)
 	worksheetService := apiv1.NewWorksheetService(stores, iamManager)
-	workspaceService := apiv1.NewWorkspaceService(stores, iamManager, profile, licenseService, authService)
+	workspaceService := apiv1.NewWorkspaceService(stores, iamManager, profile, authService)
 
 	onPanic := func(_ context.Context, s connect.Spec, _ http.Header, p any) error {
 		stack := stacktrace.TakeStacktrace(20 /* n */, 5 /* skip */)
@@ -132,7 +131,7 @@ func configureGrpcRouters(
 	handlerOpts := connect.WithHandlerOptions(
 		connect.WithInterceptors(
 			validateInterceptor,
-			auth.New(stores, secret, licenseService, bus, profile),
+			auth.New(stores, secret, bus, profile),
 			apiv1.NewACLInterceptor(stores, secret, iamManager, profile),
 			apiv1.NewAuditInterceptor(stores, secret, profile),
 		),

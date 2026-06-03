@@ -5,12 +5,9 @@ import type { Ref } from "vue";
 import { computed, ref } from "vue";
 import { subscriptionServiceClientConnect } from "@/connect";
 import {
-  hasFeature as checkFeature,
-  hasInstanceFeature as checkInstanceFeature,
   getDateForPbTimestampProtoEs,
   getMinimumRequiredPlan,
   getTimeForPbTimestampProtoEs,
-  instanceLimitFeature,
   PLANS,
 } from "@/types";
 import type {
@@ -146,7 +143,7 @@ export const useSubscriptionV1Store = defineStore("subscription_v1", () => {
       !subscription.value.expiresTime ||
       isFreePlan.value
     ) {
-      return -1;
+      return Number.MAX_SAFE_INTEGER;
     }
 
     const expiresTime = dayjs(
@@ -180,50 +177,22 @@ export const useSubscriptionV1Store = defineStore("subscription_v1", () => {
     subscription.value = sub;
   };
 
-  const hasFeature = (feature: PlanFeature) => {
-    if (isExpired.value) {
-      return false;
-    }
-    return checkFeature(currentPlan.value, feature);
+  const hasFeature = (_feature: PlanFeature) => {
+    return true;
   };
 
   const hasInstanceFeature = (
-    feature: PlanFeature,
-    instance: Instance | InstanceResource | undefined = undefined
+    _feature: PlanFeature,
+    _instance: Instance | InstanceResource | undefined = undefined
   ) => {
-    // For FREE plan, don't check instance activation
-    if (currentPlan.value === PlanType.FREE) {
-      return hasFeature(feature);
-    }
-
-    // If no instance provided or feature is not instance-limited
-    if (!instance || !instanceLimitFeature.has(feature)) {
-      return hasFeature(feature);
-    }
-
-    return checkInstanceFeature(
-      currentPlan.value,
-      feature,
-      hasUnifiedInstanceLicense.value || instance.activation
-    );
+    return true;
   };
 
   const instanceMissingLicense = (
-    feature: PlanFeature,
-    instance: Instance | InstanceResource | undefined = undefined
+    _feature: PlanFeature,
+    _instance: Instance | InstanceResource | undefined = undefined
   ) => {
-    // Only relevant for instance-limited features
-    if (!instanceLimitFeature.has(feature)) {
-      return false;
-    }
-    if (!instance) {
-      return false;
-    }
-    if (hasUnifiedInstanceLicense.value) {
-      return false;
-    }
-    // Feature is available in plan but instance is not activated
-    return hasFeature(feature) && !instance.activation;
+    return false;
   };
 
   // Fetch subscription. When cache=false, returns the result without updating the store.

@@ -21,7 +21,6 @@ import (
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/component/bus"
 	"github.com/bytebase/bytebase/backend/component/config"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/store"
@@ -52,27 +51,24 @@ const (
 
 // APIAuthInterceptor is the auth interceptor for gRPC server.
 type APIAuthInterceptor struct {
-	store          *store.Store
-	secret         string
-	licenseService *enterprise.LicenseService
-	bus            *bus.Bus
-	profile        *config.Profile
+	store   *store.Store
+	secret  string
+	bus     *bus.Bus
+	profile *config.Profile
 }
 
 // New returns a new API auth interceptor.
 func New(
 	store *store.Store,
 	secret string,
-	licenseService *enterprise.LicenseService,
 	bus *bus.Bus,
 	profile *config.Profile,
 ) *APIAuthInterceptor {
 	return &APIAuthInterceptor{
-		store:          store,
-		secret:         secret,
-		licenseService: licenseService,
-		bus:            bus,
-		profile:        profile,
+		store:   store,
+		secret:  secret,
+		bus:     bus,
+		profile: profile,
 	}
 }
 

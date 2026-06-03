@@ -18,7 +18,6 @@ import (
 	"github.com/bytebase/bytebase/backend/common/permission"
 	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/iam"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -31,21 +30,19 @@ import (
 // DatabaseService implements the database service.
 type DatabaseService struct {
 	v1connect.UnimplementedDatabaseServiceHandler
-	store          *store.Store
-	schemaSyncer   *schemasync.Syncer
-	profile        *config.Profile
-	iamManager     *iam.Manager
-	licenseService *enterprise.LicenseService
+	store        *store.Store
+	schemaSyncer *schemasync.Syncer
+	profile      *config.Profile
+	iamManager   *iam.Manager
 }
 
 // NewDatabaseService creates a new DatabaseService.
-func NewDatabaseService(store *store.Store, schemaSyncer *schemasync.Syncer, profile *config.Profile, iamManager *iam.Manager, licenseService *enterprise.LicenseService) *DatabaseService {
+func NewDatabaseService(store *store.Store, schemaSyncer *schemasync.Syncer, profile *config.Profile, iamManager *iam.Manager) *DatabaseService {
 	return &DatabaseService{
-		store:          store,
-		schemaSyncer:   schemaSyncer,
-		profile:        profile,
-		iamManager:     iamManager,
-		licenseService: licenseService,
+		store:        store,
+		schemaSyncer: schemaSyncer,
+		profile:      profile,
+		iamManager:   iamManager,
 	}
 }
 
@@ -1000,7 +997,7 @@ func (s *DatabaseService) convertToDatabase(ctx context.Context, database *store
 	}
 	instanceResource := convertToV1InstanceResource(
 		instance,
-		s.licenseService.IsInstanceEffectivelyActivated(ctx, common.GetWorkspaceIDFromContext(ctx), instance),
+		true,
 	)
 	return &v1pb.Database{
 		Name:                 common.FormatDatabase(database.InstanceID, database.DatabaseName),

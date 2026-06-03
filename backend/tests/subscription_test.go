@@ -17,9 +17,8 @@ func TestSubscription(t *testing.T) {
 	a.NoError(err)
 	defer ctl.Close(ctx)
 
-	err = ctl.removeLicense(ctx)
-	a.NoError(err)
 	subscription, err := ctl.getSubscription(ctx)
 	a.NoError(err)
-	a.Equal(v1pb.PlanType_FREE, subscription.Plan)
+	// All enterprise features are always enabled — GetSubscription always returns ENTERPRISE.
+	a.Equal(v1pb.PlanType_ENTERPRISE, subscription.Plan)
 }

@@ -22,7 +22,7 @@ import (
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
-	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
+
 	"github.com/bytebase/bytebase/backend/store"
 )
 
@@ -42,16 +42,12 @@ func detectSCIMSource(c *echo.Context) string {
 	return entraIDSource
 }
 
-// scimAuthMiddleware validates authentication and license for all SCIM endpoints.
+// scimAuthMiddleware validates authentication for all SCIM endpoints.
 func (s *Service) scimAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c *echo.Context) error {
 		ctx := c.Request().Context()
 		if err := s.validRequestURL(ctx, c); err != nil {
 			return c.String(http.StatusUnauthorized, err.Error())
-		}
-		workspaceID := c.Param("workspaceID")
-		if err := s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_DIRECTORY_SYNC); err != nil {
-			return c.String(http.StatusForbidden, err.Error())
 		}
 		return next(c)
 	}
@@ -62,7 +58,7 @@ func (s *Service) scimAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 // https://learn.microsoft.com/en-us/entra/identity/app-provisioning/use-scim-to-provision-users-and-groups
 // https://developer.okta.com/docs/reference/scim/scim-20/
 func (s *Service) RegisterDirectorySyncRoutes(g *echo.Group) {
-	// Apply authentication and license check middleware to all SCIM endpoints.
+	// Apply authentication middleware to all SCIM endpoints.
 	g.Use(s.scimAuthMiddleware)
 
 	// ServiceProviderConfig endpoint allows SCIM clients to discover server capabilities.

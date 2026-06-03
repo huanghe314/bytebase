@@ -24,7 +24,6 @@ import (
 	"github.com/bytebase/bytebase/backend/component/dbfactory"
 	"github.com/bytebase/bytebase/backend/component/export"
 	"github.com/bytebase/bytebase/backend/component/iam"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -41,11 +40,10 @@ import (
 // SQLService is the service for SQL.
 type SQLService struct {
 	v1connect.UnimplementedSQLServiceHandler
-	store          *store.Store
-	schemaSyncer   *schemasync.Syncer
-	dbFactory      *dbfactory.DBFactory
-	licenseService *enterprise.LicenseService
-	iamManager     *iam.Manager
+	store        *store.Store
+	schemaSyncer *schemasync.Syncer
+	dbFactory    *dbfactory.DBFactory
+	iamManager   *iam.Manager
 }
 
 // NewSQLService creates a SQLService.
@@ -53,23 +51,18 @@ func NewSQLService(
 	store *store.Store,
 	schemaSyncer *schemasync.Syncer,
 	dbFactory *dbfactory.DBFactory,
-	licenseService *enterprise.LicenseService,
 	iamManager *iam.Manager,
 ) *SQLService {
 	return &SQLService{
-		store:          store,
-		schemaSyncer:   schemaSyncer,
-		dbFactory:      dbFactory,
-		licenseService: licenseService,
-		iamManager:     iamManager,
+		store:        store,
+		schemaSyncer: schemaSyncer,
+		dbFactory:    dbFactory,
+		iamManager:   iamManager,
 	}
 }
 
 // AdminExecute executes the SQL statement.
 func (s *SQLService) AdminExecute(ctx context.Context, stream *connect.BidiStream[v1pb.AdminExecuteRequest, v1pb.AdminExecuteResponse]) error {
-	if err := s.licenseService.IsFeatureEnabled(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_SQL_EDITOR_ADMIN_MODE); err != nil {
-		return connect.NewError(connect.CodePermissionDenied, err)
-	}
 	var driver db.Driver
 	var conn *sql.Conn
 	var connectionName string
@@ -119,7 +112,6 @@ func (s *SQLService) AdminExecute(ctx context.Context, stream *connect.BidiStrea
 		queryRestriction := getEffectiveQueryDataPolicy(
 			ctx,
 			s.store,
-			s.licenseService,
 			request.Limit,
 			database.ProjectID,
 		)
@@ -255,7 +247,7 @@ func (s *SQLService) Query(ctx context.Context, req *connect.Request[v1pb.QueryR
 		return nil, err
 	}
 
-	dataSource, err := checkAndGetDataSourceQueriable(ctx, s.store, s.licenseService, database, resolvedDataSourceID)
+	dataSource, err := checkAndGetDataSourceQueriable(ctx, s.store, database, resolvedDataSourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +275,6 @@ func (s *SQLService) Query(ctx context.Context, req *connect.Request[v1pb.QueryR
 	queryRestriction := getEffectiveQueryDataPolicy(
 		ctx,
 		s.store,
-		s.licenseService,
 		request.Limit,
 		database.ProjectID,
 	)
@@ -317,7 +308,6 @@ func (s *SQLService) Query(ctx context.Context, req *connect.Request[v1pb.QueryR
 		conn,
 		statement,
 		queryContext,
-		s.licenseService,
 		optionalAccessCheck,
 		s.schemaSyncer,
 	)
@@ -383,7 +373,6 @@ func (s *SQLService) Query(ctx context.Context, req *connect.Request[v1pb.QueryR
 func getEffectiveQueryDataPolicy(
 	ctx context.Context,
 	stores *store.Store,
-	licenseService *enterprise.LicenseService,
 	limit int32,
 	projectID string,
 ) *store.EffectiveQueryDataPolicy {
@@ -391,14 +380,12 @@ func getEffectiveQueryDataPolicy(
 		MaximumResultSize: common.DefaultMaximumSQLResultSize,
 		MaximumResultRows: math.MaxInt32,
 	}
-	if err := licenseService.IsFeatureEnabled(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_QUERY_POLICY); err == nil {
-		policy, err := stores.GetEffectiveQueryDataPolicy(ctx, common.GetWorkspaceIDFromContext(ctx), common.FormatProject(projectID))
-		if err != nil {
-			slog.Error("failed to get the query data policy", log.BBError(err))
-			return value
-		}
-		value = policy
+	policy, err := stores.GetEffectiveQueryDataPolicy(ctx, common.GetWorkspaceIDFromContext(ctx), common.FormatProject(projectID))
+	if err != nil {
+		slog.Error("failed to get the query data policy", log.BBError(err))
+		return value
 	}
+	value = policy
 	if limit > 0 {
 		value.MaximumResultRows = min(limit, value.MaximumResultRows)
 	}
@@ -544,7 +531,6 @@ func queryRetry(
 	statements []parserbase.Statement,
 	originalStatement string,
 	queryContext db.QueryContext,
-	licenseService *enterprise.LicenseService,
 	optionalAccessCheck accessCheckFunc,
 	schemaSyncer *schemasync.Syncer,
 ) ([]*v1pb.QueryResult, []*parserbase.QuerySpan, time.Duration, error) {
@@ -581,7 +567,7 @@ func queryRetry(
 			}
 			slog.Debug("optional access check", slog.String("instance", instance.ResourceID), slog.String("database", database.DatabaseName))
 		}
-		if !queryContext.SkipMasking && licenseService.IsFeatureEnabledForInstance(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_DATA_MASKING, instance) == nil {
+		if !queryContext.SkipMasking {
 			masker := NewQueryResultMasker(stores)
 			sensitivePredicateColumns, err = masker.ExtractSensitivePredicateColumns(ctx, spans, instance, user)
 			if err != nil {
@@ -591,8 +577,7 @@ func queryRetry(
 		}
 	}
 
-	maskingEnabled := !queryContext.Explain && !queryContext.SkipMasking &&
-		licenseService.IsFeatureEnabledForInstance(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_DATA_MASKING, instance) == nil
+	maskingEnabled := !queryContext.Explain && !queryContext.SkipMasking
 
 	if maskingEnabled {
 		if err := preExecuteMaskingCheck(ctx, stores, instance.Metadata.GetEngine(), database, spans); err != nil {
@@ -677,7 +662,7 @@ func queryRetry(
 		if err := replaceBackupTableWithSource(ctx, stores, instance, database, spans); err != nil {
 			slog.Debug("failed to replace backup table with source", log.BBError(err))
 		}
-		if !queryContext.SkipMasking && licenseService.IsFeatureEnabledForInstance(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_DATA_MASKING, instance) == nil {
+		if !queryContext.SkipMasking {
 			masker := NewQueryResultMasker(stores)
 			sensitivePredicateColumns, err = masker.ExtractSensitivePredicateColumns(ctx, spans, instance, user)
 			if err != nil {
@@ -753,7 +738,6 @@ func queryRetryStopOnError(
 	conn *sql.Conn,
 	statement string,
 	queryContext db.QueryContext,
-	licenseService *enterprise.LicenseService,
 	optionalAccessCheck accessCheckFunc,
 	schemaSyncer *schemasync.Syncer,
 ) ([]*v1pb.QueryResult, []*parserbase.QuerySpan, time.Duration, error) {
@@ -766,7 +750,7 @@ func queryRetryStopOnError(
 		if err != nil {
 			return nil, nil, 0, err
 		}
-		return queryRetry(ctx, stores, user, instance, database, driver, conn, statements, statement, queryContext, licenseService, optionalAccessCheck, schemaSyncer)
+		return queryRetry(ctx, stores, user, instance, database, driver, conn, statements, statement, queryContext, optionalAccessCheck, schemaSyncer)
 	}
 
 	// Split the statement into individual SQLs
@@ -775,7 +759,7 @@ func queryRetryStopOnError(
 		// Engines without splitter support (MongoDB, Redis, Elasticsearch) fall back to
 		// treating the entire statement as a single unit. These engines also don't have
 		// GetQuerySpan support, so queryRetry will return nil spans (old behavior).
-		return queryRetry(ctx, stores, user, instance, database, driver, conn, []parserbase.Statement{{Text: statement}}, statement, queryContext, licenseService, optionalAccessCheck, schemaSyncer)
+		return queryRetry(ctx, stores, user, instance, database, driver, conn, []parserbase.Statement{{Text: statement}}, statement, queryContext, optionalAccessCheck, schemaSyncer)
 	}
 
 	var allResults []*v1pb.QueryResult
@@ -788,7 +772,7 @@ func queryRetryStopOnError(
 			continue
 		}
 
-		results, spans, duration, err := queryRetry(ctx, stores, user, instance, database, driver, conn, []parserbase.Statement{stmt}, stmt.Text, queryContext, licenseService, optionalAccessCheck, schemaSyncer)
+		results, spans, duration, err := queryRetry(ctx, stores, user, instance, database, driver, conn, []parserbase.Statement{stmt}, stmt.Text, queryContext, optionalAccessCheck, schemaSyncer)
 		totalDuration += duration
 
 		if err != nil {
@@ -883,11 +867,11 @@ func (s *SQLService) Export(ctx context.Context, req *connect.Request[v1pb.Expor
 		return nil, err
 	}
 
-	dataSource, err := checkAndGetDataSourceQueriable(ctx, s.store, s.licenseService, database, resolvedDataSourceID)
+	dataSource, err := checkAndGetDataSourceQueriable(ctx, s.store, database, resolvedDataSourceID)
 	if err != nil {
 		return nil, err
 	}
-	bytes, duration, exportErr := doExport(ctx, s.store, s.dbFactory, s.licenseService, request, user, instance, database, s.accessCheck, s.schemaSyncer, dataSource)
+	bytes, duration, exportErr := doExport(ctx, s.store, s.dbFactory, request, user, instance, database, s.accessCheck, s.schemaSyncer, dataSource)
 
 	s.createQueryHistory(database, store.QueryHistoryTypeExport, statement, user.Email, duration, exportErr)
 
@@ -1019,7 +1003,6 @@ func doExport(
 	ctx context.Context,
 	stores *store.Store,
 	dbFactory *dbfactory.DBFactory,
-	licenseService *enterprise.LicenseService,
 	request *v1pb.ExportRequest,
 	user *store.UserMessage,
 	instance *store.InstanceMessage,
@@ -1053,7 +1036,6 @@ func doExport(
 	queryRestriction := getEffectiveQueryDataPolicy(
 		ctx,
 		stores,
-		licenseService,
 		request.Limit,
 		database.ProjectID,
 	)
@@ -1087,7 +1069,6 @@ func doExport(
 		statements,
 		request.Statement,
 		queryContext,
-		licenseService,
 		optionalAccessCheck,
 		schemaSyncer,
 	)
@@ -1095,11 +1076,10 @@ func doExport(
 		return nil, duration, queryErr
 	}
 
-	if licenseService.IsFeatureEnabledForInstance(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_DATA_MASKING, instance) == nil {
-		masker := NewQueryResultMasker(stores)
-		if err := masker.MaskResults(ctx, spans, results, instance, user); err != nil {
-			return nil, duration, err
-		}
+	// All enterprise features are always enabled, always apply data masking.
+	masker := NewQueryResultMasker(stores)
+	if err := masker.MaskResults(ctx, spans, results, instance, user); err != nil {
+		return nil, duration, err
 	}
 
 	var buf bytes.Buffer
@@ -1819,7 +1799,6 @@ func resolveDataSourceID(instance *store.InstanceMessage, dataSourceID string) (
 func checkAndGetDataSourceQueriable(
 	ctx context.Context,
 	storeInstance *store.Store,
-	licenseService *enterprise.LicenseService,
 	database *store.DatabaseMessage,
 	dataSourceID string,
 ) (*storepb.DataSource, error) {
@@ -1848,14 +1827,6 @@ func checkAndGetDataSourceQueriable(
 
 	// Always allow non-admin data source.
 	if dataSource.GetType() != storepb.DataSourceType_ADMIN {
-		if err := licenseService.IsFeatureEnabledForInstance(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_INSTANCE_READ_ONLY_CONNECTION, instance); err != nil {
-			return nil, connect.NewError(connect.CodePermissionDenied, errors.New(err.Error()))
-		}
-		return dataSource, nil
-	}
-
-	//nolint:nilerr
-	if err := licenseService.IsFeatureEnabled(ctx, common.GetWorkspaceIDFromContext(ctx), v1pb.PlanFeature_FEATURE_QUERY_POLICY); err != nil {
 		return dataSource, nil
 	}
 

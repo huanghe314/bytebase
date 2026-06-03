@@ -6,13 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bytebase/bytebase/backend/enterprise"
-	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/store"
 )
 
 // token="" => unset
-func GetTokenCookie(ctx context.Context, stores *store.Store, licenseService *enterprise.LicenseService, workspaceID string, origin, token string) *http.Cookie {
+func GetTokenCookie(ctx context.Context, stores *store.Store, workspaceID string, origin, token string) *http.Cookie {
 	if token == "" {
 		return &http.Cookie{
 			Name:    AccessTokenCookieName,
@@ -26,7 +24,7 @@ func GetTokenCookie(ctx context.Context, stores *store.Store, licenseService *en
 	// extract the workspace from the expired JWT, even after long idle periods.
 	// The auth middleware rejects expired JWTs for API calls, so a stale cookie is harmless.
 	// The cookie is only read by Refresh() which verifies the signature but skips expiry.
-	cookieDuration := GetRefreshTokenDuration(ctx, stores, licenseService, workspaceID)
+	cookieDuration := GetRefreshTokenDuration(ctx, stores, workspaceID)
 	return &http.Cookie{
 		Name:    AccessTokenCookieName,
 		Value:   token,
@@ -40,13 +38,8 @@ func GetTokenCookie(ctx context.Context, stores *store.Store, licenseService *en
 	}
 }
 
-func GetAccessTokenDuration(ctx context.Context, store *store.Store, licenseService *enterprise.LicenseService, workspaceID string) time.Duration {
+func GetAccessTokenDuration(ctx context.Context, store *store.Store, workspaceID string) time.Duration {
 	accessTokenDuration := DefaultAccessTokenDuration
-
-	// If the sign-in frequency control feature is not enabled, return default duration
-	if err := licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_TOKEN_DURATION_CONTROL); err != nil {
-		return accessTokenDuration
-	}
 
 	workspaceProfile, err := store.GetWorkspaceProfileSetting(ctx, workspaceID)
 	if err != nil {
@@ -60,13 +53,8 @@ func GetAccessTokenDuration(ctx context.Context, store *store.Store, licenseServ
 	return accessTokenDuration
 }
 
-func GetRefreshTokenDuration(ctx context.Context, store *store.Store, licenseService *enterprise.LicenseService, workspaceID string) time.Duration {
+func GetRefreshTokenDuration(ctx context.Context, store *store.Store, workspaceID string) time.Duration {
 	refreshTokenDuration := DefaultRefreshTokenDuration
-
-	// If the sign-in frequency control feature is not enabled, return default duration
-	if err := licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_TOKEN_DURATION_CONTROL); err != nil {
-		return refreshTokenDuration
-	}
 
 	workspaceProfile, err := store.GetWorkspaceProfileSetting(ctx, workspaceID)
 	if err != nil {
@@ -77,9 +65,6 @@ func GetRefreshTokenDuration(ctx context.Context, store *store.Store, licenseSer
 		refreshTokenDuration = workspaceProfile.GetRefreshTokenDuration().AsDuration()
 	}
 
-	if err := licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_PASSWORD_RESTRICTIONS); err != nil {
-		return refreshTokenDuration
-	}
 	// Currently we implement the password rotation restriction in a simple way:
 	// 1. Only check if users need to reset their password during login.
 	// 2. For the 1st time login, if `RequireResetPasswordForFirstLogin` is true, `require_reset_password` in the response will be true

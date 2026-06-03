@@ -18,15 +18,6 @@ func (ctl *controller) setLicense(ctx context.Context) error {
 	return nil
 }
 
-func (ctl *controller) removeLicense(ctx context.Context) error {
-	if _, err := ctl.subscriptionServiceClient.UploadLicense(ctx, connect.NewRequest(&v1pb.UploadLicenseRequest{
-		License: "",
-	})); err != nil {
-		return errors.Wrap(err, "failed to remove license")
-	}
-	return nil
-}
-
 func (ctl *controller) getSubscription(ctx context.Context) (*v1pb.Subscription, error) {
 	resp, err := ctl.subscriptionServiceClient.GetSubscription(ctx, connect.NewRequest(&v1pb.GetSubscriptionRequest{}))
 	if err != nil {

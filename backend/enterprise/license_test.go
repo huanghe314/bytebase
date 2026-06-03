@@ -1,25 +1,11 @@
 package enterprise
 
 import (
-	"context"
 	"math"
 	"testing"
-	"time"
 
-	"github.com/hashicorp/golang-lru/v2/expirable"
-
-	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
-	"github.com/bytebase/bytebase/backend/store"
 )
-
-func newTestLicenseService(sub *v1pb.Subscription) *LicenseService {
-	s := &LicenseService{
-		cache: expirable.NewLRU[string, *v1pb.Subscription](8, nil, time.Minute),
-	}
-	s.cache.Add(licenseCacheKey("test-workspace"), sub)
-	return s
-}
 
 func TestIsUnifiedInstanceLimit(t *testing.T) {
 	tests := []struct {
@@ -44,71 +30,40 @@ func TestIsUnifiedInstanceLimit(t *testing.T) {
 	}
 }
 
-func TestIsFeatureEnabledForInstanceUnifiedLicense(t *testing.T) {
-	ctx := context.Background()
-	instance := &store.InstanceMessage{
-		ResourceID: "prod",
-		Workspace:  "test-workspace",
-		Metadata:   &storepb.Instance{Activation: false},
-	}
-	service := newTestLicenseService(&v1pb.Subscription{
-		Plan:            v1pb.PlanType_ENTERPRISE,
-		Instances:       10,
-		ActiveInstances: 10,
-	})
+func TestLicenseServiceAllFeaturesEnabled(t *testing.T) {
+	svc := NewLicenseService()
 
-	if err := service.IsFeatureEnabledForInstance(ctx, "test-workspace", v1pb.PlanFeature_FEATURE_DATA_MASKING, instance); err != nil {
-		t.Fatalf("unified license should enable feature for inactive stored instance: %v", err)
-	}
-}
-
-func TestIsFeatureEnabledForInstanceSplitLicense(t *testing.T) {
-	ctx := context.Background()
-	instance := &store.InstanceMessage{
-		ResourceID: "prod",
-		Workspace:  "test-workspace",
-		Metadata:   &storepb.Instance{Activation: false},
-	}
-	service := newTestLicenseService(&v1pb.Subscription{
-		Plan:            v1pb.PlanType_ENTERPRISE,
-		Instances:       50,
-		ActiveInstances: 20,
-	})
-
-	if err := service.IsFeatureEnabledForInstance(ctx, "test-workspace", v1pb.PlanFeature_FEATURE_DATA_MASKING, instance); err == nil {
-		t.Fatal("split license should still require stored activation")
-	}
-}
-
-func TestIsInstanceEffectivelyActivated(t *testing.T) {
-	ctx := context.Background()
-	instance := &store.InstanceMessage{
-		ResourceID: "prod",
-		Workspace:  "test-workspace",
-		Metadata:   &storepb.Instance{Activation: false},
+	// IsFeatureEnabled should always return nil.
+	if err := svc.IsFeatureEnabled(nil, "any-workspace", v1pb.PlanFeature_FEATURE_DATA_MASKING); err != nil {
+		t.Fatalf("IsFeatureEnabled should always return nil, got: %v", err)
 	}
 
-	unifiedService := newTestLicenseService(&v1pb.Subscription{
-		Plan:            v1pb.PlanType_ENTERPRISE,
-		Instances:       10,
-		ActiveInstances: 10,
-	})
-	if !unifiedService.IsInstanceEffectivelyActivated(ctx, "test-workspace", instance) {
-		t.Fatal("unified license should effectively activate stored inactive instance")
+	// IsFeatureEnabledForInstance should always return nil.
+	if err := svc.IsFeatureEnabledForInstance(nil, "any-workspace", v1pb.PlanFeature_FEATURE_DATA_MASKING, nil); err != nil {
+		t.Fatalf("IsFeatureEnabledForInstance should always return nil, got: %v", err)
 	}
 
-	splitService := newTestLicenseService(&v1pb.Subscription{
-		Plan:            v1pb.PlanType_ENTERPRISE,
-		Instances:       50,
-		ActiveInstances: 20,
-	})
-	if splitService.IsInstanceEffectivelyActivated(ctx, "test-workspace", instance) {
-		t.Fatal("split license should use stored inactive state")
+	// IsInstanceEffectivelyActivated should always return true.
+	if !svc.IsInstanceEffectivelyActivated(nil, "any-workspace", nil) {
+		t.Fatal("IsInstanceEffectivelyActivated should always return true")
 	}
 
-	instance.Metadata.Activation = true
-	if !splitService.IsInstanceEffectivelyActivated(ctx, "test-workspace", instance) {
-		t.Fatal("split license should keep stored active state")
+	// IsUnifiedInstanceLicense should always return true.
+	if !svc.IsUnifiedInstanceLicense(nil, "any-workspace") {
+		t.Fatal("IsUnifiedInstanceLicense should always return true")
+	}
+
+	// Instance limits should be MaxInt32.
+	if svc.GetInstanceLimit(nil, "any-workspace") != math.MaxInt32 {
+		t.Fatal("GetInstanceLimit should return MaxInt32")
+	}
+	if svc.GetActivatedInstanceLimit(nil, "any-workspace") != math.MaxInt32 {
+		t.Fatal("GetActivatedInstanceLimit should return MaxInt32")
+	}
+
+	// User limit should be MaxInt32.
+	if svc.GetUserLimit(nil, "any-workspace") != math.MaxInt32 {
+		t.Fatal("GetUserLimit should return MaxInt32")
 	}
 }
 

@@ -331,7 +331,7 @@ export const createWorkspaceSlice: AppSliceCreator<WorkspaceSlice> = (
   daysBeforeExpire: () => {
     const subscription = get().subscription;
     if (!subscription?.expiresTime || get().isFreePlan()) {
-      return -1;
+      return Number.MAX_SAFE_INTEGER;
     }
     return Math.max(
       dayjs(getDateForPbTimestampProtoEs(subscription.expiresTime)).diff(

@@ -28,9 +28,7 @@ import (
 	"github.com/bytebase/bytebase/backend/component/sampleinstance"
 	"github.com/bytebase/bytebase/backend/component/sheet"
 	"github.com/bytebase/bytebase/backend/component/webhook"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
-	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/migrator"
 	"github.com/bytebase/bytebase/backend/resources/postgres"
 	"github.com/bytebase/bytebase/backend/runner/approval"
@@ -68,8 +66,6 @@ type Server struct {
 	webhookManager        *webhook.Manager
 	iamManager            *iam.Manager
 	sampleInstanceManager *sampleinstance.Manager
-
-	licenseService *enterprise.LicenseService
 
 	profile    *config.Profile
 	echoServer *echo.Echo
@@ -141,11 +137,6 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 	s.store = stores
 	sheetManager := sheet.NewManager()
 
-	s.licenseService, err = enterprise.NewLicenseService(profile.Mode, stores, profile.SaaS, profile.LicensePrivateKey)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create license service")
-	}
-
 	logSetup := &storepb.WorkspaceProfileSetting{
 		EnableAuditLogStdout:   false,
 		EnableMetricCollection: true,
@@ -164,7 +155,7 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 
 			if workspaceProfileSetting, err := s.store.GetWorkspaceProfileSetting(ctx, workspaceID); err == nil {
 				logSetup = workspaceProfileSetting
-				if logSetup.GetEnableAuditLogStdout() && s.licenseService.IsFeatureEnabled(ctx, workspaceID, v1pb.PlanFeature_FEATURE_AUDIT_LOG) == nil {
+				if logSetup.GetEnableAuditLogStdout() {
 					s.profile.RuntimeEnableAuditLogStdout.Store(true)
 				}
 			}
@@ -187,7 +178,7 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 		return nil, errors.Wrap(err, "failed to get auth secret")
 	}
 
-	s.iamManager, err = iam.NewManager(stores, s.licenseService, profile.SaaS)
+	s.iamManager, err = iam.NewManager(stores, profile.SaaS)
 	if err := s.iamManager.ReloadCache(ctx); err != nil {
 		return nil, errors.Wrapf(err, "failed to reload iam cache")
 	}
@@ -195,42 +186,42 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 		return nil, errors.Wrapf(err, "failed to create iam manager")
 	}
 	s.webhookManager = webhook.NewManager(stores, profile)
-	s.dbFactory = dbfactory.New(s.store, s.licenseService)
+	s.dbFactory = dbfactory.New(s.store)
 
 	// Configure echo server.
 	s.echoServer = echo.New()
 
-	s.schemaSyncer = schemasync.NewSyncer(stores, s.dbFactory, s.licenseService)
-	s.approvalRunner = approval.NewRunner(stores, s.bus, s.webhookManager, s.licenseService)
+	s.schemaSyncer = schemasync.NewSyncer(stores, s.dbFactory)
+	s.approvalRunner = approval.NewRunner(stores, s.bus, s.webhookManager)
 
-	s.taskScheduler = taskrun.NewScheduler(stores, s.bus, s.webhookManager, s.licenseService, profile)
+	s.taskScheduler = taskrun.NewScheduler(stores, s.bus, s.webhookManager, profile)
 	s.taskScheduler.Register(storepb.Task_DATABASE_CREATE, taskrun.NewDatabaseCreateExecutor(stores, s.dbFactory, s.schemaSyncer))
 	s.taskScheduler.Register(storepb.Task_DATABASE_MIGRATE, taskrun.NewDatabaseMigrateExecutor(stores, s.dbFactory, s.bus, s.schemaSyncer, profile))
-	s.taskScheduler.Register(storepb.Task_DATABASE_EXPORT, taskrun.NewDataExportExecutor(stores, s.dbFactory, s.licenseService))
+	s.taskScheduler.Register(storepb.Task_DATABASE_EXPORT, taskrun.NewDataExportExecutor(stores, s.dbFactory))
 
 	combinedExecutor := plancheck.NewCombinedExecutor(stores, sheetManager, s.dbFactory)
-	s.planCheckScheduler = plancheck.NewScheduler(stores, s.bus, combinedExecutor, s.licenseService)
+	s.planCheckScheduler = plancheck.NewScheduler(stores, s.bus, combinedExecutor)
 	s.notifyListener = notifylistener.NewListener(stores.GetDB(), s.bus)
 
 	// Data cleaner
-	s.dataCleaner = cleaner.NewDataCleaner(stores, s.licenseService)
+	s.dataCleaner = cleaner.NewDataCleaner(stores)
 
 	// Heartbeat runner
 	s.heartbeatRunner = heartbeat.NewRunner(stores, profile)
 
 	// LSP server.
-	s.lspServer = lsp.NewServer(s.store, profile, secret, s.bus, s.iamManager, s.licenseService)
+	s.lspServer = lsp.NewServer(s.store, profile, secret, s.bus, s.iamManager)
 
-	directorySyncServer := directorysync.NewService(s.store, s.licenseService, s.iamManager, profile)
+	directorySyncServer := directorysync.NewService(s.store, s.iamManager, profile)
 	oauth2Service := oauth2.NewService(stores, profile, secret)
 	mcpServer, err := mcp.NewServer(stores, profile, secret)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to create MCP server")
 	}
 
-	stripeWebhookHandler := stripeapi.NewWebhookHandler(s.store, s.licenseService, profile.StripeWebhookSecret)
+	stripeWebhookHandler := stripeapi.NewWebhookHandler(s.store, profile.StripeWebhookSecret)
 
-	if err := configureGrpcRouters(ctx, s.echoServer, s.store, sheetManager, s.dbFactory, s.licenseService, s.profile, s.bus, s.schemaSyncer, s.webhookManager, s.iamManager, secret, s.sampleInstanceManager); err != nil {
+	if err := configureGrpcRouters(ctx, s.echoServer, s.store, sheetManager, s.dbFactory, s.profile, s.bus, s.schemaSyncer, s.webhookManager, s.iamManager, secret, s.sampleInstanceManager); err != nil {
 		return nil, errors.Wrapf(err, "failed to configure gRPC routers")
 	}
 	configureEchoRouters(s.echoServer, s.lspServer, directorySyncServer, oauth2Service, mcpServer, stripeWebhookHandler, profile)

@@ -18,7 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/bytebase/bytebase/backend/common/log"
-	"github.com/bytebase/bytebase/backend/enterprise"
+
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	stripeplugin "github.com/bytebase/bytebase/backend/plugin/stripe"
 	"github.com/bytebase/bytebase/backend/store"
@@ -26,17 +26,15 @@ import (
 
 // WebhookHandler handles Stripe webhook events.
 type WebhookHandler struct {
-	store          *store.Store
-	licenseService *enterprise.LicenseService
-	webhookSecret  string
+	store         *store.Store
+	webhookSecret string
 }
 
 // NewWebhookHandler creates a new WebhookHandler.
-func NewWebhookHandler(store *store.Store, licenseService *enterprise.LicenseService, webhookSecret string) *WebhookHandler {
+func NewWebhookHandler(store *store.Store, webhookSecret string) *WebhookHandler {
 	return &WebhookHandler{
-		store:          store,
-		licenseService: licenseService,
-		webhookSecret:  webhookSecret,
+		store:         store,
+		webhookSecret: webhookSecret,
 	}
 }
 
@@ -347,34 +345,9 @@ func (h *WebhookHandler) handleInvoicePaid(ctx context.Context, event *stripego.
 	return nil
 }
 
-// updateLicense generates a license JWT from the subscription payload and stores it.
-// For non-ACTIVE subscriptions, stores an empty license (reverts to FREE plan).
-func (h *WebhookHandler) updateLicense(ctx context.Context, workspace string, payload *storepb.SubscriptionPayload) error {
-	var license string
-
-	if payload.Status == storepb.SubscriptionPayload_ACTIVE {
-		var expiresAt time.Time
-		if payload.ExpiresAt != nil {
-			// Add 24h grace period to the license to avoid service disruption
-			// from billing cycle delays. The subscription stores the real Stripe
-			// expiry; only the license JWT gets the extended time.
-			expiresAt = payload.ExpiresAt.AsTime().Add(24 * time.Hour)
-		}
-
-		var err error
-		license, err = h.licenseService.CreateLicense(&enterprise.LicenseParams{
-			Plan:        payload.Plan.String(),
-			Seats:       int(payload.Seat),
-			Instances:   int(payload.InstanceCount),
-			WorkspaceID: workspace,
-			ExpiresAt:   expiresAt,
-		})
-		if err != nil {
-			return errors.Wrap(err, "failed to create license JWT")
-		}
-	}
-
-	return h.licenseService.StoreLicense(ctx, workspace, license)
+// updateLicense is a no-op since license restrictions are removed.
+func (h *WebhookHandler) updateLicense(_ context.Context, _ string, _ *storepb.SubscriptionPayload) error {
+	return nil
 }
 
 // buildPayloadFromMetadata constructs a SubscriptionPayload from Stripe metadata.

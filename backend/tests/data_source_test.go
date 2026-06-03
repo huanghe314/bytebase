@@ -37,35 +37,7 @@ func TestDataSource(t *testing.T) {
 	instance := instanceResp.Msg
 	a.NoError(err)
 
-	err = ctl.removeLicense(ctx)
-	a.NoError(err)
-	_, err = ctl.instanceServiceClient.AddDataSource(ctx, connect.NewRequest(&v1pb.AddDataSourceRequest{
-		Name: instance.Name,
-		DataSource: &v1pb.DataSource{
-			Id:   "readonly-validate-only",
-			Type: v1pb.DataSourceType_READ_ONLY,
-			Host: instanceDir,
-		},
-		ValidateOnly: true,
-	}))
-	a.ErrorContains(err, "TEAM feature, please upgrade to access it")
-
-	_, err = ctl.instanceServiceClient.AddDataSource(ctx, connect.NewRequest(&v1pb.AddDataSourceRequest{
-		Name: instance.Name,
-		DataSource: &v1pb.DataSource{
-			Id:       "readonly",
-			Type:     v1pb.DataSourceType_READ_ONLY,
-			Username: "ro_ds",
-			Password: "",
-			SslCa:    "",
-			SslCert:  "",
-			SslKey:   "",
-		},
-	}))
-	a.ErrorContains(err, "TEAM feature, please upgrade to access it")
-
-	err = ctl.setLicense(ctx)
-	a.NoError(err)
+	// Add a read-only data source — always allowed since enterprise features are unrestricted.
 	_, err = ctl.instanceServiceClient.AddDataSource(ctx, connect.NewRequest(&v1pb.AddDataSourceRequest{
 		Name: instance.Name,
 		DataSource: &v1pb.DataSource{
@@ -84,24 +56,7 @@ func TestDataSource(t *testing.T) {
 	a.NoError(err)
 	instance = instanceResp.Msg
 	a.Equal(2, len(instance.DataSources))
-	err = ctl.removeLicense(ctx)
-	a.NoError(err)
 
-	_, err = ctl.instanceServiceClient.UpdateDataSource(ctx, connect.NewRequest(&v1pb.UpdateDataSourceRequest{
-		Name: instance.Name,
-		DataSource: &v1pb.DataSource{
-			Id:   "readonly",
-			Host: "127.0.0.1",
-			Port: "8000",
-		},
-		UpdateMask: &fieldmaskpb.FieldMask{
-			Paths: []string{"host", "port"},
-		},
-	}))
-	a.ErrorContains(err, "TEAM feature, please upgrade to access it")
-
-	err = ctl.setLicense(ctx)
-	a.NoError(err)
 	_, err = ctl.instanceServiceClient.UpdateDataSource(ctx, connect.NewRequest(&v1pb.UpdateDataSourceRequest{
 		Name: instance.Name,
 		DataSource: &v1pb.DataSource{
@@ -190,9 +145,6 @@ func TestDataSourceValidateOnly(t *testing.T) {
 	}))
 	a.NoError(err)
 	instance := instanceResp.Msg
-
-	err = ctl.setLicense(ctx)
-	a.NoError(err)
 
 	addResp, err := ctl.instanceServiceClient.AddDataSource(ctx, connect.NewRequest(&v1pb.AddDataSourceRequest{
 		Name: instance.Name,
