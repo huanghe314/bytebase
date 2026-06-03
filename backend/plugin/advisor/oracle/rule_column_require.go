@@ -7,16 +7,13 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/bytebase/omni/oracle/ast"
 	"github.com/pkg/errors"
-
-	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/parser/plsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
 	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
-	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -43,22 +40,8 @@ func (*ColumnRequireAdvisor) Check(_ context.Context, checkCtx advisor.Context) 
 	}
 
 	rule := NewColumnRequireRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase, stringArrayPayload.List)
-	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range checkCtx.ParsedStatements {
-		if stmt.AST == nil {
-			continue
-		}
-		antlrAST, ok := base.GetANTLRAST(stmt.AST)
-		if !ok {
-			continue
-		}
-		rule.SetBaseLine(stmt.BaseLine())
-		checker.SetBaseLine(stmt.BaseLine())
-		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
-	}
-
-	return checker.GetAdviceList()
+	return RunOmniRules(checkCtx.ParsedStatements, []OmniRule{rule})
 }
 
 type columnSet map[string]bool
@@ -69,7 +52,6 @@ type ColumnRequireRule struct {
 
 	currentDatabase string
 	requiredColumns columnSet
-	missingColumns  columnSet
 }
 
 // NewColumnRequireRule creates a new ColumnRequireRule.
@@ -90,122 +72,61 @@ func (*ColumnRequireRule) Name() string {
 	return "column.require"
 }
 
-// OnEnter is called when the parser enters a rule context.
-func (r *ColumnRequireRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
-	switch nodeType {
-	case "Create_table":
-		r.handleCreateTableEnter(ctx.(*parser.Create_tableContext))
-	case "Column_definition":
-		r.handleColumnDefinition(ctx.(*parser.Column_definitionContext))
-	case "Alter_table":
-		r.handleAlterTableEnter(ctx.(*parser.Alter_tableContext))
-	case "Drop_column_clause":
-		r.handleDropColumnClause(ctx.(*parser.Drop_column_clauseContext))
-	case "Rename_column_clause":
-		r.handleRenameColumnClause(ctx.(*parser.Rename_column_clauseContext))
+// OnStatement checks required columns in CREATE TABLE and ALTER TABLE.
+func (r *ColumnRequireRule) OnStatement(node ast.Node) {
+	switch n := node.(type) {
+	case *ast.CreateTableStmt:
+		missing := make(columnSet)
+		for column := range r.requiredColumns {
+			missing[column] = true
+		}
+		for _, col := range omniColumnDefs(n.Columns) {
+			delete(missing, col.Name)
+		}
+		r.addMissingColumnsAdvice(omniLastObjectName(n.Name), missing, r.locLine(n.Loc))
+	case *ast.AlterTableStmt:
+		missing := make(columnSet)
+		for _, cmd := range omniAlterTableCmds(n) {
+			switch cmd.Action {
+			case ast.AT_DROP_COLUMN:
+				if _, ok := r.requiredColumns[cmd.ColumnName]; ok {
+					missing[cmd.ColumnName] = true
+				}
+			case ast.AT_RENAME_COLUMN:
+				if cmd.ColumnName != cmd.NewName {
+					if _, ok := r.requiredColumns[cmd.ColumnName]; ok {
+						missing[cmd.ColumnName] = true
+					}
+				}
+			default:
+			}
+		}
+		r.addMissingColumnsAdvice(omniLastObjectName(n.Name), missing, r.locLine(n.Loc))
 	default:
-		// Ignore other node types
 	}
-	return nil
 }
+
+func (r *ColumnRequireRule) addMissingColumnsAdvice(tableName string, missing columnSet, line int) {
+	if len(missing) == 0 {
+		return
+	}
+	missingColumns := []string{}
+	for column := range missing {
+		missingColumns = append(missingColumns, fmt.Sprintf("%q", column))
+	}
+	slices.Sort(missingColumns)
+	r.AddAdvice(
+		r.level,
+		code.NoRequiredColumn.Int32(),
+		fmt.Sprintf("Table %q requires columns: %s", tableName, strings.Join(missingColumns, ", ")),
+		common.ConvertANTLRLineToPosition(line),
+	)
+}
+
+// OnEnter is called when the parser enters a rule context.
+
+// Ignore other node types
 
 // OnExit is called when the parser exits a rule context.
-func (r *ColumnRequireRule) OnExit(ctx antlr.ParserRuleContext, nodeType string) error {
-	switch nodeType {
-	case "Create_table":
-		r.handleCreateTableExit(ctx.(*parser.Create_tableContext))
-	case "Alter_table":
-		r.handleAlterTableExit(ctx.(*parser.Alter_tableContext))
-	default:
-		// Ignore other node types
-	}
-	return nil
-}
 
-func (r *ColumnRequireRule) handleCreateTableEnter(_ *parser.Create_tableContext) {
-	r.missingColumns = make(columnSet)
-	for column := range r.requiredColumns {
-		r.missingColumns[column] = true
-	}
-}
-
-func (r *ColumnRequireRule) handleCreateTableExit(ctx *parser.Create_tableContext) {
-	missingColumns := []string{}
-	for column := range r.missingColumns {
-		missingColumns = append(missingColumns, fmt.Sprintf("%q", column))
-	}
-	r.missingColumns = nil
-
-	if len(missingColumns) == 0 {
-		return
-	}
-
-	slices.Sort(missingColumns)
-	tableName := normalizeIdentifier(ctx.Table_name(), r.currentDatabase)
-	r.AddAdvice(
-		r.level,
-		code.NoRequiredColumn.Int32(),
-		fmt.Sprintf("Table %q requires columns: %s", tableName, strings.Join(missingColumns, ", ")),
-		common.ConvertANTLRLineToPosition(r.baseLine+ctx.GetStop().GetLine()),
-	)
-}
-
-func (r *ColumnRequireRule) handleColumnDefinition(ctx *parser.Column_definitionContext) {
-	if ctx.Column_name() == nil || r.missingColumns == nil {
-		return
-	}
-	columnName := normalizeIdentifier(ctx.Column_name(), r.currentDatabase)
-	delete(r.missingColumns, columnName)
-}
-
-func (r *ColumnRequireRule) handleAlterTableEnter(_ *parser.Alter_tableContext) {
-	r.missingColumns = make(columnSet)
-}
-
-func (r *ColumnRequireRule) handleAlterTableExit(ctx *parser.Alter_tableContext) {
-	missingColumns := []string{}
-	for column := range r.missingColumns {
-		missingColumns = append(missingColumns, fmt.Sprintf("%q", column))
-	}
-	r.missingColumns = nil
-
-	if len(missingColumns) == 0 {
-		return
-	}
-
-	slices.Sort(missingColumns)
-	tableName := lastIdentifier(normalizeIdentifier(ctx.Tableview_name(), r.currentDatabase))
-	r.AddAdvice(
-		r.level,
-		code.NoRequiredColumn.Int32(),
-		fmt.Sprintf("Table %q requires columns: %s", tableName, strings.Join(missingColumns, ", ")),
-		common.ConvertANTLRLineToPosition(r.baseLine+ctx.GetStop().GetLine()),
-	)
-}
-
-func (r *ColumnRequireRule) handleDropColumnClause(ctx *parser.Drop_column_clauseContext) {
-	if r.missingColumns == nil {
-		return
-	}
-	for _, columnName := range ctx.AllColumn_name() {
-		name := normalizeIdentifier(columnName, r.currentDatabase)
-		if _, exists := r.requiredColumns[name]; exists {
-			r.missingColumns[name] = true
-		}
-	}
-}
-
-func (r *ColumnRequireRule) handleRenameColumnClause(ctx *parser.Rename_column_clauseContext) {
-	if r.missingColumns == nil {
-		return
-	}
-	oldName := normalizeIdentifier(ctx.Old_column_name().Column_name(), r.currentDatabase)
-	newName := normalizeIdentifier(ctx.New_column_name().Column_name(), r.currentDatabase)
-	if oldName == newName {
-		return
-	}
-
-	if _, exists := r.requiredColumns[oldName]; exists {
-		r.missingColumns[oldName] = true
-	}
-}
+// Ignore other node types

@@ -1,19 +1,14 @@
 import { ShieldUser } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FeatureBadge } from "@/react/components/FeatureBadge";
 import { PermissionGuard } from "@/react/components/PermissionGuard";
 import { Button } from "@/react/components/ui/button";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useAppProject } from "@/react/hooks/useAppProject";
 import { cn } from "@/react/lib/utils";
 import { RequestRoleSheet } from "@/react/pages/settings/RequestRoleSheet";
-import { useSQLEditorVueState } from "@/react/stores/sqlEditor/editor-vue-state";
-import {
-  hasFeature,
-  useProjectV1Store,
-  useRoleStore,
-  useSubscriptionV1Store,
-} from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { useSQLEditorEditorState } from "@/react/stores/sqlEditor/editor";
 import type { DatabaseResource, Permission } from "@/types";
 import { PRESET_ROLES, PresetRoleType } from "@/types";
 import type { PermissionDeniedDetail } from "@/types/proto-es/v1/common_pb";
@@ -70,6 +65,7 @@ export function RequestQueryButton({
   permissionDeniedDetail,
 }: Props) {
   const { t } = useTranslation();
+  const roleList = useAppStore((state) => state.roleList);
 
   // When the layout-level host is mounted (typical case inside the SQL
   // Editor), opening the drawer dispatches up to the host so it survives
@@ -80,22 +76,27 @@ export function RequestQueryButton({
   const [showPanel, setShowPanel] = useState(false);
   const [showJITDrawer, setShowJITDrawer] = useState(false);
 
-  const projectStore = useProjectV1Store();
-  const editorStore = useSQLEditorVueState();
-  const roleStore = useRoleStore();
-  const subscriptionStore = useSubscriptionV1Store();
+  const loadSubscription = useAppStore((s) => s.loadSubscription);
+  // The SQL editor route doesn't mount the dashboard shells that load the
+  // app-store subscription, so load it here before reading feature gates
+  // (mirrors ComponentPermissionGuard).
+  useEffect(() => {
+    void loadSubscription();
+  }, [loadSubscription]);
 
-  const projectName = useVueState(() => editorStore.project);
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
-  const hasCustomRoleFeature = useVueState(() =>
-    subscriptionStore.hasInstanceFeature(PlanFeature.FEATURE_CUSTOM_ROLES)
+  const projectName = useSQLEditorEditorState((s) => s.project);
+  const project = useAppProject(projectName);
+  const hasCustomRoleFeature = useAppStore((s) =>
+    s.hasInstanceFeature(PlanFeature.FEATURE_CUSTOM_ROLES)
   );
-  const defaultQueryRole = useVueState(() =>
-    getDefaultQueryRole(
-      roleStore.roleList,
-      permissionDeniedDetail.requiredPermissions,
-      hasCustomRoleFeature
-    )
+  const defaultQueryRole = useMemo(
+    () =>
+      getDefaultQueryRole(
+        roleList,
+        permissionDeniedDetail.requiredPermissions,
+        hasCustomRoleFeature
+      ),
+    [roleList, permissionDeniedDetail.requiredPermissions, hasCustomRoleFeature]
   );
 
   const useJIT = useMemo(
@@ -115,7 +116,7 @@ export function RequestQueryButton({
     ? PlanFeature.FEATURE_JIT
     : PlanFeature.FEATURE_REQUEST_ROLE_WORKFLOW;
 
-  const hasRequestFeature = hasFeature(requiredFeature);
+  const hasRequestFeature = useAppStore((s) => s.hasFeature(requiredFeature));
 
   const missingResources = useMemo((): DatabaseResource[] => {
     const resources: DatabaseResource[] = [];

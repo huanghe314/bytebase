@@ -147,6 +147,10 @@ vi.mock("@/types", () => ({
     typeof name === "string" && name.includes("/databaseGroups/"),
 }));
 
+vi.mock("@/types/v1/database", () => ({
+  unknownDatabase: () => ({ name: "instances/-/databases/-" }),
+}));
+
 vi.mock("@/utils", () => ({
   DEFAULT_MAX_RESULT_SIZE_IN_MB: 100,
   extractDatabaseGroupName: (name: string) =>
@@ -185,53 +189,48 @@ const mocks = vi.hoisted(() => ({
   currentUser: { name: "users/me@example.com", email: "me@example.com" },
 }));
 
-const stableProjectStore = {
-  get getProjectByName() {
-    return mocks.getProjectByName;
-  },
-};
-
-const stableDatabaseStore = {
-  get fetchDatabases() {
-    return mocks.fetchDatabases;
-  },
-  get getOrFetchDatabaseByName() {
-    return mocks.getOrFetchDatabaseByName;
-  },
-  get getDatabaseByName() {
-    return mocks.getDatabaseByName;
-  },
-};
-
-const stableDBGroupStore = {
-  get getOrFetchDBGroupByName() {
-    return mocks.getOrFetchDBGroupByName;
-  },
-  get fetchDBGroupListByProjectName() {
-    return mocks.fetchDBGroupListByProjectName;
-  },
-};
-
-const stableSheetStore = {
-  get createSheet() {
-    return mocks.createSheet;
-  },
-};
-
-const stableSettingStore = {
-  workspaceProfile: { sqlResultSize: BigInt(100 * 1024 * 1024) },
+const stableWorkspaceProfile = {
+  sqlResultSize: BigInt(100 * 1024 * 1024),
 };
 
 vi.mock("@/store", () => ({
   DEFAULT_MAX_RESULT_SIZE_IN_MB: 100,
-  useProjectV1Store: () => stableProjectStore,
-  useDatabaseV1Store: () => stableDatabaseStore,
-  useDBGroupStore: () => stableDBGroupStore,
-  useSheetV1Store: () => stableSheetStore,
-  useSettingV1Store: () => stableSettingStore,
-  useCurrentUserV1: () => ({ value: mocks.currentUser }),
-  experimentalCreateIssueByPlan: mocks.experimentalCreateIssueByPlan,
   pushNotification: mocks.pushNotification,
+}));
+
+vi.mock("@/react/stores/app", () => {
+  const appState = () => ({
+    // The project getter that previously lived on the Pinia
+    // `useProjectV1Store` now lives on the app store.
+    getProjectByName: mocks.getProjectByName,
+    projectsByName: {} as Record<string, unknown>,
+    // The workspace profile getter previously lived on the Pinia
+    // `useSettingV1Store`; it is now an app-store method.
+    getWorkspaceProfile: () => stableWorkspaceProfile,
+    fetchDatabases: mocks.fetchDatabases,
+    getOrFetchDatabaseByName: mocks.getOrFetchDatabaseByName,
+    getDatabaseByName: mocks.getDatabaseByName,
+    getOrFetchDBGroupByName: mocks.getOrFetchDBGroupByName,
+    fetchDBGroupListByProjectName: mocks.fetchDBGroupListByProjectName,
+    createSheet: mocks.createSheet,
+    // TargetBadge subscribes to this map; default mock has no entries so it
+    // falls back to unknownDatabase() (matching the production cache miss).
+    databasesByName: {} as Record<string, unknown>,
+  });
+  return {
+    useAppStore: Object.assign(
+      (selector: (s: unknown) => unknown) => selector(appState()),
+      { getState: appState }
+    ),
+  };
+});
+
+vi.mock("@/react/stores/app/issue", () => ({
+  experimentalCreateIssueByPlan: mocks.experimentalCreateIssueByPlan,
+}));
+
+vi.mock("@/react/hooks/useAppState", () => ({
+  useCurrentUser: () => mocks.currentUser,
 }));
 
 import { nativeChange } from "@/react/test-utils/nativeChange";

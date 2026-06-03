@@ -177,50 +177,42 @@ const mocks = vi.hoisted(() => {
     localStorage,
     featureToRef: vi.fn(() => ({ value: true })),
     useVueState: vi.fn((getter: () => unknown) => getter()),
-    useDatabaseCatalog: vi.fn(() => ({
-      value: makeDatabaseCatalog(),
-    })),
-    usePolicyV1Store: vi.fn(() => ({
-      getOrFetchPolicyByParentAndType: vi.fn(),
-      upsertPolicy: vi.fn(),
-    })),
-    useDatabaseCatalogV1Store: vi.fn(() => ({
-      updateDatabaseCatalog: vi.fn(),
-    })),
-    useSettingV1Store: vi.fn(() => ({
-      getOrFetchSettingByName: vi.fn(),
-      getProjectClassification: vi.fn(() => ({
-        id: "classification-config",
-        classification: {
-          PII: {
-            id: "PII",
-            title: "PII",
-          },
-          CONFIDENTIAL: {
-            id: "CONFIDENTIAL",
-            title: "Confidential",
-          },
+    useDatabaseCatalog: vi.fn(() => makeDatabaseCatalog()),
+    getOrFetchPolicyByParentAndType: vi.fn(),
+    upsertPolicy: vi.fn(),
+    updateDatabaseCatalog: vi.fn(),
+    getOrFetchSettingByName: vi.fn(),
+    getProjectClassification: vi.fn(() => ({
+      id: "classification-config",
+      classification: {
+        PII: {
+          id: "PII",
+          title: "PII",
         },
-      })),
-      getSettingByName: vi.fn(() => ({
+        CONFIDENTIAL: {
+          id: "CONFIDENTIAL",
+          title: "Confidential",
+        },
+      },
+    })),
+    getSettingByName: vi.fn(() => ({
+      value: {
         value: {
+          case: "semanticType",
           value: {
-            case: "semanticType",
-            value: {
-              types: [
-                {
-                  id: "EMAIL",
-                  title: "Email",
-                },
-                {
-                  id: "PHONE",
-                  title: "Phone",
-                },
-              ],
-            },
+            types: [
+              {
+                id: "EMAIL",
+                title: "Email",
+              },
+              {
+                id: "PHONE",
+                title: "Phone",
+              },
+            ],
           },
         },
-      })),
+      },
     })),
     pushNotification: vi.fn(),
     getDatabaseProject: vi.fn((database: { project: string }) => ({
@@ -376,11 +368,29 @@ vi.mock("@/react/hooks/useVueState", () => ({
 vi.mock("@/store", () => ({
   featureToRef: mocks.featureToRef,
   pushNotification: mocks.pushNotification,
-  useDatabaseCatalog: mocks.useDatabaseCatalog,
-  useDatabaseCatalogV1Store: mocks.useDatabaseCatalogV1Store,
-  usePolicyV1Store: mocks.usePolicyV1Store,
-  useSettingV1Store: mocks.useSettingV1Store,
 }));
+
+vi.mock("@/react/hooks/useDatabaseCatalog", () => ({
+  useDatabaseCatalog: () => mocks.useDatabaseCatalog(),
+}));
+
+vi.mock("@/react/stores/app", () => {
+  const getState = () => ({
+    updateDatabaseCatalog: mocks.updateDatabaseCatalog,
+    getOrFetchPolicyByParentAndType: mocks.getOrFetchPolicyByParentAndType,
+    upsertPolicy: mocks.upsertPolicy,
+    getOrFetchSettingByName: mocks.getOrFetchSettingByName,
+    getSettingByName: mocks.getSettingByName,
+    getProjectClassification: mocks.getProjectClassification,
+  });
+  return {
+    useAppStore: Object.assign(
+      (selector?: (s: ReturnType<typeof getState>) => unknown) =>
+        selector ? selector(getState()) : getState(),
+      { getState }
+    ),
+  };
+});
 
 vi.mock("@/utils", () => ({
   autoDatabaseRoute: mocks.autoDatabaseRoute,
@@ -466,53 +476,45 @@ beforeEach(async () => {
   mocks.useVueState.mockReset();
   mocks.useVueState.mockImplementation((getter: () => unknown) => getter());
   mocks.useDatabaseCatalog.mockReset();
-  mocks.useDatabaseCatalog.mockReturnValue({
-    value: makeDatabaseCatalog(),
-  });
-  mocks.usePolicyV1Store.mockReset();
-  mocks.usePolicyV1Store.mockReturnValue({
-    getOrFetchPolicyByParentAndType: vi.fn(),
-    upsertPolicy: vi.fn(),
-  });
-  mocks.useDatabaseCatalogV1Store.mockReset();
-  mocks.useDatabaseCatalogV1Store.mockReturnValue({
-    updateDatabaseCatalog: vi.fn(),
-  });
-  mocks.useSettingV1Store.mockReset();
-  mocks.useSettingV1Store.mockReturnValue({
-    getOrFetchSettingByName: vi.fn(),
-    getProjectClassification: vi.fn(() => ({
-      id: "classification-config",
-      classification: {
-        PII: {
-          id: "PII",
-          title: "PII",
-        },
-        CONFIDENTIAL: {
-          id: "CONFIDENTIAL",
-          title: "Confidential",
-        },
+  mocks.useDatabaseCatalog.mockReturnValue(makeDatabaseCatalog());
+  mocks.getOrFetchPolicyByParentAndType.mockReset();
+  mocks.upsertPolicy.mockReset();
+  mocks.updateDatabaseCatalog.mockReset();
+  mocks.updateDatabaseCatalog.mockResolvedValue(undefined);
+  mocks.getOrFetchSettingByName.mockReset();
+  mocks.getProjectClassification.mockReset();
+  mocks.getProjectClassification.mockReturnValue({
+    id: "classification-config",
+    classification: {
+      PII: {
+        id: "PII",
+        title: "PII",
       },
-    })),
-    getSettingByName: vi.fn(() => ({
+      CONFIDENTIAL: {
+        id: "CONFIDENTIAL",
+        title: "Confidential",
+      },
+    },
+  });
+  mocks.getSettingByName.mockReset();
+  mocks.getSettingByName.mockReturnValue({
+    value: {
       value: {
+        case: "semanticType",
         value: {
-          case: "semanticType",
-          value: {
-            types: [
-              {
-                id: "EMAIL",
-                title: "Email",
-              },
-              {
-                id: "PHONE",
-                title: "Phone",
-              },
-            ],
-          },
+          types: [
+            {
+              id: "EMAIL",
+              title: "Email",
+            },
+            {
+              id: "PHONE",
+              title: "Phone",
+            },
+          ],
         },
       },
-    })),
+    },
   });
   mocks.pushNotification.mockReset();
   mocks.getDatabaseProject.mockReset();
@@ -668,10 +670,7 @@ describe("DatabaseCatalogPanel", () => {
   });
 
   test("clears a selected row from checked selection when deleted", async () => {
-    const updateDatabaseCatalog = vi.fn().mockResolvedValue(undefined);
-    mocks.useDatabaseCatalogV1Store.mockReturnValue({
-      updateDatabaseCatalog,
-    });
+    const updateDatabaseCatalog = mocks.updateDatabaseCatalog;
 
     const { container, render, unmount } = renderIntoContainer(
       createElement(DatabaseCatalogPanel, {
@@ -718,50 +717,10 @@ describe("DatabaseCatalogPanel", () => {
   });
 
   test("updates semantic type and classification independently", async () => {
-    const updateDatabaseCatalog = vi.fn().mockResolvedValue(undefined);
-    const getOrFetchSettingByName = vi.fn();
-    mocks.useDatabaseCatalogV1Store.mockReturnValue({
-      updateDatabaseCatalog,
-    });
-    mocks.useSettingV1Store.mockReturnValue({
-      getOrFetchSettingByName,
-      getProjectClassification: vi.fn(() => ({
-        id: "classification-config",
-        classification: {
-          PII: {
-            id: "PII",
-            title: "PII",
-          },
-          CONFIDENTIAL: {
-            id: "CONFIDENTIAL",
-            title: "Confidential",
-          },
-        },
-      })),
-      getSettingByName: vi.fn(() => ({
-        value: {
-          value: {
-            case: "semanticType",
-            value: {
-              types: [
-                {
-                  id: "EMAIL",
-                  title: "Email",
-                },
-                {
-                  id: "PHONE",
-                  title: "Phone",
-                },
-              ],
-            },
-          },
-        },
-      })),
-    });
+    const updateDatabaseCatalog = mocks.updateDatabaseCatalog;
+    const getOrFetchSettingByName = mocks.getOrFetchSettingByName;
     const catalog = makeSimpleCatalog();
-    mocks.useDatabaseCatalog.mockReturnValue({
-      value: catalog,
-    });
+    mocks.useDatabaseCatalog.mockReturnValue(catalog);
 
     const { container, render, unmount } = renderIntoContainer(
       createElement(DatabaseCatalogPanel, {
@@ -809,9 +768,9 @@ describe("DatabaseCatalogPanel", () => {
   });
 
   test("renders an empty state when catalog data is not loaded", async () => {
-    mocks.useDatabaseCatalog.mockReturnValue({
-      value: undefined as unknown as DatabaseCatalog,
-    });
+    mocks.useDatabaseCatalog.mockReturnValue(
+      undefined as unknown as DatabaseCatalog
+    );
 
     const { container, render, unmount } = renderIntoContainer(
       createElement(DatabaseCatalogPanel, {

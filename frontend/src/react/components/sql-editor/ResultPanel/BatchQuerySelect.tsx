@@ -11,13 +11,18 @@ import {
 } from "@/react/components/DataExportButton";
 import { DatabaseTableView } from "@/react/components/database";
 import { EngineIconPath } from "@/react/components/instance/constants";
+import { RequestExportButton } from "@/react/components/sql-editor/RequestExportButton";
 import { Button } from "@/react/components/ui/button";
 import { Tooltip } from "@/react/components/ui/tooltip";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useSQLEditorQueryDataPolicy } from "@/react/hooks/useSQLEditorBridge";
 import { cn } from "@/react/lib/utils";
-import { useSQLEditorVueState } from "@/react/stores/sqlEditor/editor-vue-state";
-import { useSQLEditorTabStore } from "@/react/stores/sqlEditor/tab-vue-state";
-import { pushNotification, useDatabaseV1Store, useSQLStore } from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { useSQLEditorEditorState } from "@/react/stores/sqlEditor/editor";
+import {
+  getSQLEditorTabsState,
+  useCurrentSQLEditorTab,
+  useSQLEditorTabState,
+} from "@/react/stores/sqlEditor/tab";
 import { ExportFormat } from "@/types/proto-es/v1/common_pb";
 import type { Database } from "@/types/proto-es/v1/database_service_pb";
 import { ExportRequestSchema } from "@/types/proto-es/v1/sql_service_pb";
@@ -73,50 +78,45 @@ export function BatchQuerySelect({
   onSelectedDatabaseChange,
 }: Props) {
   const { t } = useTranslation();
-  const tabStore = useSQLEditorTabStore();
-  const databaseStore = useDatabaseV1Store();
-  const sqlStore = useSQLStore();
-  const editorStore = useSQLEditorVueState();
+  const getDatabaseByName = useAppStore((s) => s.getDatabaseByName);
+  const exportData = useAppStore((s) => s.exportData);
+  const currentTab = useCurrentSQLEditorTab();
+  const project = useSQLEditorEditorState((s) => s.project);
+  const queryDataPolicy = useSQLEditorQueryDataPolicy(project);
 
   const [showEmpty, setShowEmpty] = useState(true);
   const [selectedDatabaseNames, setSelectedDatabaseNames] = useState<
     Set<string>
   >(new Set());
 
-  const queryDataPolicy = useVueState(() => editorStore.queryDataPolicy);
-
-  // Read the Map's `.keys()` directly inside the Vue getter so Vue's
-  // reactivity tracks the iteration. `useVueState(() => tabStore.currentTab)`
-  // would only fire when the tab object reference changes — Map mutations
-  // (which is how `useExecuteSQL.preExecute` adds new query contexts)
-  // wouldn't trigger React re-renders.
-  const queriedDatabaseNames = useVueState(
-    () => Array.from(tabStore.currentTab?.databaseQueryContexts?.keys() || []),
-    { deep: true }
+  // Subscribe to the current tab's `databaseQueryContexts` Map. Immer
+  // produces a fresh Map (and inner arrays) on every mutation, so the
+  // selector re-runs whenever `preExecute` adds a context or `runQuery`
+  // flips a status / writes a resultSet.
+  const databaseQueryContexts = useSQLEditorTabState(
+    (s) => s.tabsById.get(s.currentTabId)?.databaseQueryContexts
   );
 
-  // Track the contexts arrays themselves so the `items[].context` snapshot
-  // and `isEmptyQueryItem` computations stay in sync as `runQuery` mutates
-  // each context's `status` / `resultSet`.
-  const contextsByDatabase = useVueState(
-    () => {
-      const map = new Map<string, SQLEditorDatabaseQueryContext | undefined>();
-      const contexts = tabStore.currentTab?.databaseQueryContexts;
-      if (!contexts) return map;
-      for (const name of contexts.keys()) {
-        map.set(name, head(contexts.get(name)));
-      }
-      return map;
-    },
-    { deep: true }
+  const queriedDatabaseNames = useMemo(
+    () => Array.from(databaseQueryContexts?.keys() || []),
+    [databaseQueryContexts]
   );
+
+  const contextsByDatabase = useMemo(() => {
+    const map = new Map<string, SQLEditorDatabaseQueryContext | undefined>();
+    if (!databaseQueryContexts) return map;
+    for (const name of databaseQueryContexts.keys()) {
+      map.set(name, head(databaseQueryContexts.get(name)));
+    }
+    return map;
+  }, [databaseQueryContexts]);
 
   const items = useMemo<BatchQueryItem[]>(() => {
     return queriedDatabaseNames.map((name) => ({
-      database: databaseStore.getDatabaseByName(name),
+      database: getDatabaseByName(name),
       context: contextsByDatabase.get(name),
     }));
-  }, [queriedDatabaseNames, contextsByDatabase, databaseStore]);
+  }, [queriedDatabaseNames, contextsByDatabase, getDatabaseByName]);
 
   const showEmptySwitch = useMemo(
     () => items.length > 1 && items.some((item) => isEmptyQueryItem(item)),
@@ -140,19 +140,46 @@ export function BatchQuerySelect({
   }, [filteredItems, selectedDatabase, onSelectedDatabaseChange]);
 
   const databaseList = useMemo(
-    () =>
-      queriedDatabaseNames.map((name) => databaseStore.getDatabaseByName(name)),
-    [queriedDatabaseNames, databaseStore]
+    () => queriedDatabaseNames.map((name) => getDatabaseByName(name)),
+    [queriedDatabaseNames, getDatabaseByName]
   );
 
+  const supportFormats = useMemo(
+    () => [
+      ExportFormat.CSV,
+      ExportFormat.JSON,
+      ExportFormat.SQL,
+      ExportFormat.XLSX,
+    ],
+    []
+  );
+
+  // The batch was run from a single user-typed statement against many
+  // databases — pull it from any one context (they all carry the same
+  // params.statement). Used as the request-export drawer seed when the
+  // policy disables direct export.
+  const batchStatement = useMemo(() => {
+    for (const context of contextsByDatabase.values()) {
+      if (context?.params.statement) return context.params.statement;
+    }
+    return "";
+  }, [contextsByDatabase]);
+
+  // Mirror SingleResultView / ResultView: when policy disables export,
+  // swap the Export button for a "Request export" affordance that opens
+  // the access-grant drawer pre-filled with the queried databases and
+  // the batch statement. The grant-allows-export path is naturally
+  // handled per-database inside each tab's SingleResultView since the
+  // applied grant is per-result.
+  const showExport = !queryDataPolicy?.disableExport;
+
   const handleCloseSingleResultView = (item: BatchQueryItem) => {
-    const tab = tabStore.currentTab;
-    const contexts = tab?.databaseQueryContexts?.get(item.database.name);
+    const contexts = currentTab?.databaseQueryContexts?.get(item.database.name);
     if (!contexts) return;
     for (const context of contexts) {
       context.abortController?.abort();
     }
-    tab?.databaseQueryContexts?.delete(item.database.name);
+    getSQLEditorTabsState().deleteDatabaseQueryContext(item.database.name);
   };
 
   // Subscribe to context-menu close-tab events.
@@ -198,14 +225,16 @@ export function BatchQuerySelect({
 
   const handleExport = ({ options, resolve }: DataExportRequest) => {
     void (async () => {
+      // === Prod path: per-database backend Export RPC ===
       const contents: DownloadContent[] = [];
-      const tab = tabStore.currentTab;
+      const tabsState = getSQLEditorTabsState();
+      const tab = tabsState.tabsById.get(tabsState.currentTabId);
       for (const databaseName of Array.from(selectedDatabaseNames)) {
-        const database = databaseStore.getDatabaseByName(databaseName);
+        const database = getDatabaseByName(databaseName);
         const context = head(tab?.databaseQueryContexts?.get(databaseName));
         if (!context) continue;
         try {
-          const content = await sqlStore.exportData(
+          const content = await exportData(
             create(ExportRequestSchema, {
               name: databaseName,
               ...(context.params.connection.dataSourceId
@@ -214,7 +243,7 @@ export function BatchQuerySelect({
               format: options.format,
               statement: context.params.statement,
               limit: options.limit,
-              admin: tabStore.currentTab?.mode === "ADMIN",
+              admin: tab?.mode === "ADMIN",
               password: options.password,
               schema: context.params.connection.schema,
             })
@@ -226,7 +255,7 @@ export function BatchQuerySelect({
             }.${dayjs(new Date()).format("YYYY-MM-DDTHH-mm-ss")}.zip`,
           });
         } catch (e) {
-          pushNotification({
+          useAppStore.getState().notify({
             module: "bytebase",
             style: "CRITICAL",
             title: t("sql-editor.batch-export.failed-for-db", {
@@ -271,41 +300,43 @@ export function BatchQuerySelect({
       )}
 
       <div className="mb-2">
-        <DataExportButton
-          size="sm"
-          viewMode="DRAWER"
-          supportFormats={[
-            ExportFormat.CSV,
-            ExportFormat.JSON,
-            ExportFormat.SQL,
-            ExportFormat.XLSX,
-          ]}
-          supportPassword
-          text={t("sql-editor.batch-export.self")}
-          tooltip={t("sql-editor.batch-export.tooltip", { max: MAX_EXPORT })}
-          validate={validateExport}
-          maximumExportCount={queryDataPolicy.maximumResultRows}
-          onExport={handleExport}
-          formContent={
-            <div className="w-full flex flex-col gap-y-2">
-              <div>
-                <p className="text-sm font-medium text-control">
-                  {t("database.select")}
-                  <span className="text-error ml-0.5">*</span>
-                </p>
-                <span className="text-xs text-control-light">
-                  {t("sql-editor.batch-export.tooltip", { max: MAX_EXPORT })}
-                </span>
+        {showExport ? (
+          <DataExportButton
+            size="sm"
+            viewMode="DRAWER"
+            supportFormats={supportFormats}
+            supportPassword
+            text={t("sql-editor.batch-export.self")}
+            tooltip={t("sql-editor.batch-export.tooltip", { max: MAX_EXPORT })}
+            validate={validateExport}
+            maximumExportCount={queryDataPolicy.maximumResultRows}
+            onExport={handleExport}
+            formContent={
+              <div className="w-full flex flex-col gap-y-2">
+                <div>
+                  <p className="text-sm font-medium text-control">
+                    {t("database.select")}
+                    <span className="text-error ml-0.5">*</span>
+                  </p>
+                  <span className="text-xs text-control-light">
+                    {t("sql-editor.batch-export.tooltip", { max: MAX_EXPORT })}
+                  </span>
+                </div>
+                <DatabaseTableView
+                  databases={databaseList}
+                  mode="PROJECT"
+                  selectedNames={selectedDatabaseNames}
+                  onSelectedNamesChange={setSelectedDatabaseNames}
+                />
               </div>
-              <DatabaseTableView
-                databases={databaseList}
-                mode="PROJECT"
-                selectedNames={selectedDatabaseNames}
-                onSelectedNamesChange={setSelectedDatabaseNames}
-              />
-            </div>
-          }
-        />
+            }
+          />
+        ) : (
+          <RequestExportButton
+            statement={batchStatement}
+            targets={queriedDatabaseNames}
+          />
+        )}
       </div>
 
       <div className="overflow-x-auto pb-2 flex-1">

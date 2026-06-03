@@ -9,16 +9,12 @@ import { computePasswordValidation } from "@/react/components/auth/userPasswordV
 import { Button } from "@/react/components/ui/button";
 import { Input } from "@/react/components/ui/input";
 import { OtpInput } from "@/react/components/ui/otp-input";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import { useVueState } from "@/react/hooks/useVueState";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import { AUTH_SIGNIN_MODULE } from "@/router/auth";
-import {
-  pushNotification,
-  useActuatorV1Store,
-  useAuthStore,
-  useCurrentUserV1,
-  useUserStore,
-} from "@/store";
+import { pushNotification, useAuthStore } from "@/store";
 import {
   LoginRequestSchema,
   ResetPasswordRequestSchema,
@@ -38,18 +34,21 @@ export function PasswordResetPage() {
   const query = router.currentRoute.value.query;
   const codeMode = !!query.email;
 
-  const passwordRestriction = useVueState(
-    () => useActuatorV1Store().serverInfo?.restriction?.passwordRestriction
-  );
-  const disallowPasswordSignin = useVueState(
-    () =>
-      useActuatorV1Store().serverInfo?.restriction?.disallowPasswordSignin ??
-      false
-  );
+  const serverInfo = useAppStore((state) => state.serverInfo);
+  const passwordRestriction = serverInfo?.restriction?.passwordRestriction;
+  const disallowPasswordSignin =
+    serverInfo?.restriction?.disallowPasswordSignin ?? false;
   const requireResetPassword = useVueState(
     () => useAuthStore().requireResetPassword
   );
-  const currentUser = useVueState(() => useCurrentUserV1().value);
+  const currentUser = useCurrentUser();
+
+  // This page renders outside any shell, so the workspace bootstrap hasn't
+  // populated the app store yet — load server info so the password policy
+  // checks resolve.
+  useEffect(() => {
+    void useAppStore.getState().loadServerInfo();
+  }, []);
 
   const redirectQuery = () => {
     const q = new URLSearchParams(window.location.search);
@@ -157,7 +156,7 @@ export function PasswordResetPage() {
     // Forced-reset mode
     if (!currentUser) return;
     const patch = { ...currentUser, password };
-    await useUserStore().updateUser(
+    await useAppStore.getState().updateUser(
       create(UpdateUserRequestSchema, {
         user: patch,
         updateMask: create(FieldMaskSchema, { paths: ["password"] }),

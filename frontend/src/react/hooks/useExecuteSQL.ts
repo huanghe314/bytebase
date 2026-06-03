@@ -1,19 +1,17 @@
 import { create } from "@bufbuild/protobuf";
 import { Code } from "@connectrpc/connect";
 import { cloneDeep, isEmpty } from "lodash-es";
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { v4 as uuidv4 } from "uuid";
+import { isConnectedSQLEditorTab } from "@/react/lib/sqlEditorConnection";
+import { useAppStore } from "@/react/stores/app";
 import { useSQLEditorStore as useSQLEditorReactStore } from "@/react/stores/sqlEditor";
-import { useSQLEditorVueState } from "@/react/stores/sqlEditor/editor-vue-state";
-import { useSQLEditorTabStore } from "@/react/stores/sqlEditor/tab-vue-state";
+import { getSQLEditorEditorState } from "@/react/stores/sqlEditor/editor";
 import {
-  hasFeature,
-  pushNotification,
-  useDatabaseV1Store,
-  useDBGroupStore,
-  useSQLStore,
-} from "@/store";
+  getDatabaseQueryContext,
+  getSQLEditorTabsState,
+} from "@/react/stores/sqlEditor/tab";
 import type {
   BBNotificationStyle,
   QueryContextStatus,
@@ -47,17 +45,20 @@ const QUERY_INTERVAL_LIMIT = 1000;
 export const useExecuteSQL = () => {
   const { t } = useTranslation();
   const lastQueryTimeRef = useRef<number | undefined>(undefined);
-  const dbGroupStore = useDBGroupStore();
-  const dbStore = useDatabaseV1Store();
-  const tabStore = useSQLEditorTabStore();
-  const sqlEditorStore = useSQLEditorVueState();
-
+  // Eagerly fetch the subscription so the batch-query / database-group
+  // gates below see the licensed plan when the user clicks Run. The hook
+  // is mounted by `EditorMain` on every tab open, so this fires once per
+  // tab; `loadSubscription` itself dedupes via an in-flight request.
+  const loadSubscription = useAppStore((s) => s.loadSubscription);
+  useEffect(() => {
+    void loadSubscription();
+  }, [loadSubscription]);
   const notify = (
     type: BBNotificationStyle,
     title: string,
     description?: string
   ) => {
-    pushNotification({
+    useAppStore.getState().notify({
       module: "bytebase",
       style: type,
       title,
@@ -69,12 +70,15 @@ export const useExecuteSQL = () => {
     async (params: SQLEditorQueryParams) => {
       lastQueryTimeRef.current = Date.now();
 
-      const tab = tabStore.currentTab;
+      const tabsState = getSQLEditorTabsState();
+      const tab = tabsState.tabsById.get(tabsState.currentTabId);
       if (!tab) {
         return false;
       }
 
-      if (tabStore.isDisconnected) {
+      // Mirrors `useIsDisconnected` selector logic without a hook
+      // (preflight runs inside a callback, not during render).
+      if (!isConnectedSQLEditorTab(tab)) {
         notify("CRITICAL", t("sql-editor.select-connection"));
         return false;
       }
@@ -85,29 +89,53 @@ export const useExecuteSQL = () => {
       }
 
       if (!tab.databaseQueryContexts) {
-        tab.databaseQueryContexts = new Map();
+        tabsState.updateTab(tab.id, { databaseQueryContexts: new Map() });
       }
       return true;
     },
-    [tabStore, t]
+    [t]
   );
 
+  // Propagates the status change to the Zustand store via
+  // `updateDatabaseQueryContext` (the path that drives React re-renders).
+  // For ad-hoc contexts that aren't tracked under `(database, ctx.id)` —
+  // e.g. the ephemeral context in `getExplainTokenForMSSQL` — the store
+  // action returns `undefined`; we fall back to mutating the passed-in
+  // `ctx` directly so the caller still sees the new fields after
+  // `await runQuery(...)`.
+  //
+  // Mutating `ctx` BEFORE the immer update would defeat the update:
+  // immer compares the patched draft to the (already-mutated) original
+  // state, detects no change, and returns the same state reference —
+  // Zustand then skips firing subscribers, and the UI never re-renders.
   const changeContextStatus = (
+    database: string,
     ctx: SQLEditorDatabaseQueryContext,
     status: QueryContextStatus
   ) => {
+    const patch: Partial<SQLEditorDatabaseQueryContext> = { status };
     switch (status) {
-      case "EXECUTING":
-        ctx.abortController = new AbortController();
-        ctx.beginTimestampMS = Date.now();
+      case "EXECUTING": {
+        patch.abortController = new AbortController();
+        patch.beginTimestampMS = Date.now();
         break;
+      }
       case "CANCELLED":
         ctx.abortController?.abort();
         break;
       case "DONE":
         break;
     }
-    ctx.status = status;
+    const next = getSQLEditorTabsState().updateDatabaseQueryContext({
+      database,
+      contextId: ctx.id,
+      context: patch,
+    });
+    if (!next) {
+      // Ad-hoc context (not in the tab's map): mirror the patch onto
+      // the passed-in object so awaiters can still observe the result.
+      Object.assign(ctx, patch);
+    }
   };
 
   const preExecute = useCallback(
@@ -120,7 +148,8 @@ export const useExecuteSQL = () => {
         return;
       }
 
-      const tab = tabStore.currentTab;
+      const tabsState = getSQLEditorTabsState();
+      const tab = tabsState.tabsById.get(tabsState.currentTabId);
       if (!tab) {
         return;
       }
@@ -137,17 +166,27 @@ export const useExecuteSQL = () => {
         return;
       }
 
-      const databaseQueryContexts = tab.databaseQueryContexts ?? new Map();
+      // Re-read the tab after preflight, which may have initialized
+      // `databaseQueryContexts` via `updateTab`.
+      const freshState = getSQLEditorTabsState();
+      const freshTab = freshState.tabsById.get(freshState.currentTabId);
+      if (!freshTab) {
+        return;
+      }
+      const existingContexts: Map<string, SQLEditorDatabaseQueryContext[]> =
+        freshTab.databaseQueryContexts ?? new Map();
       const batchQueryDatabaseSet = new Set<string /* database name */>([
         params.connection.database,
       ]);
 
       // Check if the user selects multiple databases to query.
+      const appStore = useAppStore.getState();
       if (
-        tab.batchQueryContext &&
-        hasFeature(PlanFeature.FEATURE_BATCH_QUERY)
+        freshTab.batchQueryContext &&
+        appStore.hasFeature(PlanFeature.FEATURE_BATCH_QUERY)
       ) {
-        const { databases = [], databaseGroups = [] } = tab.batchQueryContext;
+        const { databases = [], databaseGroups = [] } =
+          freshTab.batchQueryContext;
         for (const databaseResourceName of databases) {
           if (!isValidDatabaseName(databaseResourceName)) {
             continue;
@@ -158,17 +197,13 @@ export const useExecuteSQL = () => {
           batchQueryDatabaseSet.add(databaseResourceName);
         }
 
-        if (hasFeature(PlanFeature.FEATURE_DATABASE_GROUPS)) {
+        if (appStore.hasFeature(PlanFeature.FEATURE_DATABASE_GROUPS)) {
           for (const databaseGroupName of databaseGroups) {
             try {
-              const databaseGroup = await dbGroupStore.getOrFetchDBGroupByName(
-                databaseGroupName,
-                {
-                  skipCache: false,
-                  silent: true,
-                  view: DatabaseGroupView.FULL,
-                }
-              );
+              const databaseGroup = await useAppStore
+                .getState()
+                .fetchDBGroup(databaseGroupName, DatabaseGroupView.FULL);
+              if (!databaseGroup) continue;
               for (const matchedDatabase of databaseGroup.matchedDatabases) {
                 if (!isValidDatabaseName(matchedDatabase.name)) {
                   continue;
@@ -185,36 +220,52 @@ export const useExecuteSQL = () => {
         }
       }
 
-      for (const [database, contexts] of databaseQueryContexts.entries()) {
+      // Cancel and drop contexts whose database is no longer in the batch.
+      // Cancellation happens first (while contexts are still in the store)
+      // so the abort + status update propagate to subscribers; then the
+      // database key is removed via the store action.
+      for (const [database, contexts] of existingContexts.entries()) {
         if (!batchQueryDatabaseSet.has(database)) {
           for (const context of contexts) {
-            changeContextStatus(context, "CANCELLED");
+            changeContextStatus(database, context, "CANCELLED");
           }
-          databaseQueryContexts.delete(database);
+          freshState.deleteDatabaseQueryContext(database);
         }
       }
 
       const isBatch = batchQueryDatabaseSet.size > 1;
-      await dbStore.batchGetOrFetchDatabases([...batchQueryDatabaseSet.keys()]);
+      await useAppStore
+        .getState()
+        .batchGetOrFetchDatabases([...batchQueryDatabaseSet.keys()]);
 
       for (const databaseName of batchQueryDatabaseSet.values()) {
-        if (!databaseQueryContexts.has(databaseName)) {
-          databaseQueryContexts.set(databaseName, []);
+        // Re-read the latest tab snapshot inside the loop so each
+        // iteration sees the prior iteration's writes.
+        const loopState = getSQLEditorTabsState();
+        const loopTab = loopState.tabsById.get(loopState.currentTabId);
+        if (!loopTab) {
+          break;
         }
+        const currentMap: Map<string, SQLEditorDatabaseQueryContext[]> =
+          loopTab.databaseQueryContexts ?? new Map();
+        const currentList = currentMap.get(databaseName) ?? [];
 
-        if ((databaseQueryContexts.get(databaseName)?.length ?? 0) >= 50) {
-          const ctx = databaseQueryContexts.get(databaseName)?.pop();
-          if (ctx) {
-            changeContextStatus(ctx, "CANCELLED");
+        // If at capacity, cancel + drop the oldest entry first.
+        let trimmedList = currentList;
+        if (currentList.length >= 50) {
+          const oldest = currentList[currentList.length - 1];
+          if (oldest) {
+            changeContextStatus(databaseName, oldest, "CANCELLED");
+            trimmedList = currentList.slice(0, currentList.length - 1);
           }
         }
 
-        const database = dbStore.getDatabaseByName(databaseName);
+        const database = useAppStore.getState().getDatabaseByName(databaseName);
         const resolvedDataSourceId =
-          isBatch && tab.batchQueryContext.dataSourceType
+          isBatch && loopTab.batchQueryContext.dataSourceType
             ? ((await getValidDataSourceByPolicy(
                 database,
-                tab.batchQueryContext.dataSourceType
+                loopTab.batchQueryContext.dataSourceType
               )) ?? "")
             : params.connection.dataSourceId;
         const context: SQLEditorDatabaseQueryContext = {
@@ -229,10 +280,13 @@ export const useExecuteSQL = () => {
           }),
           status: "PENDING",
         };
-        databaseQueryContexts.get(databaseName)?.unshift(context);
+
+        const nextMap = new Map(currentMap);
+        nextMap.set(databaseName, [context, ...trimmedList]);
+        loopState.updateTab(loopTab.id, { databaseQueryContexts: nextMap });
       }
     },
-    [tabStore, dbStore, dbGroupStore, preflight]
+    [preflight]
   );
 
   const runQuery = useCallback(
@@ -251,18 +305,33 @@ export const useExecuteSQL = () => {
         return;
       }
 
-      changeContextStatus(context, "EXECUTING");
+      changeContextStatus(database.name, context, "EXECUTING");
 
       const finish = (resultSet: SQLResultSetV1) => {
-        context.resultSet = resultSet;
-        changeContextStatus(context, "DONE");
+        const next = getSQLEditorTabsState().updateDatabaseQueryContext({
+          database: database.name,
+          contextId: context.id,
+          context: { resultSet },
+        });
+        if (!next) {
+          // Ad-hoc context: mirror onto the local object.
+          context.resultSet = resultSet;
+        }
+        changeContextStatus(database.name, context, "DONE");
       };
 
-      const { abortController } = context;
+      // After the EXECUTING transition, re-read the live context from
+      // the store so the abortController set during the transition is
+      // visible. Resolve by (database, contextId) across tabs — not the
+      // current tab — so a query whose tab was switched away still finds
+      // its own context. For ad-hoc contexts the store action bails and
+      // the `changeContextStatus` fallback wrote directly into `context`.
+      const liveContext =
+        getDatabaseQueryContext(database.name, context.id) ?? context;
+      const { abortController } = liveContext;
       if (!abortController) {
         return;
       }
-      const sqlStore = useSQLStore();
 
       const dataSourceId = context.params.connection.dataSourceId;
 
@@ -276,16 +345,17 @@ export const useExecuteSQL = () => {
         });
       }
 
+      const editorState = getSQLEditorEditorState();
       const queryOption = create(QueryOptionSchema, {
         ...(context.params.queryOption ?? ({} as QueryOption)),
-        redisRunCommandsOn: sqlEditorStore.redisCommandOption,
+        redisRunCommandsOn: editorState.redisCommandOption,
       });
-      const resultSet = await sqlStore.query(
+      const resultSet = await useAppStore.getState().query(
         create(QueryRequestSchema, {
           name: database.name,
           ...(dataSourceId ? { dataSourceId } : {}),
           statement: context.params.statement,
-          limit: context.params.limit ?? sqlEditorStore.resultRowsLimit,
+          limit: context.params.limit ?? editorState.resultRowsLimit,
           explain: context.params.explain,
           schema: context.params.connection.schema,
           container: context.params.connection.table,
@@ -304,7 +374,7 @@ export const useExecuteSQL = () => {
       useSQLEditorReactStore
         .getState()
         .mergeLatest({
-          project: sqlEditorStore.project,
+          project: getSQLEditorEditorState().project,
           database: database.name,
         })
         .catch(() => {
@@ -327,15 +397,16 @@ export const useExecuteSQL = () => {
             getDatabaseProject(database)
           )
         ) {
-          sqlEditorStore.isShowExecutingHint = true;
-          sqlEditorStore.executingHintDatabase = database;
+          const liveEditorState = getSQLEditorEditorState();
+          liveEditorState.setShowExecutingHint(true);
+          liveEditorState.setExecutingHintDatabase(database);
         }
         return finish(resultSet);
       }
 
       return finish(resultSet);
     },
-    [sqlEditorStore, t]
+    [t]
   );
 
   const execute = useCallback(

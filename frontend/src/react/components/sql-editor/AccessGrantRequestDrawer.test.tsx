@@ -9,16 +9,19 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   useTranslation: vi.fn(() => ({ t: (key: string) => key })),
-  useVueState: vi.fn<(getter: () => unknown) => unknown>(),
-  useCurrentUserV1: vi.fn(),
-  // Legacy Pinia editor store.
-  useSQLEditorVueState: vi.fn(),
-  useSQLEditorTabStore: vi.fn(),
+  // Pinia bridge — resolves the current user's email from the Pinia ref.
+  usePiniaBridge: vi.fn<(getter: () => unknown) => unknown>(),
+  // Zustand editor store project read.
+  project: "projects/proj1" as string,
+  // Current tab connection database used to derive default targets.
+  currentTabDatabase: "instances/inst1/databases/db1" as string | undefined,
   // New zustand setters.
   setAsidePanelTab: vi.fn(),
   setHighlightAccessGrantName: vi.fn(),
   pushNotification: vi.fn(),
-  useDatabaseV1Store: vi.fn(),
+  fetchDatabases: vi
+    .fn()
+    .mockResolvedValue({ databases: [], nextPageToken: "" }),
   createAccessGrant: vi.fn(),
   routerResolve: vi.fn(() => ({ fullPath: "/projects/proj1/issues/123" })),
 }));
@@ -27,22 +30,47 @@ vi.mock("react-i18next", () => ({
   useTranslation: mocks.useTranslation,
 }));
 
-vi.mock("@/react/hooks/useVueState", () => ({
-  useVueState: mocks.useVueState,
+vi.mock("@/react/hooks/usePiniaBridge", () => ({
+  usePiniaBridge: mocks.usePiniaBridge,
 }));
 
-vi.mock("@/store", () => ({
-  useCurrentUserV1: mocks.useCurrentUserV1,
-  pushNotification: mocks.pushNotification,
-  useDatabaseV1Store: mocks.useDatabaseV1Store,
+vi.mock("@/react/hooks/useAppState", () => ({
+  useCurrentUser: () => ({
+    name: "users/me",
+    email: "me@example.com",
+  }),
 }));
 
-vi.mock("@/react/stores/sqlEditor/tab-vue-state", () => ({
-  useSQLEditorTabStore: mocks.useSQLEditorTabStore,
+vi.mock("@/react/stores/app", () => {
+  // `notify` reuses the `pushNotification` vi.fn so the existing test
+  // assertions on `mocks.pushNotification` keep working after the migration
+  // from the Pinia helper to the app-store notification slice.
+  const state = () => ({
+    fetchDatabases: mocks.fetchDatabases,
+    notify: mocks.pushNotification,
+  });
+  return {
+    useAppStore: Object.assign(
+      (selector: (s: ReturnType<typeof state>) => unknown) => selector(state()),
+      { getState: state }
+    ),
+  };
+});
+
+// Zustand editor store — active project read.
+vi.mock("@/react/stores/sqlEditor/editor", () => ({
+  useSQLEditorEditorState: (selector: (s: { project: string }) => unknown) =>
+    selector({ project: mocks.project }),
 }));
 
-vi.mock("@/react/stores/sqlEditor/editor-vue-state", () => ({
-  useSQLEditorVueState: mocks.useSQLEditorVueState,
+// Zustand tab store — imperative getter to derive default targets.
+vi.mock("@/react/stores/sqlEditor/tab", () => ({
+  getSQLEditorTabsState: () => ({
+    currentTabId: "tab1",
+    tabsById: new Map([
+      ["tab1", { connection: { database: mocks.currentTabDatabase } }],
+    ]),
+  }),
 }));
 
 vi.mock("@/react/stores/sqlEditor", () => ({
@@ -295,23 +323,12 @@ const renderIntoContainer = (element: ReactElement) => {
 const setupMocks = () => {
   mocks.useTranslation.mockReturnValue({ t: (key: string) => key });
 
-  mocks.useCurrentUserV1.mockReturnValue({
-    value: { email: "user@example.com" },
-  });
+  mocks.project = "projects/proj1";
+  mocks.currentTabDatabase = "instances/inst1/databases/db1";
 
-  mocks.useSQLEditorVueState.mockReturnValue({ project: "projects/proj1" });
+  mocks.fetchDatabases.mockResolvedValue({ databases: [], nextPageToken: "" });
 
-  mocks.useSQLEditorTabStore.mockReturnValue({
-    currentTab: {
-      connection: { database: "instances/inst1/databases/db1" },
-    },
-  });
-
-  mocks.useDatabaseV1Store.mockReturnValue({
-    fetchDatabases: vi.fn().mockResolvedValue({ databases: [] }),
-  });
-
-  mocks.useVueState.mockImplementation((getter: () => unknown) => getter());
+  mocks.usePiniaBridge.mockImplementation((getter: () => unknown) => getter());
 };
 
 beforeEach(async () => {

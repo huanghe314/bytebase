@@ -40,9 +40,11 @@ import {
   SheetTitle,
 } from "@/react/components/ui/sheet";
 import { Tooltip } from "@/react/components/ui/tooltip";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import { useClickOutside } from "@/react/hooks/useClickOutside";
 import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import {
   PROJECT_V1_ROUTE_ISSUE_DETAIL,
@@ -52,13 +54,7 @@ import {
   buildPlanDeployRouteFromPlanName,
   buildPlanDeployRouteFromRolloutName,
 } from "@/router/dashboard/projectV1RouteHelpers";
-import {
-  pushNotification,
-  useCurrentUserV1,
-  useIssueCommentStore,
-  useProjectV1Store,
-  useSQLStore,
-} from "@/store";
+import { pushNotification } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import {
   ApproveIssueRequestSchema,
@@ -99,10 +95,9 @@ import { IssueDetailTaskRolloutActionPanel } from "./IssueDetailTaskRolloutActio
 export function IssueDetailActionBar() {
   const { t } = useTranslation();
   const page = useIssueDetailContext();
-  const projectStore = useProjectV1Store();
-  const issueCommentStore = useIssueCommentStore();
-  const sqlStore = useSQLStore();
-  const currentUser = useVueState(() => useCurrentUserV1().value);
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  const currentUser = useCurrentUser();
   const [pendingConfirmAction, setPendingConfirmAction] =
     useState<ActionDefinition>();
   const [pendingReviewOpen, setPendingReviewOpen] = useState(false);
@@ -113,7 +108,10 @@ export function IssueDetailActionBar() {
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const projectName = `${projectNamePrefix}${page.projectId}`;
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
+  );
+  void projectsByName;
   const { isSpecEmpty } = useIssueDetailSpecValidation(page.plan?.specs ?? []);
 
   useClickOutside(menuRef, menuOpen, () => setMenuOpen(false));
@@ -241,13 +239,13 @@ export function IssueDetailActionBar() {
     if (!page.issue?.name) {
       return;
     }
-    await issueCommentStore.listIssueComments(
+    await useAppStore.getState().listIssueComments(
       create(ListIssueCommentsRequestSchema, {
         parent: page.issue.name,
         pageSize: 1000,
       })
     );
-  }, [issueCommentStore, page.issue?.name]);
+  }, [page.issue?.name]);
 
   const handleRefreshIssueDetailState = useCallback(async () => {
     await refreshIssueDetailState(page);
@@ -259,7 +257,7 @@ export function IssueDetailActionBar() {
     }
     try {
       setIsSubmitting(true);
-      const content = await sqlStore.exportData(
+      const content = await useAppStore.getState().exportData(
         create(ExportRequestSchema, {
           name: `${page.rollout.name}/stages/-`,
         })
@@ -290,7 +288,7 @@ export function IssueDetailActionBar() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [handleRefreshIssueDetailState, page.rollout, sqlStore, t]);
+  }, [handleRefreshIssueDetailState, page.rollout, t]);
 
   const handleCreateRollout = useCallback(
     async (options?: { runAllTasks?: boolean }) => {
@@ -744,7 +742,6 @@ function IssueDetailReviewPopover({
 }) {
   const { t } = useTranslation();
   const page = useIssueDetailContext();
-  const issueCommentStore = useIssueCommentStore();
   const popoverRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(false);
   const [comment, setComment] = useState("");
@@ -788,7 +785,7 @@ function IssueDetailReviewPopover({
         );
         page.patchState({ issue: response });
       } else {
-        await issueCommentStore.createIssueComment({
+        await useAppStore.getState().createIssueComment({
           issueName: issue.name,
           comment,
         });
@@ -831,7 +828,6 @@ function IssueDetailReviewPopover({
   }, [
     comment,
     issue,
-    issueCommentStore,
     onOpenChange,
     onRefreshIssueComments,
     onRefreshState,

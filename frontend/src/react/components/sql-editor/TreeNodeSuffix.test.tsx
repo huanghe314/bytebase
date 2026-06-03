@@ -18,10 +18,13 @@ globalThis.ResizeObserver = class ResizeObserver {
 
 const mocks = vi.hoisted(() => ({
   useTranslation: vi.fn(() => ({ t: (key: string) => key })),
-  useVueState: vi.fn<(getter: () => unknown) => unknown>(),
-  useWorkSheetStore: vi.fn(),
-  useSQLEditorTabStore: vi.fn(),
-  useUserStore: vi.fn(),
+  usePiniaBridge: vi.fn<(getter: () => unknown) => unknown>(),
+  getSQLEditorTabsState: vi.fn(),
+  getWorksheetByName: vi.fn<(name: string) => unknown>(),
+  getUserByIdentifier: vi.fn<() => { title: string } | undefined>(() => ({
+    title: "Test User",
+  })),
+  getOrFetchUserByIdentifier: vi.fn(async () => ({ title: "Test User" })),
   useSheetContext: vi.fn(),
 }));
 
@@ -29,17 +32,26 @@ vi.mock("react-i18next", () => ({
   useTranslation: mocks.useTranslation,
 }));
 
-vi.mock("@/react/hooks/useVueState", () => ({
-  useVueState: mocks.useVueState,
+vi.mock("@/react/hooks/usePiniaBridge", () => ({
+  usePiniaBridge: mocks.usePiniaBridge,
 }));
 
-vi.mock("@/store", () => ({
-  useWorkSheetStore: mocks.useWorkSheetStore,
-  useUserStore: mocks.useUserStore,
-}));
+vi.mock("@/react/stores/app", () => {
+  const state = {
+    getWorksheetByName: mocks.getWorksheetByName,
+    getUserByIdentifier: mocks.getUserByIdentifier,
+    getOrFetchUserByIdentifier: mocks.getOrFetchUserByIdentifier,
+  };
+  return {
+    useAppStore: Object.assign(
+      (selector: (s: typeof state) => unknown) => selector(state),
+      { getState: () => state }
+    ),
+  };
+});
 
-vi.mock("@/react/stores/sqlEditor/tab-vue-state", () => ({
-  useSQLEditorTabStore: mocks.useSQLEditorTabStore,
+vi.mock("@/react/stores/sqlEditor/tab", () => ({
+  getSQLEditorTabsState: mocks.getSQLEditorTabsState,
 }));
 
 vi.mock("@/views/sql-editor/Sheet", () => ({
@@ -120,21 +132,19 @@ const renderIntoContainer = (element: React.ReactElement) => {
 let TreeNodeSuffix: typeof import("./TreeNodeSuffix").TreeNodeSuffix;
 
 beforeEach(async () => {
-  mocks.useVueState.mockImplementation((getter: () => unknown) => getter());
-  mocks.useWorkSheetStore.mockReturnValue({
-    getWorksheetByName: (name: string) => ({
-      name,
-      starred: false,
-      visibility: 0, // PRIVATE
-      creator: "users/test@example.com",
-    }),
-  });
-  mocks.useSQLEditorTabStore.mockReturnValue({
+  mocks.usePiniaBridge.mockImplementation((getter: () => unknown) => getter());
+  mocks.getWorksheetByName.mockImplementation((name: string) => ({
+    name,
+    starred: false,
+    visibility: 0, // PRIVATE
+    creator: "users/test@example.com",
+  }));
+  mocks.getSQLEditorTabsState.mockReturnValue({
+    tabsById: new Map(),
     closeTab: vi.fn(),
   });
-  mocks.useUserStore.mockReturnValue({
-    getUserByIdentifier: vi.fn(() => ({ title: "Test User" })),
-  });
+  mocks.getUserByIdentifier.mockReturnValue({ title: "Test User" });
+  mocks.getOrFetchUserByIdentifier.mockResolvedValue({ title: "Test User" });
   mocks.useSheetContext.mockReturnValue({
     isWorksheetCreator: vi.fn(() => true),
   });
@@ -201,6 +211,31 @@ describe("TreeNodeSuffix", () => {
 
     const starSvg = container.querySelector("svg.lucide-star");
     expect(starSvg).toBeNull();
+
+    unmount();
+  });
+
+  test("fetches worksheet creator before rendering the raw identifier", () => {
+    mocks.getUserByIdentifier.mockReturnValue(undefined);
+    const node = makeWorksheetNode();
+    const onToggleStar = vi.fn();
+    const onSharePanelShow = vi.fn();
+    const onContextMenuShow = vi.fn();
+
+    const { render, unmount } = renderIntoContainer(
+      <TreeNodeSuffix
+        node={node}
+        view="my"
+        onToggleStar={onToggleStar}
+        onSharePanelShow={onSharePanelShow}
+        onContextMenuShow={onContextMenuShow}
+      />
+    );
+    render();
+
+    expect(mocks.getOrFetchUserByIdentifier).toHaveBeenCalledWith({
+      identifier: "users/test@example.com",
+    });
 
     unmount();
   });

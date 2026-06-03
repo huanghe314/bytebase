@@ -119,31 +119,41 @@ const mocks = vi.hoisted(() => ({
   currentUser: { name: "users/me@example.com", email: "me@example.com" },
 }));
 
-// Stable store singletons — returning a new object on every render causes the
-// useEffect([..., projectStore]) dependency to fire on every render, creating
-// an infinite update loop that exhausts the V8 heap.
-const stableProjectStore = {
+vi.mock("@/store", () => ({
+  pushNotification: vi.fn(),
+}));
+
+// The app store exposes both a callable selector form
+// (`useAppStore((s) => s.projectsByName)`) and an imperative
+// `useAppStore.getState()` form. The project methods that previously lived on
+// the Pinia `useProjectV1Store` now live here.
+const appStoreState = {
   get getOrFetchProjectByName() {
     return mocks.getOrFetchProjectByName;
   },
   get getProjectByName() {
     return mocks.getProjectByName;
   },
+  getOrFetchInstanceByName: mocks.getOrFetchInstanceByName,
   fetchProjectList: vi.fn().mockResolvedValue({ projects: [] }),
+  projectsByName: {},
+  environmentList: [],
 };
-const stableInstanceStore = {
-  get getOrFetchInstanceByName() {
-    return mocks.getOrFetchInstanceByName;
-  },
-};
+vi.mock("@/react/stores/app", () => ({
+  useAppStore: Object.assign(
+    (selector: (state: unknown) => unknown) => selector(appStoreState),
+    {
+      getState: () => appStoreState,
+    }
+  ),
+}));
 
-vi.mock("@/store", () => ({
-  useProjectV1Store: () => stableProjectStore,
-  useInstanceV1Store: () => stableInstanceStore,
-  useEnvironmentV1Store: () => ({ environmentList: [] }),
-  useCurrentUserV1: () => ({ value: mocks.currentUser }),
+vi.mock("@/react/stores/app/issue", () => ({
   experimentalCreateIssueByPlan: mocks.experimentalCreateIssueByPlan,
-  pushNotification: vi.fn(),
+}));
+
+vi.mock("@/react/hooks/useAppState", () => ({
+  useCurrentUser: () => mocks.currentUser,
 }));
 
 vi.mock("@/react/hooks/useVueState", () => ({

@@ -4,8 +4,8 @@ import {
   rolloutServiceClientConnect,
   sheetServiceClientConnect,
 } from "@/connect";
-import { useVueState } from "@/react/hooks/useVueState";
-import { useReleaseStore, useRolloutStore } from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { unknownRollout } from "@/types";
 import {
   GetTaskRunLogRequestSchema,
   type Task,
@@ -155,8 +155,7 @@ export const buildReleaseSheetFetchResult = (
 export const useTaskRunLogData = (
   taskRunName?: string
 ): UseTaskRunLogDataResult => {
-  const rolloutStore = useRolloutStore();
-  const releaseStore = useReleaseStore();
+  const fetchRelease = useAppStore((state) => state.fetchRelease);
 
   const [entries, setEntries] = useState<TaskRunLogEntry[]>([]);
   const [sheet, setSheet] = useState<Sheet | undefined>(undefined);
@@ -188,7 +187,8 @@ export const useTaskRunLogData = (
     }
 
     setMetadataFetchState({ status: "loading" });
-    void rolloutStore
+    void useAppStore
+      .getState()
       .fetchRolloutByName(rolloutName, true)
       .then((fetchedRollout) => {
         if (version !== metadataFetchVersion.current) return;
@@ -209,12 +209,18 @@ export const useTaskRunLogData = (
           error: getErrorMessage(error),
         });
       });
-  }, [rolloutName, rolloutStore, taskRunName]);
+  }, [rolloutName, taskRunName]);
 
-  const rollout = useVueState(() => {
-    if (!rolloutName) return undefined;
-    return rolloutStore.getRolloutByName(rolloutName);
-  });
+  // Subscribe to the cached entry directly (stable ref) and derive the unknown
+  // fallback outside the selector — a selector returning `unknownRollout()`
+  // would yield a fresh object each call and loop forever.
+  const cachedRollout = useAppStore((state) =>
+    rolloutName ? state.rolloutsByName[rolloutName] : undefined
+  );
+  const rollout = useMemo(
+    () => (rolloutName ? (cachedRollout ?? unknownRollout()) : undefined),
+    [rolloutName, cachedRollout]
+  );
 
   const task = useMemo(
     () => getTaskFromRollout(taskRunName, rollout),
@@ -285,11 +291,10 @@ export const useTaskRunLogData = (
         return;
       }
 
-      void releaseStore
-        .fetchReleaseByName(releaseName, true)
+      void fetchRelease(releaseName, true)
         .then(async (release) => {
           const fileSheets = await Promise.all(
-            release.files
+            (release?.files ?? [])
               .filter((file) => file.sheet && file.version)
               .map(async (file) => {
                 try {
@@ -361,7 +366,7 @@ export const useTaskRunLogData = (
         });
       });
   }, [
-    releaseStore,
+    fetchRelease,
     task,
     taskRunName,
     sheetFetchTaskKey,

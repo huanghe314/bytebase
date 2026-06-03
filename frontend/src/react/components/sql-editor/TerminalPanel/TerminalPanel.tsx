@@ -5,11 +5,14 @@ import type { IStandaloneCodeEditor } from "@/react/components/monaco/types";
 import { ConnectionHolder } from "@/react/components/sql-editor/ConnectionHolder";
 import { EditorAction } from "@/react/components/sql-editor/EditorAction";
 import { ResultView } from "@/react/components/sql-editor/ResultView";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useAppStore } from "@/react/stores/app";
 import { useSQLEditorStore } from "@/react/stores/sqlEditor";
-import { useSQLEditorTabStore } from "@/react/stores/sqlEditor/tab-vue-state";
+import {
+  getSQLEditorTabsState,
+  useIsDisconnected,
+  useSQLEditorTabState,
+} from "@/react/stores/sqlEditor/tab";
 import { getWebTerminalQuerySession } from "@/react/stores/sqlEditor/webTerminal-service";
-import { useDatabaseV1Store } from "@/store";
 import type { SQLEditorQueryParams, WebTerminalQueryItemV1 } from "@/types";
 import { CompactSQLEditor } from "./CompactSQLEditor";
 import { useHistory } from "./useHistory";
@@ -34,8 +37,10 @@ import { useHistory } from "./useHistory";
  */
 export function TerminalPanel() {
   const { t } = useTranslation();
-  const tabStore = useSQLEditorTabStore();
-  const databaseStore = useDatabaseV1Store();
+  const batchGetOrFetchDatabases = useAppStore(
+    (s) => s.batchGetOrFetchDatabases
+  );
+  const getDatabaseByName = useAppStore((s) => s.getDatabaseByName);
   const updateWebTerminalQueryItem = useSQLEditorStore(
     (s) => s.updateWebTerminalQueryItem
   );
@@ -43,8 +48,10 @@ export function TerminalPanel() {
     (s) => s.replaceWebTerminalQueryItems
   );
 
-  const isDisconnected = useVueState(() => tabStore.isDisconnected);
-  const currentTabId = useVueState(() => tabStore.currentTab?.id);
+  const isDisconnected = useIsDisconnected();
+  const currentTabId = useSQLEditorTabState(
+    (s) => s.tabsById.get(s.currentTabId)?.id
+  );
 
   // Lazily create the per-tab session (WebSocket + timer + event bus)
   // when this panel mounts for a new tab. The zustand selector below
@@ -52,10 +59,11 @@ export function TerminalPanel() {
   // up here so the controller and timer exist by the time the user
   // hits Enter.
   useEffect(() => {
-    const tab = tabStore.currentTab;
+    const tabsState = getSQLEditorTabsState();
+    const tab = tabsState.tabsById.get(tabsState.currentTabId);
     if (!tab) return;
     getWebTerminalQuerySession(tab);
-  }, [tabStore, currentTabId]);
+  }, [currentTabId]);
 
   // Subscribe to the per-tab query items from the zustand slice — every
   // mutation (push, status flip, resultSet attach) produces a new array
@@ -74,7 +82,8 @@ export function TerminalPanel() {
   const [expired, setExpired] = useState(false);
   useEffect(() => {
     const tick = () => {
-      const tab = tabStore.currentTab;
+      const tabsState = getSQLEditorTabsState();
+      const tab = tabsState.tabsById.get(tabsState.currentTabId);
       if (!tab) {
         setExpired(false);
         return;
@@ -84,15 +93,15 @@ export function TerminalPanel() {
     tick();
     const interval = setInterval(tick, 250);
     return () => clearInterval(interval);
-  }, [tabStore, currentTabId]);
+  }, [currentTabId]);
 
   // Pre-fetch any database referenced by an existing query item so the
   // ResultView can render `database.environment` etc. synchronously.
   useEffect(() => {
-    void databaseStore.batchGetOrFetchDatabases(
+    void batchGetOrFetchDatabases(
       queryList.map((q) => q?.params?.connection.database ?? "")
     );
-  }, [queryList, databaseStore]);
+  }, [queryList, batchGetOrFetchDatabases]);
 
   const currentQuery = queryList[queryList.length - 1];
   const isEditableQueryItem = (item: WebTerminalQueryItemV1) =>
@@ -107,16 +116,18 @@ export function TerminalPanel() {
         console.warn("Empty query");
         return;
       }
-      const tab = tabStore.currentTab;
+      const tabsState = getSQLEditorTabsState();
+      const tab = tabsState.tabsById.get(tabsState.currentTabId);
       if (!tab) return;
       const session = getWebTerminalQuerySession(tab);
       void session.controller.events.emit("query", params);
     },
-    [currentQuery, tabStore]
+    [currentQuery]
   );
 
   const handleClearScreen = useCallback(() => {
-    const tab = tabStore.currentTab;
+    const tabsState = getSQLEditorTabsState();
+    const tab = tabsState.tabsById.get(tabsState.currentTabId);
     if (!tab) return;
     // Keep only the live (tail) query item; the slice replaces the
     // whole array, so React re-renders via the existing selector.
@@ -125,7 +136,7 @@ export function TerminalPanel() {
       EMPTY_QUERY_LIST;
     if (items.length <= 1) return;
     replaceWebTerminalQueryItems(tab.id, items.slice(-1));
-  }, [tabStore, replaceWebTerminalQueryItems]);
+  }, [replaceWebTerminalQueryItems]);
 
   const handleHistory = useCallback(
     (direction: "up" | "down", editor: IStandaloneCodeEditor) => {
@@ -143,7 +154,8 @@ export function TerminalPanel() {
   );
 
   const handleCancelQuery = () => {
-    const tab = tabStore.currentTab;
+    const tabsState = getSQLEditorTabsState();
+    const tab = tabsState.tabsById.get(tabsState.currentTabId);
     if (!tab) return;
     getWebTerminalQuerySession(tab).controller.abort();
   };
@@ -202,9 +214,7 @@ export function TerminalPanel() {
             {queryList.map((query) => {
               const editable = isEditableQueryItem(query);
               const database = query.params?.connection.database
-                ? databaseStore.getDatabaseByName(
-                    query.params.connection.database
-                  )
+                ? getDatabaseByName(query.params.connection.database)
                 : undefined;
               return (
                 <div key={query.id} className="relative">

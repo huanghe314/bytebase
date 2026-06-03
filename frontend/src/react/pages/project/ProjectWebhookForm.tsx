@@ -19,7 +19,7 @@ import {
 import { Input } from "@/react/components/ui/input";
 import { Tooltip } from "@/react/components/ui/tooltip";
 import { WebhookTypeIcon } from "@/react/components/WebhookTypeIcon";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import {
   PROJECT_V1_ROUTE_WEBHOOK_DETAIL,
@@ -27,13 +27,7 @@ import {
 } from "@/router/dashboard/projectV1";
 import { WORKSPACE_ROUTE_IM } from "@/router/dashboard/workspaceRoutes";
 import { SETTING_ROUTE_WORKSPACE_GENERAL } from "@/router/dashboard/workspaceSetting";
-import {
-  pushNotification,
-  useActuatorV1Store,
-  useProjectV1Store,
-  useProjectWebhookV1Store,
-  useSettingV1Store,
-} from "@/store";
+import { pushNotification } from "@/store";
 import {
   projectWebhookV1ActivityItemList,
   projectWebhookV1TypeItemList,
@@ -61,10 +55,16 @@ export function ProjectWebhookForm({
   webhook,
 }: Props) {
   const { t } = useTranslation();
-  const settingStore = useSettingV1Store();
-  const projectStore = useProjectV1Store();
-  const projectWebhookV1Store = useProjectWebhookV1Store();
-  const actuatorStore = useActuatorV1Store();
+  const createProjectWebhook = useAppStore(
+    (state) => state.createProjectWebhook
+  );
+  const updateProjectWebhook = useAppStore(
+    (state) => state.updateProjectWebhook
+  );
+  const deleteProjectWebhook = useAppStore(
+    (state) => state.deleteProjectWebhook
+  );
+  const testProjectWebhook = useAppStore((state) => state.testProjectWebhook);
 
   const [state, setState] = useState<Webhook>(() =>
     clone(WebhookSchema, webhook)
@@ -79,12 +79,10 @@ export function ProjectWebhookForm({
 
   // Fetch IM setting on mount
   useEffect(() => {
-    settingStore.getOrFetchSettingByName(Setting_SettingName.APP_IM);
-  }, [settingStore]);
+    useAppStore.getState().getOrFetchSettingByName(Setting_SettingName.APP_IM);
+  }, []);
 
-  const externalUrl = useVueState(
-    () => actuatorStore.serverInfo?.externalUrl ?? ""
-  );
+  const externalUrl = useAppStore((s) => s.externalUrl());
 
   const webhookTypeItemList = useMemo(() => projectWebhookV1TypeItemList(), []);
   const webhookActivityItemList = useMemo(
@@ -97,13 +95,16 @@ export function ProjectWebhookForm({
     [webhookTypeItemList, state.type]
   );
 
-  const imSetting = useVueState(() => {
-    const setting = settingStore.getSettingByName(Setting_SettingName.APP_IM);
+  const settingsByName = useAppStore((s) => s.settingsByName);
+  const imSetting = useMemo(() => {
+    const setting = useAppStore
+      .getState()
+      .getSettingByName(Setting_SettingName.APP_IM);
     if (!setting?.value?.value) return undefined;
     const value = setting.value.value;
     if (value.case === "appIm") return value.value;
     return undefined;
-  });
+  }, [settingsByName]);
 
   const imApp = useMemo(() => {
     if (!selectedWebhook?.supportDirectMessage) return undefined;
@@ -208,11 +209,10 @@ export function ProjectWebhookForm({
 
   const createWebhook = useCallback(() => {
     withLoading(async () => {
-      const updatedProject = await projectWebhookV1Store.createProjectWebhook(
-        project.name,
-        state
-      );
-      projectStore.updateProjectCache({ ...project, ...updatedProject });
+      const updatedProject = await createProjectWebhook(project.name, state);
+      useAppStore
+        .getState()
+        .updateProjectCache({ ...project, ...updatedProject });
       pushNotification({
         module: "bytebase",
         style: "SUCCESS",
@@ -235,7 +235,7 @@ export function ProjectWebhookForm({
         });
       }
     });
-  }, [project, state, projectStore, projectWebhookV1Store, t, withLoading]);
+  }, [project, state, createProjectWebhook, t, withLoading]);
 
   const updateWebhook = useCallback(() => {
     withLoading(async () => {
@@ -247,11 +247,10 @@ export function ProjectWebhookForm({
       if (!isEqual(state.notificationTypes, webhook.notificationTypes))
         updateMask.push("notification_type");
 
-      const updatedProject = await projectWebhookV1Store.updateProjectWebhook(
-        state,
-        updateMask
-      );
-      projectStore.updateProjectCache({ ...project, ...updatedProject });
+      const updatedProject = await updateProjectWebhook(state, updateMask);
+      useAppStore
+        .getState()
+        .updateProjectCache({ ...project, ...updatedProject });
       pushNotification({
         module: "bytebase",
         style: "SUCCESS",
@@ -260,22 +259,15 @@ export function ProjectWebhookForm({
         }),
       });
     });
-  }, [
-    project,
-    state,
-    webhook,
-    projectStore,
-    projectWebhookV1Store,
-    t,
-    withLoading,
-  ]);
+  }, [project, state, webhook, updateProjectWebhook, t, withLoading]);
 
   const deleteWebhook = useCallback(() => {
     withLoading(async () => {
       const name = state.title;
-      const updatedProject =
-        await projectWebhookV1Store.deleteProjectWebhook(state);
-      projectStore.updateProjectCache({ ...project, ...updatedProject });
+      const updatedProject = await deleteProjectWebhook(state);
+      useAppStore
+        .getState()
+        .updateProjectCache({ ...project, ...updatedProject });
       pushNotification({
         module: "bytebase",
         style: "SUCCESS",
@@ -283,22 +275,11 @@ export function ProjectWebhookForm({
       });
       cancel();
     });
-  }, [
-    project,
-    state,
-    projectStore,
-    projectWebhookV1Store,
-    t,
-    withLoading,
-    cancel,
-  ]);
+  }, [project, state, deleteProjectWebhook, t, withLoading, cancel]);
 
   const testWebhook = useCallback(() => {
     withLoading(async () => {
-      const result = await projectWebhookV1Store.testProjectWebhook(
-        project,
-        state
-      );
+      const result = await testProjectWebhook(project, state);
       if (result.error) {
         pushNotification({
           module: "bytebase",
@@ -315,7 +296,7 @@ export function ProjectWebhookForm({
         });
       }
     });
-  }, [project, state, projectWebhookV1Store, t, withLoading]);
+  }, [project, state, testProjectWebhook, t, withLoading]);
 
   const imSettingsUrl = useMemo(() => {
     return router.resolve({ name: WORKSPACE_ROUTE_IM }).fullPath;

@@ -34,12 +34,7 @@ const mocks = vi.hoisted(() => ({
   batchGetOrFetchUsers: vi.fn(async () => []),
   getOrFetchUserByIdentifier: vi.fn(async () => undefined),
   pushNotification: vi.fn(),
-  currentUserStore: {
-    value: { email: "me@example.com", name: "users/me" },
-  },
-  groupStore: {
-    batchGetOrFetchGroups: vi.fn(async () => []),
-  },
+  currentUser: { email: "me@example.com", name: "users/me" },
   projectIamPolicyStore: {
     getOrFetchProjectIamPolicy: vi.fn(async () => ({})),
     getProjectIamPolicy: vi.fn(() => ({ bindings: [] })),
@@ -48,21 +43,12 @@ const mocks = vi.hoisted(() => ({
     getOrFetchProjectByName: vi.fn(async () => ({})),
     getProjectByName: vi.fn(() => ({ allowSelfApproval: false })),
   },
-  roleStore: {
-    roleList: [
-      {
-        name: "roles/PROJECT_OWNER",
-        title: "Project Owner",
-      },
-    ],
-  },
-  workspaceStore: {
-    roleMapToUsers: new Map(),
-  },
-  userStore: {
-    batchGetOrFetchUsers: vi.fn(async () => []),
-    getOrFetchUserByIdentifier: vi.fn(async () => undefined),
-  },
+  roleList: [
+    {
+      name: "roles/PROJECT_OWNER",
+      title: "Project Owner",
+    },
+  ],
   issueCommentStore: {
     getIssueComments: vi.fn(() => mocks.comments),
     listIssueComments: vi.fn(async () => ({ issueComments: mocks.comments })),
@@ -91,13 +77,38 @@ vi.mock("@/connect", () => ({
 
 vi.mock("@/store", () => ({
   pushNotification: mocks.pushNotification,
-  useCurrentUserV1: () => mocks.currentUserStore,
-  useGroupStore: () => mocks.groupStore,
-  useProjectIamPolicyStore: () => mocks.projectIamPolicyStore,
-  useProjectV1Store: () => mocks.projectStore,
-  useRoleStore: () => mocks.roleStore,
-  useWorkspaceV1Store: () => mocks.workspaceStore,
-  useUserStore: () => mocks.userStore,
+}));
+
+vi.mock("@/react/hooks/useAppState", () => ({
+  useCurrentUser: () => mocks.currentUser,
+}));
+
+vi.mock("@/react/stores/app", () => ({
+  useAppStore: Object.assign(
+    (selector: (state: unknown) => unknown) =>
+      selector({
+        batchGetOrFetchGroups: mocks.batchGetOrFetchGroups,
+        batchGetOrFetchUsers: mocks.batchGetOrFetchUsers,
+        getOrFetchUserByIdentifier: mocks.getOrFetchUserByIdentifier,
+        roleList: mocks.roleList,
+        loadProjectIamPolicy:
+          mocks.projectIamPolicyStore.getOrFetchProjectIamPolicy,
+        // The approval flow now subscribes to projectPoliciesByName directly
+        // so the candidate list re-renders when the policy resolves.
+        projectPoliciesByName: { "projects/p1": { bindings: [] } },
+        // The approval flow subscribes to projectsByName so the project
+        // useVueState getter re-renders when the cache changes.
+        projectsByName: { "projects/p1": { allowSelfApproval: false } },
+        getIssueComments: mocks.issueCommentStore.getIssueComments,
+      }),
+    {
+      getState: () => ({
+        listIssueComments: mocks.issueCommentStore.listIssueComments,
+        getOrFetchProjectByName: mocks.projectStore.getOrFetchProjectByName,
+        getProjectByName: mocks.projectStore.getProjectByName,
+      }),
+    }
+  ),
 }));
 
 vi.mock("@/store/modules/v1/common", () => ({
@@ -106,13 +117,12 @@ vi.mock("@/store/modules/v1/common", () => ({
   userNamePrefix: "users/",
 }));
 
-vi.mock("@/store/modules/v1/issueComment", () => ({
+vi.mock("@/react/stores/app/issueComment", () => ({
   IssueCommentType: {
     APPROVAL: "APPROVAL",
   },
   getIssueCommentType: (comment: { event?: { case?: string } }) =>
     comment.event?.case === "approval" ? "APPROVAL" : "USER_COMMENT",
-  useIssueCommentStore: () => mocks.issueCommentStore,
 }));
 
 vi.mock("@/utils", () => ({
@@ -215,13 +225,13 @@ beforeEach(() => {
   mocks.requestIssue.mockClear();
   mocks.routerPush.mockClear();
   mocks.pushNotification.mockClear();
-  mocks.groupStore.batchGetOrFetchGroups.mockClear();
+  mocks.batchGetOrFetchGroups.mockClear();
   mocks.projectIamPolicyStore.getOrFetchProjectIamPolicy.mockClear();
   mocks.projectIamPolicyStore.getProjectIamPolicy.mockClear();
   mocks.projectStore.getOrFetchProjectByName.mockClear();
   mocks.projectStore.getProjectByName.mockClear();
-  mocks.userStore.batchGetOrFetchUsers.mockClear();
-  mocks.userStore.getOrFetchUserByIdentifier.mockClear();
+  mocks.batchGetOrFetchUsers.mockClear();
+  mocks.getOrFetchUserByIdentifier.mockClear();
 });
 
 describe("PlanDetailApprovalFlow", () => {

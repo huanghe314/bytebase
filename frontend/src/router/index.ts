@@ -1,5 +1,5 @@
 import { nextTick } from "vue";
-import { setDocumentTitle } from "@/utils";
+import { setDocumentTitle, STORAGE_KEY_BACK_PATH } from "@/utils";
 import {
   createRouter,
   createWebHistory,
@@ -8,11 +8,7 @@ import {
 import {
   hasFeature,
   useAuthStore,
-  useRouterStore,
   useCurrentUserV1,
-  useProjectV1Store,
-  useDatabaseV1Store,
-  useInstanceV1Store,
   useSettingV1Store,
 } from "@/store";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
@@ -116,7 +112,6 @@ router.beforeEach((to, from, next) => {
   }
 
   const authStore = useAuthStore();
-  const routerStore = useRouterStore();
   const settingV1Store = useSettingV1Store();
 
   // Allow access to 2FA setup and password reset for logged-in users
@@ -137,7 +132,10 @@ router.beforeEach((to, from, next) => {
   const toModule = to.name?.toString().split(".")[0] || WORKSPACE_ROOT_MODULE;
 
   if (toModule !== fromModule) {
-    routerStore.setBackPath(from.fullPath);
+    // Inline write — the previous `useRouterStore().setBackPath(...)` was a
+    // thin wrapper around the same localStorage key, and no consumer reads
+    // `backPath`, so cross-tab reactivity wasn't actually needed.
+    localStorage.setItem(STORAGE_KEY_BACK_PATH, from.fullPath);
   }
 
   // === AUTHENTICATION LOGIC ===
@@ -170,9 +168,11 @@ router.beforeEach((to, from, next) => {
 
   // Auth pages: Reset stores and allow access
   if (isAuthRelatedRoute(to.name as string)) {
-    useDatabaseV1Store().reset();
-    useProjectV1Store().reset();
-    useInstanceV1Store().reset();
+    void import("@/react/stores/app").then(({ useAppStore }) => {
+      useAppStore.getState().resetDatabases();
+      useAppStore.getState().resetInstances();
+      useAppStore.getState().resetProjects();
+    });
     import("@/plugins/ai/store").then(({ useConversationStore }) => {
       useConversationStore().reset();
     });

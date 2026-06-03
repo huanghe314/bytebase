@@ -25,6 +25,12 @@ const mocks = vi.hoisted(() => {
         databases: [] as string[],
         databaseGroups: [] as string[],
       },
+    } as {
+      id: string;
+      mode: string;
+      title: string;
+      connection: { database: string; instance: string };
+      batchQueryContext: { databases: string[]; databaseGroups: string[] };
     },
     updateBatchQueryContext: vi.fn(),
     setCurrentTabId: vi.fn(),
@@ -35,26 +41,28 @@ const mocks = vi.hoisted(() => {
     projectContextReady: true,
     allowAdmin: false,
   };
+  // Plan-feature flags consumed via `useSQLEditorFeature`. Default ON for
+  // render-path tests; individual tests flip to false to exercise gating.
+  const features = { batchQuery: true, databaseGroups: true };
   const uiStore = { showConnectionPanel: true, asidePanelTab: "SCHEMA" };
   const databaseStore = {
     batchGetOrFetchDatabases: vi.fn().mockResolvedValue([]),
     getDatabaseByName: vi.fn(() => undefined),
     getOrFetchDatabaseByName: vi.fn().mockResolvedValue(undefined),
   };
-  const dbGroupStore = {
-    fetchDBGroupListByProjectName: vi.fn().mockResolvedValue([]),
-    // The component reads `.name` and `.matchedDatabases` off the result
-    // and validates `.name` via `isValidDatabaseGroupName`. Returning an
-    // unknown-name placeholder preserves the "skip invalid" branch
-    // without leaking real groups into tests that don't set them up.
-    getDBGroupByName: vi.fn(() => ({
-      name: "",
-      matchedDatabases: [],
-      title: "",
-    })),
-    getOrFetchDBGroupByName: vi.fn().mockResolvedValue(undefined),
+  const project = {
+    name: "projects/p",
+    title: "Project One",
   };
-  const environmentStore = {
+  const treeStore = {
+    state: "READY" as "LOADING" | "READY" | "UNSET",
+    nodeKeysByTarget: vi.fn(() => []),
+  };
+  const appStore = {
+    fetchInstance: vi.fn(async () => undefined),
+    fetchDBGroup: vi.fn(async () => undefined),
+    listDBGroupsForProject: vi.fn(async () => []),
+    dbGroupsByName: {} as Record<string, unknown>,
     environmentList: [
       {
         name: "environments/prod",
@@ -69,34 +77,29 @@ const mocks = vi.hoisted(() => {
       color: "",
       tags: {},
     })),
-  };
-  const projectStore = {
-    getProjectByName: vi.fn(() => ({
-      name: "projects/p",
-      title: "Project One",
+    getDatabaseByName: vi.fn((name: string) => ({
+      name,
+      instanceResource: { engine: 0, title: "", name: "" },
     })),
+    getOrFetchDatabaseByName: vi.fn(async (name: string) => ({ name })),
+    batchGetOrFetchDatabases: vi.fn(async () => []),
+    fetchDatabases: vi
+      .fn()
+      .mockResolvedValue({ databases: [], nextPageToken: "" }),
+    databasesByName: {} as Record<string, unknown>,
   };
-  const treeStore = {
-    state: "READY" as "LOADING" | "READY" | "UNSET",
-    nodeKeysByTarget: vi.fn(() => []),
-  };
-  const instanceStore = {
-    getInstanceByName: vi.fn(),
-  };
-  const currentUser = { value: { email: "u@b.com" } };
+  const currentUser = { email: "u@b.com" };
   return {
     tabStore,
     editorStore,
+    features,
     uiStore,
     databaseStore,
-    dbGroupStore,
-    environmentStore,
-    projectStore,
+    project,
     treeStore,
-    instanceStore,
+    appStore,
     currentUser,
-    useVueState: vi.fn<(getter: () => unknown) => unknown>(),
-    featureToRef: vi.fn(() => ({ value: true })),
+    usePiniaBridge: vi.fn<(getter: () => unknown) => unknown>(),
     pushNotification: vi.fn(),
   };
 });
@@ -105,27 +108,68 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 
-vi.mock("@/react/hooks/useVueState", () => ({
-  useVueState: mocks.useVueState,
+vi.mock("@/react/hooks/usePiniaBridge", () => ({
+  usePiniaBridge: mocks.usePiniaBridge,
+}));
+
+vi.mock("@/react/hooks/useSQLEditorBridge", () => ({
+  // FEATURE_BATCH_QUERY === 1, FEATURE_DATABASE_GROUPS === 2 (see the
+  // subscription_service_pb mock below).
+  useSQLEditorFeature: (feature: number) =>
+    feature === 1 ? mocks.features.batchQuery : mocks.features.databaseGroups,
+}));
+
+vi.mock("@/react/hooks/useAppState", () => ({
+  useCurrentUser: () => mocks.currentUser,
 }));
 
 vi.mock("@/store", () => ({
-  featureToRef: mocks.featureToRef,
   pushNotification: mocks.pushNotification,
-  useCurrentUserV1: () => mocks.currentUser,
-  useDatabaseV1Store: () => mocks.databaseStore,
-  useDBGroupStore: () => mocks.dbGroupStore,
-  useEnvironmentV1Store: () => mocks.environmentStore,
-  useInstanceV1Store: () => mocks.instanceStore,
-  useProjectV1Store: () => mocks.projectStore,
 }));
 
-vi.mock("@/react/stores/sqlEditor/tab-vue-state", () => ({
-  useSQLEditorTabStore: () => mocks.tabStore,
+vi.mock("@/react/hooks/useAppProject", () => ({
+  useAppProject: () => mocks.project,
 }));
 
-vi.mock("@/react/stores/sqlEditor/editor-vue-state", () => ({
-  useSQLEditorVueState: () => mocks.editorStore,
+vi.mock("@/react/hooks/useAppDatabase", () => ({
+  useAppDatabase: (name: string) => ({
+    name,
+    instanceResource: { engine: 0, title: "", name: "" },
+  }),
+}));
+
+vi.mock("@/react/stores/app", () => ({
+  useAppStore: Object.assign(
+    (selector: (state: unknown) => unknown) => selector(mocks.appStore),
+    { getState: () => mocks.appStore, subscribe: () => () => {} }
+  ),
+}));
+
+vi.mock("@/react/stores/sqlEditor/tab", () => ({
+  useSupportBatchMode: () => mocks.tabStore.supportBatchMode,
+  useIsInBatchMode: () => mocks.tabStore.isInBatchMode,
+  useCurrentSQLEditorTab: () => mocks.tabStore.currentTab,
+  getSQLEditorTabsState: () => ({
+    updateBatchQueryContext: mocks.tabStore.updateBatchQueryContext,
+    setCurrentTabId: mocks.tabStore.setCurrentTabId,
+    updateTab: mocks.tabStore.updateTab,
+    currentTabId: mocks.tabStore.currentTab?.id ?? "",
+    tabsById: new Map(
+      mocks.tabStore.currentTab
+        ? [[mocks.tabStore.currentTab.id, mocks.tabStore.currentTab]]
+        : []
+    ),
+  }),
+}));
+
+vi.mock("@/react/stores/sqlEditor/editor", () => ({
+  useSQLEditorEditorState: (
+    selector: (s: { project: string; projectContextReady: boolean }) => unknown
+  ) =>
+    selector({
+      project: mocks.editorStore.project,
+      projectContextReady: mocks.editorStore.projectContextReady,
+    }),
 }));
 
 vi.mock("@/react/stores/sqlEditor", () => ({
@@ -149,11 +193,7 @@ vi.mock("@/react/stores/sqlEditor", () => ({
     }),
 }));
 
-vi.mock("@/store/modules", () => ({
-  useDBGroupStore: () => mocks.dbGroupStore,
-}));
-
-vi.mock("@/store/modules/v1/common", () => ({
+vi.mock("@/react/lib/resourceName", () => ({
   instanceNamePrefix: "instances/",
 }));
 
@@ -381,9 +421,11 @@ const renderIntoContainer = (element: ReactElement) => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  mocks.useVueState.mockImplementation((getter) => getter());
+  mocks.usePiniaBridge.mockImplementation((getter) => getter());
   // Reset feature flags default to true for render-path tests.
-  mocks.featureToRef.mockReturnValue({ value: true });
+  mocks.features.batchQuery = true;
+  mocks.features.databaseGroups = true;
+  mocks.tabStore.supportBatchMode = true;
   mocks.tabStore.isInBatchMode = false;
   mocks.tabStore.currentTab = {
     id: "t-1",
@@ -458,7 +500,8 @@ describe("ConnectionPane", () => {
   });
 
   test("disables DATABASE-GROUP tab when batch-query or database-group features missing", () => {
-    mocks.featureToRef.mockImplementation(() => ({ value: false }));
+    mocks.features.batchQuery = false;
+    mocks.features.databaseGroups = false;
     const { container, render, unmount } = renderIntoContainer(
       <ConnectionPane show={true} onMissingFeature={() => {}} />
     );

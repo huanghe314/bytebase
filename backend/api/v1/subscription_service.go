@@ -1,7 +1,9 @@
 package v1
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"fmt"
 	"log/slog"
 	"math"
@@ -10,6 +12,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/pkg/errors"
+	"google.golang.org/genproto/googleapis/api/httpbody"
 
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
@@ -51,6 +54,53 @@ func enterpriseSubscription() *v1pb.Subscription {
 // GetSubscription gets the subscription.
 func (*SubscriptionService) GetSubscription(_ context.Context, _ *connect.Request[v1pb.GetSubscriptionRequest]) (*connect.Response[v1pb.Subscription], error) {
 	return connect.NewResponse(enterpriseSubscription()), nil
+}
+
+// ExportVCSProviderUsers exports active VCS provider users as CSV.
+func (s *SubscriptionService) ExportVCSProviderUsers(ctx context.Context, _ *connect.Request[v1pb.ExportVCSProviderUsersRequest]) (*connect.Response[httpbody.HttpBody], error) {
+	workspaceID := common.GetWorkspaceIDFromContext(ctx)
+	users, err := s.store.ListActiveVCSProviderUsers(ctx, workspaceID, vcsProviderUserActiveWindow)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to list active VCS provider users"))
+	}
+
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
+	if err := writer.Write([]string{"vcs_type", "user_id", "user_name", "display_name", "last_seen_at"}); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	for _, user := range users {
+		if err := writer.Write([]string{
+			user.VCSType.String(),
+			escapeCSVFormula(user.UserID),
+			escapeCSVFormula(user.Payload.GetUserName()),
+			escapeCSVFormula(user.Payload.GetDisplayName()),
+			user.LastSeenAt.UTC().Format(time.RFC3339),
+		}); err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	return connect.NewResponse(&httpbody.HttpBody{
+		ContentType: "text/csv; charset=utf-8",
+		Data:        buf.Bytes(),
+	}), nil
+}
+
+func escapeCSVFormula(value string) string {
+	if value == "" {
+		return value
+	}
+	switch value[0] {
+	case '=', '+', '-', '@', '\t', '\r', '\n':
+		return "'" + value
+	default:
+		return value
+	}
 }
 
 // UploadLicense uploads an enterprise license (self-hosted only).
@@ -229,7 +279,21 @@ func (s *SubscriptionService) CancelPurchase(ctx context.Context, req *connect.R
 	// Annual: cancel at period end.
 	prorate := payload.Interval == storepb.SubscriptionPayload_MONTH
 	if _, err := stripeplugin.CancelSubscription(payload.StripeSubscriptionId, workspaceID, prorate, feedback, comment); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to cancel subscription"))
+		if !stripeplugin.IsResourceMissingError(err) {
+			return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to cancel subscription"))
+		}
+		// Stripe no longer has this subscription — a prior cancel succeeded but its
+		// webhook was never delivered, leaving our local status stale. Reconcile to
+		// the same end state the customer.subscription.deleted webhook would produce.
+		slog.Warn("stripe subscription already canceled, reconciling local state",
+			slog.String("workspace", workspaceID),
+			slog.String("stripe_subscription_id", payload.StripeSubscriptionId),
+		)
+		payload.Status = storepb.SubscriptionPayload_CANCELED
+		if _, err := s.store.UpsertSubscription(ctx, workspaceID, payload); err != nil {
+			return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to reconcile subscription status"))
+		}
+		return connect.NewResponse(&v1pb.PurchaseResponse{}), nil
 	}
 
 	// Stripe webhook (customer.subscription.deleted) will update the subscription status and clear the license
@@ -271,6 +335,20 @@ func (s *SubscriptionService) GetPaymentInfo(ctx context.Context, _ *connect.Req
 		PeriodStart:       time.Unix(period.Start, 0).Format("2006-01-02"),
 		PeriodEnd:         time.Unix(period.End, 0).Format("2006-01-02"),
 		CancelAtPeriodEnd: sub.CancelAtPeriodEnd,
+	}
+
+	// Preview the next renewal charge. Skip when the subscription won't renew —
+	// Stripe has no upcoming invoice in that state. Degrade gracefully on failure
+	// so the current-period info is still returned.
+	if !sub.CancelAtPeriodEnd {
+		if preview, err := stripeplugin.GetUpcomingInvoice(payload.StripeSubscriptionId, payload.StripeCustomerId); err != nil {
+			slog.Error("failed to preview upcoming invoice",
+				log.BBError(err),
+				slog.String("stripe_subscription_id", payload.StripeSubscriptionId),
+			)
+		} else {
+			info.NextPeriodPrice = strconv.FormatInt(preview.Total, 10)
+		}
 	}
 
 	if payload.StripeCustomerId != "" {

@@ -35,7 +35,8 @@ import {
   convertSensitiveColumnToDatabaseResource,
   getExpressionsForDatabaseResource as getResourceExpressions,
 } from "@/react/lib/sensitive-data/utils";
-import { featureToRef, pushNotification, usePolicyV1Store } from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { featureToRef, pushNotification } from "@/store";
 import type { DatabaseResource } from "@/types";
 import { ExprSchema } from "@/types/proto-es/google/type/expr_pb";
 import type {
@@ -89,7 +90,6 @@ export function GrantAccessDialog({
   onDismiss,
 }: GrantAccessDialogProps) {
   const { t } = useTranslation();
-  const policyStore = usePolicyV1Store();
 
   const hasRequiredFeature = useVueState(
     () => featureToRef(PlanFeature.FEATURE_DATA_MASKING, instance).value
@@ -281,6 +281,9 @@ export function GrantAccessDialog({
     []
   );
 
+  // Subscribe so the classification options recompute when DATA_CLASSIFICATION
+  // loads (getClassificationLevelOptions reads the app store imperatively).
+  const settingsByName = useAppStore((s) => s.settingsByName);
   const factorOptionConfigMap = useMemo((): Map<Factor, OptionConfig> => {
     return factorList.reduce((map, factor) => {
       if (factor === CEL_ATTRIBUTE_RESOURCE_DATABASE) {
@@ -294,7 +297,7 @@ export function GrantAccessDialog({
       }
       return map;
     }, new Map<Factor, OptionConfig>());
-  }, [factorList, projectName]);
+  }, [factorList, projectName, settingsByName]);
 
   const minDatetime = dayjs().startOf("day").format("YYYY-MM-DDTHH:mm");
 
@@ -436,16 +439,18 @@ export function GrantAccessDialog({
         );
       }
 
-      const policy = await policyStore.getOrFetchPolicyByParentAndType({
-        parentPath: projectName,
-        policyType: PolicyType.MASKING_EXEMPTION,
-      });
+      const policy = await useAppStore
+        .getState()
+        .getOrFetchPolicyByParentAndType({
+          parentPath: projectName,
+          policyType: PolicyType.MASKING_EXEMPTION,
+        });
       const existed =
         policy?.policy?.case === "maskingExemptionPolicy"
           ? policy.policy.value.exemptions
           : [];
 
-      await policyStore.upsertPolicy({
+      await useAppStore.getState().upsertPolicy({
         parentPath: projectName,
         policy: {
           name: policy?.name,
@@ -484,7 +489,6 @@ export function GrantAccessDialog({
     memberList,
     description,
     projectName,
-    policyStore,
     t,
     onDismissInternal,
   ]);

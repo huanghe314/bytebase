@@ -2498,6 +2498,10 @@
                   <a href="#bytebase.v1.UpdateReleaseRequest"><span class="badge">M</span>UpdateReleaseRequest</a>
                 </li>
               
+                <li>
+                  <a href="#bytebase.v1.VCSUser"><span class="badge">M</span>VCSUser</a>
+                </li>
+              
               
                 <li>
                   <a href="#bytebase.v1.Release.Type"><span class="badge">E</span>Release.Type</a>
@@ -2782,6 +2786,10 @@
               
                 <li>
                   <a href="#bytebase.v1.CreatePurchaseRequest"><span class="badge">M</span>CreatePurchaseRequest</a>
+                </li>
+              
+                <li>
+                  <a href="#bytebase.v1.ExportVCSProviderUsersRequest"><span class="badge">M</span>ExportVCSProviderUsersRequest</a>
                 </li>
               
                 <li>
@@ -3244,6 +3252,13 @@ Format: instances/{instance}/databases/{database} </p></td>
                   <td><p> </p></td>
                 </tr>
               
+                <tr>
+                  <td>export</td>
+                  <td><a href="#bool">bool</a></td>
+                  <td></td>
+                  <td><p>Whether export the query result. </p></td>
+                </tr>
+              
             </tbody>
           </table>
 
@@ -3379,6 +3394,8 @@ Supported fields:
 - create_time: the access creation time in &#34;2006-01-02T15:04:05Z07:00&#34; format, support &#34;&gt;=&#34;, &#34;&gt;&#34;, &#34;&lt;=&#34; and &#34;&lt;&#34; operator.
 - query: the access query, support &#34;==&#34; and &#34;.contains(xx)&#34; operator
 - target: the target database fullname, support &#34;==&#34; operator.
+- unmask: whether the grant allows unmasking sensitive data, support &#34;==&#34; operator with a boolean literal.
+- export: whether the grant allows exporting the query result, support &#34;==&#34; operator with a boolean literal.
 
 Examples:
 - creator == &#34;users/dev@example.com&#34;
@@ -3387,7 +3404,9 @@ Examples:
 - creator == &#34;users/dev@example.com&#34; &amp;&amp; status == &#34;ACTIVE&#34;
 - issue == &#34;projects/x/issues/123&#34;
 - status == &#34;ACTIVE&#34; &amp;&amp; expire_time &gt; &#34;2024-02-01T00:00:00Z&#34;
-- target == &#34;instances/sample/databases/employee&#34; </p></td>
+- target == &#34;instances/sample/databases/employee&#34;
+- unmask == true
+- export == true &amp;&amp; status == &#34;ACTIVE&#34; </p></td>
                 </tr>
               
                 <tr>
@@ -13569,6 +13588,15 @@ Oracle and search path in Postgres. </p></td>
                   <td><p>The export file content. </p></td>
                 </tr>
               
+                <tr>
+                  <td>applied_access_grant</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p>The just-in-time access grant applied to this export, if any.
+Format: projects/{project}/accessGrants/{accessGrant}.
+Empty when the user was authorized through normal ACL rather than a grant. </p></td>
+                </tr>
+              
             </tbody>
           </table>
 
@@ -13843,6 +13871,15 @@ CosmosDB only. </p></td>
                   <td><a href="#bytebase.v1.QueryResult">QueryResult</a></td>
                   <td>repeated</td>
                   <td><p>The query results. </p></td>
+                </tr>
+              
+                <tr>
+                  <td>applied_access_grant</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p>The just-in-time access grant applied to this query, if any.
+Format: projects/{project}/accessGrants/{accessGrant}.
+Empty when the user was authorized through normal ACL rather than a grant. </p></td>
                 </tr>
               
             </tbody>
@@ -19065,7 +19102,7 @@ When source is CHANGE_DATABASE, support: statement.*, resource.* (excluding requ
 When source is CREATE_DATABASE, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name
 When source is EXPORT_DATA, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name, resource.schema_name, resource.table_name
 When source is REQUEST_ROLE, support: resource.project_id, request.expiration_days, request.role
-When source is REQUEST_ACCESS, support: resource.environment_id, resource.project_id, request.unmask
+When source is REQUEST_ACCESS, support: resource.environment_id, resource.project_id, request.unmask, request.data_export
 
 For examples:
 resource.environment_id == &#34;prod&#34; &amp;&amp; statement.affected_rows &gt;= 100
@@ -19932,6 +19969,13 @@ Format: projects/{id} </p></td>
                   <td><a href="#int32">int32</a></td>
                   <td></td>
                   <td><p>The number of users in the workspace IAM (for seat limit display). </p></td>
+                </tr>
+              
+                <tr>
+                  <td>active_vcs_user_count</td>
+                  <td><a href="#int32">int32</a></td>
+                  <td></td>
+                  <td><p>The number of active VCS users seen in the active window. </p></td>
                 </tr>
               
             </tbody>
@@ -27697,6 +27741,14 @@ Example: &#34;All tables must have a primary key&#34;
 Example: &#34;VARCHAR columns should specify a maximum length&#34; </p></td>
                 </tr>
               
+                <tr>
+                  <td>vcs_user</td>
+                  <td><a href="#bytebase.v1.VCSUser">VCSUser</a></td>
+                  <td></td>
+                  <td><p>The non-bot VCS pull request or merge request creator observed by bytebase-release.
+If absent, Bytebase skips VCS user tracking and VCS user limit enforcement. </p></td>
+                </tr>
+              
             </tbody>
           </table>
 
@@ -28247,6 +28299,51 @@ Format: projects/{project}/releases/{release} </p></td>
                   <td><a href="#google.protobuf.FieldMask">google.protobuf.FieldMask</a></td>
                   <td></td>
                   <td><p>The list of fields to be updated. </p></td>
+                </tr>
+              
+            </tbody>
+          </table>
+
+          
+
+        
+      
+        <h3 id="bytebase.v1.VCSUser">VCSUser</h3>
+        <p></p>
+
+        
+          <table class="field-table">
+            <thead>
+              <tr><td>Field</td><td>Type</td><td>Label</td><td>Description</td></tr>
+            </thead>
+            <tbody>
+              
+                <tr>
+                  <td>vcs_type</td>
+                  <td><a href="#bytebase.v1.VCSType">VCSType</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>user_id</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>user_name</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>display_name</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
                 </tr>
               
             </tbody>
@@ -31416,6 +31513,13 @@ Required. </p></td>
 
         
       
+        <h3 id="bytebase.v1.ExportVCSProviderUsersRequest">ExportVCSProviderUsersRequest</h3>
+        <p></p>
+
+        
+
+        
+      
         <h3 id="bytebase.v1.GetPaymentInfoRequest">GetPaymentInfoRequest</h3>
         <p></p>
 
@@ -31475,7 +31579,7 @@ Required. </p></td>
                   <td>total_price</td>
                   <td><a href="#string">string</a></td>
                   <td></td>
-                  <td><p> </p></td>
+                  <td><p>Total amount paid for the current billing period, in the smallest currency unit (e.g. cents). </p></td>
                 </tr>
               
                 <tr>
@@ -31511,6 +31615,14 @@ Required. </p></td>
                   <td><a href="#bool">bool</a></td>
                   <td></td>
                   <td><p>Whether the subscription is scheduled to cancel at the end of the current billing period. </p></td>
+                </tr>
+              
+                <tr>
+                  <td>next_period_price</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p>Amount that will be charged at the next renewal, in the smallest currency unit (e.g. cents).
+Empty when the subscription will not renew (e.g. scheduled to cancel at period end). </p></td>
                 </tr>
               
             </tbody>
@@ -32573,6 +32685,13 @@ If there is expired license, we will return a free plan subscription with the ex
               </tr>
             
               <tr>
+                <td>ExportVCSProviderUsers</td>
+                <td><a href="#bytebase.v1.ExportVCSProviderUsersRequest">ExportVCSProviderUsersRequest</a></td>
+                <td><a href="#google.api.HttpBody">.google.api.HttpBody</a></td>
+                <td><p>Exports active VCS users as CSV.</p></td>
+              </tr>
+            
+              <tr>
                 <td>UploadLicense</td>
                 <td><a href="#bytebase.v1.UploadLicenseRequest">UploadLicenseRequest</a></td>
                 <td><a href="#bytebase.v1.Subscription">Subscription</a></td>
@@ -32647,6 +32766,16 @@ May return a Stripe Checkout URL if payment method change is needed.</p></td>
                 <td>GetSubscription</td>
                 <td>GET</td>
                 <td>/v1/subscription</td>
+                <td></td>
+              </tr>
+              
+            
+              
+              
+              <tr>
+                <td>ExportVCSProviderUsers</td>
+                <td>GET</td>
+                <td>/v1/subscription:vcsProviderUsersExport</td>
                 <td></td>
               </tr>
               

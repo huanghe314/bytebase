@@ -17,6 +17,9 @@ import { NumberInput } from "@/react/components/ui/number-input";
 import { Switch } from "@/react/components/ui/switch";
 import { Tooltip } from "@/react/components/ui/tooltip";
 import { useVueState } from "@/react/hooks/useVueState";
+import { useAppStore } from "@/react/stores/app";
+import { useSQLReviewStore } from "@/react/stores/sqlReview";
+import { useWorkspaceApprovalSettingStore } from "@/react/stores/workspaceApprovalSetting";
 import { router } from "@/router";
 import {
   PROJECT_V1_ROUTE_DASHBOARD,
@@ -24,14 +27,7 @@ import {
   WORKSPACE_ROUTE_SQL_REVIEW_CREATE,
   WORKSPACE_ROUTE_SQL_REVIEW_DETAIL,
 } from "@/router/dashboard/workspaceRoutes";
-import {
-  pushNotification,
-  usePolicyV1Store,
-  useProjectV1Store,
-  useSQLReviewStore,
-  useSubscriptionV1Store,
-  useWorkspaceApprovalSettingStore,
-} from "@/store";
+import { pushNotification } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import type { Permission, SQLReviewPolicy } from "@/types";
 import { isDefaultProject } from "@/types";
@@ -66,25 +62,28 @@ function ApprovalFlowIndicator({
   source: WorkspaceApprovalSetting_Rule_Source;
 }) {
   const { t } = useTranslation();
-  const approvalStore = useWorkspaceApprovalSettingStore();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     if (!hasWorkspacePermissionV2("bb.settings.get")) return;
-    approvalStore.fetchConfig().then(() => setReady(true));
-  }, [approvalStore]);
+    useWorkspaceApprovalSettingStore
+      .getState()
+      .fetchConfig()
+      .then(() => setReady(true));
+  }, []);
 
   const status = useMemo((): "source" | "fallback" | "none" => {
     if (!ready) return "none";
-    if (approvalStore.getRulesBySource(source).length > 0) return "source";
+    const store = useWorkspaceApprovalSettingStore.getState();
+    if (store.getRulesBySource(source).length > 0) return "source";
     if (
-      approvalStore.getRulesBySource(
+      store.getRulesBySource(
         WorkspaceApprovalSetting_Rule_Source.SOURCE_UNSPECIFIED
       ).length > 0
     )
       return "fallback";
     return "none";
-  }, [ready, approvalStore, source]);
+  }, [ready, source]);
 
   if (!ready) return null;
 
@@ -127,16 +126,18 @@ function ApprovalFlowIndicator({
 // ---------------------------------------------------------------------------
 export function ProjectSettingsPage() {
   const { t } = useTranslation();
-  const projectStore = useProjectV1Store();
-  const policyStore = usePolicyV1Store();
+  const projectsByName = useAppStore((s) => s.projectsByName);
   const reviewStore = useSQLReviewStore();
-  const subscriptionStore = useSubscriptionV1Store();
 
   const projectId = useVueState(
     () => router.currentRoute.value.params.projectId as string
   );
   const projectName = `${projectNamePrefix}${projectId}`;
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  // subscribe to re-render on project cache change
+  void projectsByName;
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
+  );
   const isDefault = isDefaultProject(projectName);
 
   const hasPermission = useCallback(
@@ -180,8 +181,8 @@ export function ProjectSettingsPage() {
   const [enforceReview, setEnforceReview] = useState(false);
   const [showReviewDialog, setShowReviewDialog] = useState(false);
 
-  const queryDataPolicy = useVueState(() =>
-    policyStore.getQueryDataPolicyByParent(projectName)
+  const queryDataPolicy = useAppStore((s) =>
+    s.getQueryDataPolicyByParent(projectName)
   );
   const getInitialMaxRows = useCallback(() => {
     const rows = Number(queryDataPolicy?.maximumResultRows ?? 0);
@@ -200,8 +201,8 @@ export function ProjectSettingsPage() {
     project?.allowJustInTimeAccess ?? false
   );
 
-  const hasQueryPolicyFeature = useVueState(() =>
-    subscriptionStore.hasInstanceFeature(PlanFeature.FEATURE_QUERY_POLICY)
+  const hasQueryPolicyFeature = useAppStore((s) =>
+    s.hasInstanceFeature(PlanFeature.FEATURE_QUERY_POLICY)
   );
 
   // -----------------------------------------------------------------------
@@ -259,12 +260,12 @@ export function ProjectSettingsPage() {
   useEffect(() => {
     if (lastFetchedProject.current === projectName) return;
     lastFetchedProject.current = projectName;
-    reviewStore.fetchReviewPolicyList();
-    policyStore.getOrFetchPolicyByParentAndType({
+    useSQLReviewStore.getState().fetchReviewPolicyList();
+    useAppStore.getState().getOrFetchPolicyByParentAndType({
       parentPath: projectName,
       policyType: PolicyType.DATA_QUERY,
     });
-  }, [reviewStore, policyStore, projectName]);
+  }, [projectName]);
 
   // Sync review policy state when it loads or changes externally
   useEffect(() => {
@@ -430,7 +431,7 @@ export function ProjectSettingsPage() {
       // 2. Max rows policy (separate API)
       const maxRowsValue = maxRows ?? 0;
       if (maxRowsValue !== getInitialMaxRows()) {
-        await policyStore.upsertPolicy({
+        await useAppStore.getState().upsertPolicy({
           parentPath: projectName,
           policy: {
             type: PolicyType.DATA_QUERY,
@@ -521,7 +522,7 @@ export function ProjectSettingsPage() {
         updateMask.push("parallel_tasks_per_rollout");
       }
       if (updateMask.length > 0) {
-        await projectStore.updateProject(projectPatch, updateMask);
+        await useAppStore.getState().updateProject(projectPatch, updateMask);
       }
 
       pushNotification({
@@ -540,9 +541,7 @@ export function ProjectSettingsPage() {
     }
   }, [
     project,
-    projectStore,
     reviewStore,
-    policyStore,
     projectName,
     title,
     labelKVList,
@@ -576,21 +575,21 @@ export function ProjectSettingsPage() {
     setExecuting(true);
     try {
       if (dangerAction === "archive") {
-        await projectStore.archiveProject(project);
+        await useAppStore.getState().archiveProject(project);
         pushNotification({
           module: "bytebase",
           style: "SUCCESS",
           title: `${project.title || project.name} ${t("common.archived")}`,
         });
       } else if (dangerAction === "restore") {
-        await projectStore.restoreProject(project);
+        await useAppStore.getState().restoreProject(project);
         pushNotification({
           module: "bytebase",
           style: "SUCCESS",
           title: `${project.title || project.name} ${t("common.restored")}`,
         });
       } else if (dangerAction === "delete") {
-        await projectStore.deleteProject(project.name);
+        await useAppStore.getState().deleteProject(project.name);
         pushNotification({
           module: "bytebase",
           style: "SUCCESS",
@@ -602,7 +601,7 @@ export function ProjectSettingsPage() {
       setExecuting(false);
       setDangerAction(null);
     }
-  }, [project, dangerAction, projectStore, t]);
+  }, [project, dangerAction, t]);
 
   // Label validation errors (set by LabelListEditor via onErrorsChange)
   const [labelErrors, setLabelErrors] = useState<string[]>([]);

@@ -44,6 +44,7 @@ import {
   TableRow,
 } from "@/react/components/ui/table";
 import { Tooltip } from "@/react/components/ui/tooltip";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import { useColumnWidths } from "@/react/hooks/useColumnWidths";
 import { useEscapeKey } from "@/react/hooks/useEscapeKey";
 import { PagedTableFooter, usePagedData } from "@/react/hooks/usePagedData";
@@ -51,26 +52,15 @@ import { useSessionPageSize } from "@/react/hooks/useSessionPageSize";
 import { useVueState } from "@/react/hooks/useVueState";
 import { applyPlanTitleToQuery } from "@/react/lib/plan/title";
 import { cn } from "@/react/lib/utils";
+import { useAppStore } from "@/react/stores/app";
+import { buildPlanFindBySearchParams } from "@/react/stores/app/plan";
 import { router } from "@/router";
 import {
   PROJECT_V1_ROUTE_PLAN_DETAIL,
   PROJECT_V1_ROUTE_PLAN_DETAIL_SPEC_DETAIL,
 } from "@/router/dashboard/projectV1";
-import {
-  pushNotification,
-  useCurrentUserV1,
-  useDatabaseV1Store,
-  useDBGroupStore,
-  useEnvironmentV1Store,
-  useProjectV1Store,
-  useUIStateStore,
-  useUserStore,
-} from "@/store";
+import { pushNotification } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
-import {
-  buildPlanFindBySearchParams,
-  usePlanStore,
-} from "@/store/modules/v1/plan";
 import {
   formatEnvironmentName,
   getTimeForPbTimestampProtoEs,
@@ -122,24 +112,29 @@ const TASK_STATUS_FILTERS: Task_Status[] = [
 
 export function ProjectPlanDashboardPage({ projectId }: { projectId: string }) {
   const { t } = useTranslation();
-  const planStore = usePlanStore();
-  const projectStore = useProjectV1Store();
-  const userStore = useUserStore();
-  const uiStateStore = useUIStateStore();
-  const currentUser = useCurrentUserV1();
-
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  const listUsers = useAppStore((state) => state.listUsers);
+  const batchGetOrFetchUsers = useAppStore(
+    (state) => state.batchGetOrFetchUsers
+  );
   const projectName = `${projectNamePrefix}${projectId}`;
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
-  const me = useVueState(() => currentUser.value);
+  // subscribe to re-render on project cache change
+  void projectsByName;
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
+  );
+  const me = useCurrentUser();
 
   const [showAddSpecDrawer, setShowAddSpecDrawer] = useState(false);
 
   // Hint dismissal
   const HINT_KEY = "plan.hint-dismissed";
-  const hideHint = useVueState(() => uiStateStore.getIntroStateByKey(HINT_KEY));
+  const hideHint = useAppStore((s) => s.getIntroStateByKey(HINT_KEY));
   const dismissHint = useCallback(() => {
-    uiStateStore.saveIntroStateByKey({ key: HINT_KEY, newState: true });
-  }, [uiStateStore]);
+    useAppStore
+      .getState()
+      .saveIntroStateByKey({ key: HINT_KEY, newState: true });
+  }, []);
 
   // Search
   const defaultSearchParams = useCallback(
@@ -187,7 +182,7 @@ export function ProjectPlanDashboardPage({ projectId }: { projectId: string }) {
         title: t("issue.advanced-search.scope.creator.title"),
         description: t("issue.advanced-search.scope.creator.description"),
         onSearch: async (keyword: string) => {
-          const resp = await userStore.fetchUserList({
+          const resp = await listUsers({
             pageSize: getDefaultPagination(),
             filter: { query: keyword },
           });
@@ -208,7 +203,7 @@ export function ProjectPlanDashboardPage({ projectId }: { projectId: string }) {
         },
       },
     ],
-    [t, userStore, me]
+    [t, listUsers, me]
   );
 
   const [canCreate] = usePermissionCheck(["bb.plans.create"], project);
@@ -229,20 +224,27 @@ export function ProjectPlanDashboardPage({ projectId }: { projectId: string }) {
 
   const fetchPlanList = useCallback(
     async (params: { pageSize: number; pageToken: string }) => {
-      const { nextPageToken, plans } = await planStore.listPlans({
+      const { nextPageToken, plans } = await useAppStore.getState().listPlans({
         find: planFilter,
         pageSize: params.pageSize,
         pageToken: params.pageToken,
       });
       return { list: plans, nextPageToken };
     },
-    [planStore, planFilter]
+    [planFilter]
   );
 
   const paged = usePagedData<Plan>({
     sessionKey: `bb.${projectName}.plan-table`,
     fetchList: fetchPlanList,
   });
+
+  useEffect(() => {
+    if (paged.dataList.length === 0) {
+      return;
+    }
+    void batchGetOrFetchUsers(paged.dataList.map((plan) => plan.creator));
+  }, [batchGetOrFetchUsers, paged.dataList]);
 
   // Handle spec created from AddSpecDrawer
   const handleSpecCreated = useCallback(
@@ -390,7 +392,6 @@ interface PlanRowContext {
   approvalTag: { label: string; variant: ReviewBadge["variant"] } | undefined;
   isDeleted: boolean;
   showDraftTag: boolean;
-  environmentStore: ReturnType<typeof useEnvironmentV1Store>;
 }
 
 function getRolloutStageStatus(summary: Plan_RolloutStageSummary): Task_Status {
@@ -404,6 +405,8 @@ function getRolloutStageStatus(summary: Plan_RolloutStageSummary): Task_Status {
 
 function PlanTable({ plans, projectId }: { plans: Plan[]; projectId: string }) {
   const { t } = useTranslation();
+  // Subscribe so stage cells re-render when the environment cache loads.
+  void useAppStore((s) => s.environmentList);
 
   const columns = useMemo<PlanColumn[]>(
     () => [
@@ -470,7 +473,7 @@ function PlanTable({ plans, projectId }: { plans: Plan[]; projectId: string }) {
         defaultWidth: 260,
         minWidth: 140,
         resizable: true,
-        render: (plan, ctx) =>
+        render: (plan, _ctx) =>
           plan.rolloutStageSummaries.length === 0 ? (
             <span className="text-control-light">-</span>
           ) : (
@@ -479,8 +482,9 @@ function PlanTable({ plans, projectId }: { plans: Plan[]; projectId: string }) {
                 const envName = formatEnvironmentName(
                   extractStageUID(summary.stage)
                 );
-                const environment =
-                  ctx.environmentStore.getEnvironmentByName(envName);
+                const environment = useAppStore
+                  .getState()
+                  .getEnvironmentByName(envName);
                 const stageStatus = getRolloutStageStatus(summary);
                 return (
                   <div key={summary.stage} className="flex items-center gap-1">
@@ -570,15 +574,15 @@ function PlanRow({
   projectId: string;
   columns: PlanColumn[];
 }>) {
-  const userStore = useUserStore();
-  const environmentStore = useEnvironmentV1Store();
   const { t } = useTranslation();
 
   const isDeleted = plan.state === State.DELETED;
   const showDraftTag = plan.issue === "" && !plan.hasRollout;
 
-  const creator =
-    userStore.getUserByIdentifier(plan.creator) || unknownUser(plan.creator);
+  const creatorUser = useAppStore((state) =>
+    state.getUserByIdentifier(plan.creator)
+  );
+  const creator = creatorUser || unknownUser(plan.creator);
 
   const updateTimeTs = Math.floor(
     getTimeForPbTimestampProtoEs(plan.updateTime, 0) / 1000
@@ -632,7 +636,6 @@ function PlanRow({
     approvalTag,
     isDeleted,
     showDraftTag,
-    environmentStore,
   };
 
   return (
@@ -715,7 +718,6 @@ function AddSpecDrawer({
   title: string;
 }) {
   const { t } = useTranslation();
-  const dbStore = useDatabaseV1Store();
 
   const [creating, setCreating] = useState(false);
   const [changeSource, setChangeSource] = useState<"DATABASE" | "GROUP">(
@@ -755,7 +757,9 @@ function AddSpecDrawer({
     try {
       // Preload database information
       if (changeSource === "DATABASE" && selectedDatabaseNames.size > 0) {
-        await dbStore.batchGetOrFetchDatabases([...selectedDatabaseNames]);
+        await useAppStore
+          .getState()
+          .batchGetOrFetchDatabases([...selectedDatabaseNames]);
       }
 
       const spec = createProto(Plan_SpecSchema, {
@@ -909,7 +913,6 @@ function DatabaseSelector({
   onSelectedNamesChange: (names: Set<string>) => void;
 }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
 
   const [databases, setDatabases] = useState<Database[]>([]);
   const [loading, setLoading] = useState(true);
@@ -930,7 +933,7 @@ function DatabaseSelector({
       }
       try {
         const token = isRefresh ? "" : nextPageTokenRef.current;
-        const result = await databaseStore.fetchDatabases({
+        const result = await useAppStore.getState().fetchDatabases({
           parent: projectName,
           pageSize,
           pageToken: token || undefined,
@@ -949,7 +952,7 @@ function DatabaseSelector({
         }
       }
     },
-    [databaseStore, projectName, pageSize, query]
+    [projectName, pageSize, query]
   );
 
   const isFirstLoad = useRef(true);
@@ -1109,19 +1112,19 @@ function DatabaseGroupSelector({
   onSelectedGroupChange: (name: string | undefined) => void;
 }) {
   const { t } = useTranslation();
-  const dbGroupStore = useDBGroupStore();
   const [groups, setGroups] = useState<DatabaseGroup[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    dbGroupStore
+    useAppStore
+      .getState()
       .fetchDBGroupListByProjectName(projectName, DatabaseGroupView.BASIC)
       .then((result) => {
         setGroups(result);
       })
       .finally(() => setLoading(false));
-  }, [projectName, dbGroupStore]);
+  }, [projectName]);
 
   if (loading) {
     return (

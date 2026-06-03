@@ -16,11 +16,7 @@ import {
 import { Tooltip } from "@/react/components/ui/tooltip";
 import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
-import {
-  useDatabaseV1Store,
-  useEnvironmentV1Store,
-  useProjectV1Store,
-} from "@/store";
+import { useAppStore } from "@/react/stores/app";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import {
   getDateForPbTimestampProtoEs,
@@ -54,10 +50,13 @@ export function IssueDetailTaskRunTable({
 }) {
   const { t } = useTranslation();
   const page = useIssueDetailContext();
-  const projectStore = useProjectV1Store();
-  const databaseStore = useDatabaseV1Store();
   const projectName = `${projectNamePrefix}${page.projectId}`;
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  void projectsByName;
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
+  );
 
   const taskByUID = useMemo(() => {
     const map = new Map<string, Task>();
@@ -90,9 +89,9 @@ export function IssueDetailTaskRunTable({
       ),
     ];
     if (targets.length > 0) {
-      void databaseStore.batchGetOrFetchDatabases(targets);
+      void useAppStore.getState().batchGetOrFetchDatabases(targets);
     }
-  }, [databaseStore, showDatabaseColumn, taskByUID, taskRuns]);
+  }, [showDatabaseColumn, taskByUID, taskRuns]);
 
   const getTaskForTaskRun = (taskRun: TaskRun) => {
     return taskByUID.get(extractTaskUID(taskRun.name));
@@ -312,13 +311,14 @@ function IssueDetailTaskRunDateCell({
 
 function IssueDetailTaskRunDatabaseCell({ database }: { database: Database }) {
   const { t } = useTranslation();
-  const environmentStore = useEnvironmentV1Store();
-  const environment = useVueState(() =>
-    environmentStore.getEnvironmentByName(
-      database.effectiveEnvironment ??
-        database.instanceResource?.environment ??
-        ""
-    )
+  const environmentList = useAppStore((s) => s.environmentList);
+  const environmentName =
+    database.effectiveEnvironment ??
+    database.instanceResource?.environment ??
+    "";
+  const environment = useMemo(
+    () => useAppStore.getState().getEnvironmentByName(environmentName),
+    [environmentList, environmentName]
   );
   const instance = database.instanceResource;
   const { databaseName } = extractDatabaseResourceName(database.name);

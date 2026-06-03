@@ -1,6 +1,8 @@
 import { create } from "@bufbuild/protobuf";
 import { isUndefined, omit, omitBy } from "lodash-es";
 import { computed, reactive } from "vue";
+import { extractWorksheetConnection } from "@/react/lib/sqlEditorConnection";
+import { useAppStore } from "@/react/stores/app";
 import type { EditorPanelViewState, SQLEditorTab } from "@/types";
 import { DEFAULT_SQL_EDITOR_TAB_MODE } from "@/types";
 import {
@@ -9,11 +11,10 @@ import {
 } from "@/types/proto-es/v1/worksheet_service_pb";
 import {
   defaultSQLEditorTab,
-  extractWorksheetConnection,
   useDynamicLocalStorage,
   WebStorageHelper,
 } from "@/utils";
-import { extractUserEmail, useWorkSheetStore } from "../../v1";
+import { extractUserEmail } from "../../v1";
 import { useCurrentUserV1 } from "../../v1/auth";
 import { EXTENDED_TAB_FIELDS, useExtendedTabStore } from "./extendedTab";
 
@@ -114,7 +115,6 @@ export const migrateLegacyCache = async () => {
 export const migrateDraftsFromCache = async (project: string) => {
   const me = useCurrentUserV1();
   const userUID = computed(() => extractUserEmail(me.value.name));
-  const worksheetStore = useWorkSheetStore();
 
   const viewStateByTab = useDynamicLocalStorage<
     Map</* tab.id */ string, EditorPanelViewState>
@@ -149,7 +149,7 @@ export const migrateDraftsFromCache = async (project: string) => {
         const connection = await extractWorksheetConnection({
           database: tab.connection.database,
         });
-        await worksheetStore.createWorksheet(
+        await useAppStore.getState().createWorksheet(
           create(WorksheetSchema, {
             title: tab.title,
             database: connection.database,

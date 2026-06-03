@@ -5,14 +5,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/parser/plsql"
+	"github.com/bytebase/omni/oracle/ast"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
 	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
-	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -35,22 +33,8 @@ func (*ColumnAddNotNullColumnRequireDefaultAdvisor) Check(_ context.Context, che
 	}
 
 	rule := NewColumnAddNotNullColumnRequireDefaultRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase)
-	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range checkCtx.ParsedStatements {
-		if stmt.AST == nil {
-			continue
-		}
-		antlrAST, ok := base.GetANTLRAST(stmt.AST)
-		if !ok {
-			continue
-		}
-		rule.SetBaseLine(stmt.BaseLine())
-		checker.SetBaseLine(stmt.BaseLine())
-		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
-	}
-
-	return checker.GetAdviceList()
+	return RunOmniRules(checkCtx.ParsedStatements, []OmniRule{rule})
 }
 
 // ColumnAddNotNullColumnRequireDefaultRule is the rule implementation for adding not null column requires default.
@@ -58,8 +42,6 @@ type ColumnAddNotNullColumnRequireDefaultRule struct {
 	BaseRule
 
 	currentDatabase string
-	tableName       string
-	isNotNull       bool
 }
 
 // NewColumnAddNotNullColumnRequireDefaultRule creates a new ColumnAddNotNullColumnRequireDefaultRule.
@@ -75,61 +57,28 @@ func (*ColumnAddNotNullColumnRequireDefaultRule) Name() string {
 	return "column.add-not-null-column-require-default"
 }
 
-// OnEnter is called when the parser enters a rule context.
-func (r *ColumnAddNotNullColumnRequireDefaultRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
-	switch nodeType {
-	case "Alter_table":
-		r.handleAlterTable(ctx.(*parser.Alter_tableContext))
-	case "Column_definition":
-		r.handleColumnDefinitionEnter(ctx.(*parser.Column_definitionContext))
-	case "Inline_constraint":
-		r.handleInlineConstraint(ctx.(*parser.Inline_constraintContext))
-	default:
-	}
-	return nil
-}
-
-// OnExit is called when the parser exits a rule context.
-func (r *ColumnAddNotNullColumnRequireDefaultRule) OnExit(ctx antlr.ParserRuleContext, nodeType string) error {
-	switch nodeType {
-	case "Alter_table":
-		r.handleAlterTableExit()
-	case "Column_definition":
-		r.handleColumnDefinitionExit(ctx.(*parser.Column_definitionContext))
-	default:
-	}
-	return nil
-}
-
-func (r *ColumnAddNotNullColumnRequireDefaultRule) handleAlterTable(ctx *parser.Alter_tableContext) {
-	r.tableName = normalizeIdentifier(ctx.Tableview_name(), r.currentDatabase)
-}
-
-func (r *ColumnAddNotNullColumnRequireDefaultRule) handleAlterTableExit() {
-	r.tableName = ""
-}
-
-func (r *ColumnAddNotNullColumnRequireDefaultRule) handleInlineConstraint(ctx *parser.Inline_constraintContext) {
-	if ctx.NOT() != nil {
-		r.isNotNull = true
-	}
-}
-
-func (r *ColumnAddNotNullColumnRequireDefaultRule) handleColumnDefinitionEnter(_ *parser.Column_definitionContext) {
-	r.isNotNull = false
-}
-
-func (r *ColumnAddNotNullColumnRequireDefaultRule) handleColumnDefinitionExit(ctx *parser.Column_definitionContext) {
-	if r.tableName == "" || !r.isNotNull {
+// OnStatement checks ADD COLUMN actions for NOT NULL columns without DEFAULT.
+func (r *ColumnAddNotNullColumnRequireDefaultRule) OnStatement(node ast.Node) {
+	stmt, ok := node.(*ast.AlterTableStmt)
+	if !ok {
 		return
 	}
-
-	if ctx.DEFAULT() == nil {
-		r.AddAdvice(
-			r.level,
-			code.NotNullColumnWithNoDefault.Int32(),
-			fmt.Sprintf("Adding not null column %q requires default.", normalizeIdentifier(ctx.Column_name(), r.currentDatabase)),
-			common.ConvertANTLRLineToPosition(r.baseLine+ctx.GetStart().GetLine()),
-		)
+	for _, cmd := range omniAlterTableCmds(stmt) {
+		if cmd.Action != ast.AT_ADD_COLUMN {
+			continue
+		}
+		for _, col := range append(omniColumnDefs(cmd.ColumnDefs), cmd.ColumnDef) {
+			if col == nil || col.Default != nil {
+				continue
+			}
+			if col.NotNull || omniColumnHasConstraint(col, ast.CONSTRAINT_NOT_NULL) {
+				r.AddAdvice(
+					r.level,
+					code.NotNullColumnWithNoDefault.Int32(),
+					fmt.Sprintf("Adding not null column %q requires default.", col.Name),
+					common.ConvertANTLRLineToPosition(r.locLine(col.Loc)),
+				)
+			}
+		}
 	}
 }

@@ -9,11 +9,21 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getOrFetchSettingByName: vi.fn(),
   fetchEnvironments: vi.fn(),
+  loadCurrentUser: vi.fn(),
+  loadServerInfo: vi.fn(),
+  loadWorkspace: vi.fn(),
   loadEnvironmentList: vi.fn(),
   loadWorkspaceProfile: vi.fn(),
+  loadWorkspacePermissionState: vi.fn(),
+  loadSubscription: vi.fn(),
   useAppStore: vi.fn(),
 }));
 
+vi.mock("@/react/stores/app", () => ({
+  useAppStore: mocks.useAppStore,
+}));
+
+// The legacy-Pinia bootstrap block reads these from `@/store`.
 vi.mock("@/store", () => ({
   useEnvironmentV1Store: () => ({
     fetchEnvironments: mocks.fetchEnvironments,
@@ -21,10 +31,6 @@ vi.mock("@/store", () => ({
   useSettingV1Store: () => ({
     getOrFetchSettingByName: mocks.getOrFetchSettingByName,
   }),
-}));
-
-vi.mock("@/react/stores/app", () => ({
-  useAppStore: mocks.useAppStore,
 }));
 
 vi.mock("./BannersWrapper", () => ({
@@ -36,18 +42,37 @@ let DashboardFrameShell: typeof import("./DashboardFrameShell").DashboardFrameSh
 beforeEach(async () => {
   mocks.getOrFetchSettingByName.mockReset();
   mocks.fetchEnvironments.mockReset();
+  mocks.loadCurrentUser.mockReset();
+  mocks.loadServerInfo.mockReset();
+  mocks.loadWorkspace.mockReset();
   mocks.loadEnvironmentList.mockReset();
   mocks.loadWorkspaceProfile.mockReset();
+  mocks.loadWorkspacePermissionState.mockReset();
+  mocks.loadSubscription.mockReset();
   mocks.getOrFetchSettingByName.mockResolvedValue(undefined);
   mocks.fetchEnvironments.mockResolvedValue([]);
+  mocks.loadCurrentUser.mockResolvedValue(undefined);
+  mocks.loadServerInfo.mockResolvedValue(undefined);
+  mocks.loadWorkspace.mockResolvedValue(undefined);
   mocks.loadEnvironmentList.mockResolvedValue([]);
   mocks.loadWorkspaceProfile.mockResolvedValue(undefined);
-  mocks.useAppStore.mockImplementation((selector) =>
-    selector({
-      loadEnvironmentList: mocks.loadEnvironmentList,
-      loadWorkspaceProfile: mocks.loadWorkspaceProfile,
-    })
-  );
+  mocks.loadWorkspacePermissionState.mockResolvedValue(undefined);
+  mocks.loadSubscription.mockResolvedValue(undefined);
+  const appStoreState = {
+    loadCurrentUser: mocks.loadCurrentUser,
+    loadServerInfo: mocks.loadServerInfo,
+    loadWorkspace: mocks.loadWorkspace,
+    loadEnvironmentList: mocks.loadEnvironmentList,
+    loadWorkspaceProfile: mocks.loadWorkspaceProfile,
+    loadWorkspacePermissionState: mocks.loadWorkspacePermissionState,
+    loadSubscription: mocks.loadSubscription,
+    fetchEnvironments: mocks.fetchEnvironments,
+    getOrFetchSettingByName: mocks.getOrFetchSettingByName,
+  };
+  mocks.useAppStore.mockImplementation((selector) => selector(appStoreState));
+  (
+    mocks.useAppStore as unknown as { getState: () => typeof appStoreState }
+  ).getState = () => appStoreState;
   ({ DashboardFrameShell } = await import("./DashboardFrameShell"));
 });
 
@@ -70,6 +95,7 @@ describe("DashboardFrameShell", () => {
     });
 
     expect(onReady).toHaveBeenCalled();
+    expect(mocks.loadCurrentUser).toHaveBeenCalled();
     expect(mocks.fetchEnvironments).toHaveBeenCalled();
     expect(mocks.getOrFetchSettingByName).toHaveBeenCalled();
     const targets = onReady.mock.lastCall?.[0];
@@ -89,6 +115,7 @@ describe("DashboardFrameShell", () => {
 
   test("keeps body target hidden while bootstrap requests are pending", () => {
     let resolveEnvironmentList: (value: []) => void = () => {};
+    mocks.loadCurrentUser.mockResolvedValue(undefined);
     mocks.loadEnvironmentList.mockReturnValue(
       new Promise((resolve) => {
         resolveEnvironmentList = resolve;

@@ -1,15 +1,9 @@
 import { create } from "@bufbuild/protobuf";
-import { ChevronRight, ExternalLink, FolderTree, X } from "lucide-react";
+import { ChevronRight, ExternalLink, FolderTree } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { instanceRoleServiceClientConnect } from "@/connect";
 import { EngineIcon } from "@/react/components/EngineIcon";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogTitle,
-} from "@/react/components/ui/dialog";
 import { SearchInput } from "@/react/components/ui/search-input";
 import {
   Select,
@@ -18,28 +12,35 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/react/components/ui/select";
+import {
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/react/components/ui/sheet";
 import { Switch } from "@/react/components/ui/switch";
 import { Tooltip } from "@/react/components/ui/tooltip";
 import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import {
   PROJECT_V1_ROUTE_DATABASE_GROUP_DETAIL,
   PROJECT_V1_ROUTE_PLAN_DETAIL_SPECS,
 } from "@/router/dashboard/projectV1";
 import { buildPlanDeployRouteFromPlanName } from "@/router/dashboard/projectV1RouteHelpers";
+import { getProjectNameAndDatabaseGroupName } from "@/store";
 import {
-  getProjectNameAndDatabaseGroupName,
-  useDatabaseV1Store,
-  useDBGroupStore,
-  useEnvironmentV1Store,
-  useSheetV1Store,
-} from "@/store";
-import { isValidDatabaseGroupName, isValidDatabaseName } from "@/types";
+  isValidDatabaseGroupName,
+  isValidDatabaseName,
+  unknownDatabaseGroup,
+} from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import { DatabaseGroupView } from "@/types/proto-es/v1/database_group_service_pb";
 import { ListInstanceRolesRequestSchema } from "@/types/proto-es/v1/instance_role_service_pb";
 import type { Plan_Spec } from "@/types/proto-es/v1/plan_service_pb";
+import { unknownDatabase } from "@/types/v1/database";
 import {
   extractDatabaseResourceName,
   extractInstanceResourceName,
@@ -173,8 +174,7 @@ function IssueDetailDatabaseChangeOptions({
   selectedSpec: Plan_Spec;
 }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
-  const sheetStore = useSheetV1Store();
+  const databasesByName = useAppStore((s) => s.databasesByName);
   const [sheetStatement, setSheetStatement] = useState("");
   const [isSheetOversize, setIsSheetOversize] = useState(false);
   const [instanceRoles, setInstanceRoles] = useState<string[]>([]);
@@ -187,7 +187,7 @@ function IssueDetailDatabaseChangeOptions({
   }, [selectedSpec]);
   const databases = useVueState(() =>
     targets
-      .map((target) => databaseStore.getDatabaseByName(target))
+      .map((target) => databasesByName[target] ?? unknownDatabase())
       .filter((database) => isValidDatabaseName(database.name))
   );
   const parsedStatement = useMemo(
@@ -317,7 +317,7 @@ function IssueDetailDatabaseChangeOptions({
       const uid = extractSheetUID(sheetName);
       const sheet = uid.startsWith("-")
         ? getLocalSheetByName(sheetName)
-        : await sheetStore.getOrFetchSheetByName(sheetName);
+        : await useAppStore.getState().getOrFetchSheetByName(sheetName);
       if (!sheet || canceled) {
         return;
       }
@@ -331,7 +331,7 @@ function IssueDetailDatabaseChangeOptions({
     return () => {
       canceled = true;
     };
-  }, [selectedSpec, sheetStore]);
+  }, [selectedSpec]);
 
   useEffect(() => {
     let canceled = false;
@@ -506,8 +506,7 @@ function IssueDetailDatabaseChangeTargets({
   selectedSpec: Plan_Spec;
 }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
-  const dbGroupStore = useDBGroupStore();
+  const databasesByName = useAppStore((s) => s.databasesByName);
   const [showAllTargetsDialog, setShowAllTargetsDialog] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [isLoadingTargets, setIsLoadingTargets] = useState(false);
@@ -532,13 +531,15 @@ function IssueDetailDatabaseChangeTargets({
           return [target];
         }
         return (
-          dbGroupStore
+          useAppStore
+            .getState()
             .getDBGroupByName(target)
             .matchedDatabases?.map((database) => database.name) ?? []
         );
       })
       .filter(
-        (name) => !databaseStore.getDatabaseByName(name).effectiveEnvironment
+        (name) =>
+          !(databasesByName[name] ?? unknownDatabase()).effectiveEnvironment
       );
   });
   const filteredTargets = useVueState(() => {
@@ -549,7 +550,7 @@ function IssueDetailDatabaseChangeTargets({
     const normalizedSearchText = searchText.toLowerCase();
     return targets.filter((target) => {
       if (isValidDatabaseName(target)) {
-        const database = databaseStore.getDatabaseByName(target);
+        const database = databasesByName[target] ?? unknownDatabase();
         return extractDatabaseResourceName(database.name)
           .databaseName.toLowerCase()
           .includes(normalizedSearchText);
@@ -577,7 +578,7 @@ function IssueDetailDatabaseChangeTargets({
 
       setIsLoadingTargets(true);
       try {
-        await fetchTargets(visibleTargets, dbGroupStore, databaseStore);
+        await fetchTargets(visibleTargets);
       } catch {
         // Ignore target loading failures to match the current Vue behavior.
       } finally {
@@ -592,7 +593,7 @@ function IssueDetailDatabaseChangeTargets({
     return () => {
       canceled = true;
     };
-  }, [databaseStore, dbGroupStore, targets, visibleTargets]);
+  }, [targets, visibleTargets]);
 
   useEffect(() => {
     if (!showAllTargetsDialog) {
@@ -605,7 +606,7 @@ function IssueDetailDatabaseChangeTargets({
     const loadAllTargets = async () => {
       setIsLoadingAllTargets(true);
       try {
-        await fetchTargets(targets, dbGroupStore, databaseStore);
+        await fetchTargets(targets);
       } catch {
         // Ignore target loading failures to match the current Vue behavior.
       } finally {
@@ -620,7 +621,7 @@ function IssueDetailDatabaseChangeTargets({
     return () => {
       canceled = true;
     };
-  }, [databaseStore, dbGroupStore, showAllTargetsDialog, targets]);
+  }, [showAllTargetsDialog, targets]);
 
   return (
     <>
@@ -694,62 +695,49 @@ function IssueDetailDatabaseChangeTargets({
         )}
       </div>
 
-      <Dialog
+      <Sheet
         open={showAllTargetsDialog}
         onOpenChange={(open) => setShowAllTargetsDialog(open)}
       >
-        <DialogContent className="relative max-w-[100vw] p-0 md:w-[50rem]">
-          <div className="flex h-full max-h-[calc(100vh-10rem)] flex-col gap-y-4">
-            <div className="flex items-center justify-between border-b px-4 py-4">
-              <DialogTitle>
-                {t("plan.targets.title")} ({targets.length})
-              </DialogTitle>
-              <DialogClose
-                render={
-                  <button
-                    className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm text-control transition-colors hover:bg-control-bg"
-                    type="button"
-                  />
-                }
-              >
-                <X className="h-4 w-4" />
-              </DialogClose>
-            </div>
+        <SheetContent width="wide">
+          <SheetHeader>
+            <SheetTitle>
+              {t("plan.targets.title")} ({targets.length})
+            </SheetTitle>
+          </SheetHeader>
 
-            <div className="px-4">
-              <SearchInput
-                placeholder={t("common.search")}
-                value={searchText}
-                onChange={(event) => setSearchText(event.target.value)}
-              />
-            </div>
+          <SheetBody className="gap-y-4 overflow-hidden px-4 pb-4">
+            <SearchInput
+              placeholder={t("common.search")}
+              value={searchText}
+              wrapperClassName="flex-none"
+              onChange={(event) => setSearchText(event.target.value)}
+            />
 
-            <div className="flex-1 overflow-hidden px-4 pb-4">
+            <div className="min-h-0 flex-1 overflow-y-auto">
               {isLoadingAllTargets ? (
                 <div className="flex h-full items-center justify-center">
                   <div className="h-5 w-5 animate-spin rounded-full border-2 border-control-border border-t-accent" />
                 </div>
               ) : filteredTargets.length > 0 ? (
-                <div className="h-full overflow-y-auto">
-                  <div className="flex flex-wrap gap-2">
-                    {filteredTargets.map((target) => (
-                      <div
-                        key={target}
-                        className="inline-flex cursor-default items-center gap-x-1 rounded-lg border px-2 py-1 transition-all"
-                      >
-                        {isValidDatabaseName(target) ? (
-                          <IssueDetailDatabaseTarget
-                            showEnvironment
-                            target={target}
-                          />
-                        ) : isValidDatabaseGroupName(target) ? (
-                          <IssueDetailDatabaseGroupTarget target={target} />
-                        ) : (
-                          <span className="text-sm">{target}</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                <div className="flex flex-col gap-2">
+                  {filteredTargets.map((target) => (
+                    <div
+                      key={target}
+                      className="w-full rounded-lg border px-2 py-1.5"
+                    >
+                      {isValidDatabaseName(target) ? (
+                        <IssueDetailDatabaseTarget
+                          showEnvironment
+                          target={target}
+                        />
+                      ) : isValidDatabaseGroupName(target) ? (
+                        <IssueDetailDatabaseGroupTarget target={target} />
+                      ) : (
+                        <span className="block truncate text-sm">{target}</span>
+                      )}
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <div className="flex h-full items-center justify-center text-control-light">
@@ -757,9 +745,9 @@ function IssueDetailDatabaseChangeTargets({
                 </div>
               )}
             </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+          </SheetBody>
+        </SheetContent>
+      </Sheet>
     </>
   );
 }
@@ -772,15 +760,18 @@ function IssueDetailDatabaseTarget({
   target: string;
 }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
-  const environmentStore = useEnvironmentV1Store();
-  const database = useVueState(() => databaseStore.getDatabaseByName(target));
-  const environment = useVueState(() =>
-    environmentStore.getEnvironmentByName(
-      database.effectiveEnvironment ??
-        database.instanceResource?.environment ??
-        ""
-    )
+  const databasesByName = useAppStore((s) => s.databasesByName);
+  const environmentList = useAppStore((s) => s.environmentList);
+  const database = useVueState(
+    () => databasesByName[target] ?? unknownDatabase()
+  );
+  const environmentName =
+    database.effectiveEnvironment ??
+    database.instanceResource?.environment ??
+    "";
+  const environment = useMemo(
+    () => useAppStore.getState().getEnvironmentByName(environmentName),
+    [environmentList, environmentName]
   );
   const instance = database.instanceResource;
   const { databaseName } = extractDatabaseResourceName(target);
@@ -788,21 +779,34 @@ function IssueDetailDatabaseTarget({
     instance?.title ||
     extractInstanceResourceName(target) ||
     t("common.unknown");
+  const title = [
+    showEnvironment ? environment.title : undefined,
+    instanceTitle,
+    databaseName,
+  ]
+    .filter(Boolean)
+    .join(" / ");
 
   return (
-    <div className="flex min-w-0 items-center truncate text-sm">
+    <div className="flex min-w-0 max-w-full items-center text-sm" title={title}>
       {instance && (
         <EngineIcon
           engine={instance.engine}
-          className="mr-1 inline-block h-4 w-4"
+          className="mr-1 inline-block h-4 w-4 shrink-0"
         />
       )}
       {showEnvironment && (
-        <span className="mr-1 truncate text-gray-400">{environment.title}</span>
+        <span className="mr-1 max-w-24 shrink truncate text-control-placeholder">
+          {environment.title}
+        </span>
       )}
-      <span className="truncate text-gray-600">{instanceTitle}</span>
-      <ChevronRight className="h-4 w-4 shrink-0 text-gray-500 opacity-60" />
-      <span className="truncate text-gray-800">{databaseName}</span>
+      <span className="min-w-0 shrink-[2] truncate text-control-light">
+        {instanceTitle}
+      </span>
+      <ChevronRight className="h-4 w-4 shrink-0 text-control-light/80" />
+      <span className="min-w-12 flex-1 truncate text-control">
+        {databaseName}
+      </span>
     </div>
   );
 }
@@ -815,10 +819,13 @@ function IssueDetailDatabaseGroupTarget({
   target: string;
 }) {
   const { t } = useTranslation();
-  const dbGroupStore = useDBGroupStore();
-  const databaseStore = useDatabaseV1Store();
-  const databaseGroup = useVueState(() =>
-    dbGroupStore.getDBGroupByName(target)
+  // Subscribe to the cached entry directly (stable ref) and derive the unknown
+  // fallback outside the selector — a selector returning `unknownDatabaseGroup()`
+  // would yield a fresh object each call and loop forever.
+  const cachedGroup = useAppStore((s) => s.dbGroupsByName[target]);
+  const databaseGroup = useMemo(
+    () => cachedGroup ?? unknownDatabaseGroup(),
+    [cachedGroup]
   );
   const databases = useMemo(
     () => databaseGroup.matchedDatabases?.map((db) => db.name) ?? [],
@@ -830,17 +837,17 @@ function IssueDetailDatabaseGroupTarget({
     if (!isValidDatabaseGroupName(target)) {
       return;
     }
-    void dbGroupStore.getOrFetchDBGroupByName(target, {
+    void useAppStore.getState().getOrFetchDBGroupByName(target, {
       silent: true,
       view: DatabaseGroupView.FULL,
     });
-  }, [dbGroupStore, target]);
+  }, [target]);
 
   useEffect(() => {
     if (databases.length > 0) {
-      void databaseStore.batchGetOrFetchDatabases(databases);
+      void useAppStore.getState().batchGetOrFetchDatabases(databases);
     }
-  }, [databaseStore, databases]);
+  }, [databases]);
 
   const gotoDatabaseGroupDetailPage = () => {
     const [projectId, databaseGroupName] =
@@ -910,23 +917,18 @@ function IssueDetailDatabaseGroupTarget({
   );
 }
 
-const fetchTargets = async (
-  targets: string[],
-  dbGroupStore: ReturnType<typeof useDBGroupStore>,
-  databaseStore: ReturnType<typeof useDatabaseV1Store>
-) => {
+const fetchTargets = async (targets: string[]) => {
   const databaseTargets = new Set<string>();
 
   for (const target of targets) {
     if (isValidDatabaseGroupName(target)) {
       try {
-        const databaseGroup = await dbGroupStore.getOrFetchDBGroupByName(
-          target,
-          {
+        const databaseGroup = await useAppStore
+          .getState()
+          .getOrFetchDBGroupByName(target, {
             silent: true,
             view: DatabaseGroupView.FULL,
-          }
-        );
+          });
         for (const database of databaseGroup.matchedDatabases ?? []) {
           databaseTargets.add(database.name);
         }
@@ -941,7 +943,7 @@ const fetchTargets = async (
   }
 
   if (databaseTargets.size > 0) {
-    await databaseStore.batchGetOrFetchDatabases([...databaseTargets]);
+    await useAppStore.getState().batchGetOrFetchDatabases([...databaseTargets]);
   }
 
   return [...databaseTargets];

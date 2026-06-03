@@ -6,14 +6,12 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/parser/plsql"
+	"github.com/bytebase/omni/oracle/ast"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
 	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
-	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -38,22 +36,8 @@ func (*ColumnNoNullAdvisor) Check(_ context.Context, checkCtx advisor.Context) (
 	}
 
 	rule := NewColumnNoNullRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase)
-	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range checkCtx.ParsedStatements {
-		if stmt.AST == nil {
-			continue
-		}
-		antlrAST, ok := base.GetANTLRAST(stmt.AST)
-		if !ok {
-			continue
-		}
-		rule.SetBaseLine(stmt.BaseLine())
-		checker.SetBaseLine(stmt.BaseLine())
-		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
-	}
-
-	return checker.GetAdviceList()
+	return RunOmniRules(checkCtx.ParsedStatements, []OmniRule{rule})
 }
 
 // ColumnNoNullRule is the rule implementation for column no NULL value.
@@ -62,8 +46,6 @@ type ColumnNoNullRule struct {
 
 	currentDatabase string
 	nullableColumns columnMap
-	tableName       string
-	columnID        string
 }
 
 // NewColumnNoNullRule creates a new ColumnNoNullRule.
@@ -80,41 +62,56 @@ func (*ColumnNoNullRule) Name() string {
 	return "column.no-null"
 }
 
-// OnEnter is called when the parser enters a rule context.
-func (r *ColumnNoNullRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
-	switch nodeType {
-	case "Create_table":
-		r.handleCreateTable(ctx.(*parser.Create_tableContext))
-	case "Column_definition":
-		r.handleColumnDefinition(ctx.(*parser.Column_definitionContext))
-	case "Inline_constraint":
-		r.handleInlineConstraint(ctx.(*parser.Inline_constraintContext))
-	case "Out_of_line_constraint":
-		r.handleOutOfLineConstraint(ctx.(*parser.Out_of_line_constraintContext))
-	case "Alter_table":
-		r.handleAlterTable(ctx.(*parser.Alter_tableContext))
-	case "Modify_col_properties":
-		r.handleModifyColProperties(ctx.(*parser.Modify_col_propertiesContext))
+// OnStatement records nullable columns from omni CREATE/ALTER TABLE nodes.
+func (r *ColumnNoNullRule) OnStatement(node ast.Node) {
+	switch n := node.(type) {
+	case *ast.CreateTableStmt:
+		tableName := omniObjectName(n.Name, r.currentDatabase)
+		for _, col := range omniColumnDefs(n.Columns) {
+			r.recordNullableColumn(tableName, col)
+		}
+		for _, c := range omniTableConstraints(n.Constraints) {
+			if c.Type == ast.CONSTRAINT_PRIMARY {
+				for _, columnName := range omniListStrings(c.Columns) {
+					delete(r.nullableColumns, fmt.Sprintf("%s.%s", tableName, columnName))
+				}
+			}
+		}
+	case *ast.AlterTableStmt:
+		tableName := omniObjectName(n.Name, r.currentDatabase)
+		for _, cmd := range omniAlterTableCmds(n) {
+			if cmd.Action != ast.AT_MODIFY_COLUMN && cmd.Action != ast.AT_ADD_COLUMN {
+				continue
+			}
+			for _, col := range append(omniColumnDefs(cmd.ColumnDefs), cmd.ColumnDef) {
+				if col != nil {
+					r.recordNullableColumn(tableName, col)
+				}
+			}
+		}
 	default:
-		// Ignore other node types
 	}
-	return nil
 }
 
-// OnExit is called when the parser exits a rule context.
-func (r *ColumnNoNullRule) OnExit(_ antlr.ParserRuleContext, nodeType string) error {
-	switch nodeType {
-	case "Create_table":
-		r.tableName = ""
-	case "Column_definition":
-		r.columnID = ""
-	case "Alter_table":
-		r.tableName = ""
-	default:
-		// Ignore other node types
+func (r *ColumnNoNullRule) recordNullableColumn(tableName string, col *ast.ColumnDef) {
+	if col == nil {
+		return
 	}
-	return nil
+	columnID := fmt.Sprintf("%s.%s", tableName, col.Name)
+	if col.NotNull || omniColumnHasConstraint(col, ast.CONSTRAINT_NOT_NULL) || omniColumnHasConstraint(col, ast.CONSTRAINT_PRIMARY) {
+		delete(r.nullableColumns, columnID)
+		return
+	}
+	r.nullableColumns[columnID] = r.locLine(col.Loc)
 }
+
+// OnEnter is called when the parser enters a rule context.
+
+// Ignore other node types
+
+// OnExit is called when the parser exits a rule context.
+
+// Ignore other node types
 
 // GetAdviceList returns the advice list.
 func (r *ColumnNoNullRule) GetAdviceList() ([]*storepb.Advice, error) {
@@ -133,58 +130,4 @@ func (r *ColumnNoNullRule) GetAdviceList() ([]*storepb.Advice, error) {
 		)
 	}
 	return r.BaseRule.GetAdviceList()
-}
-
-func (r *ColumnNoNullRule) handleCreateTable(ctx *parser.Create_tableContext) {
-	schemaName := r.currentDatabase
-	if ctx.Schema_name() != nil {
-		schemaName = normalizeIdentifier(ctx.Schema_name(), r.currentDatabase)
-	}
-	r.tableName = fmt.Sprintf("%s.%s", schemaName, normalizeIdentifier(ctx.Table_name(), schemaName))
-}
-
-func (r *ColumnNoNullRule) handleColumnDefinition(ctx *parser.Column_definitionContext) {
-	if r.tableName == "" {
-		return
-	}
-	columnName := normalizeIdentifier(ctx.Column_name(), r.currentDatabase)
-	r.columnID = fmt.Sprintf(`%s.%s`, r.tableName, columnName)
-	r.nullableColumns[r.columnID] = r.baseLine + ctx.GetStart().GetLine()
-}
-
-func (r *ColumnNoNullRule) handleInlineConstraint(ctx *parser.Inline_constraintContext) {
-	if r.columnID == "" {
-		return
-	}
-	if ctx.NULL_() != nil {
-		r.nullableColumns[r.columnID] = r.baseLine + ctx.GetStart().GetLine()
-	}
-	if ctx.NOT() != nil || ctx.PRIMARY() != nil {
-		delete(r.nullableColumns, r.columnID)
-	}
-}
-
-func (r *ColumnNoNullRule) handleOutOfLineConstraint(ctx *parser.Out_of_line_constraintContext) {
-	if r.tableName == "" {
-		return
-	}
-	if ctx.PRIMARY() != nil {
-		for _, column := range ctx.AllColumn_name() {
-			columnName := normalizeIdentifier(column, r.currentDatabase)
-			columnID := fmt.Sprintf(`%s.%s`, r.tableName, columnName)
-			delete(r.nullableColumns, columnID)
-		}
-	}
-}
-
-func (r *ColumnNoNullRule) handleAlterTable(ctx *parser.Alter_tableContext) {
-	r.tableName = normalizeIdentifier(ctx.Tableview_name(), r.currentDatabase)
-}
-
-func (r *ColumnNoNullRule) handleModifyColProperties(ctx *parser.Modify_col_propertiesContext) {
-	if r.tableName == "" {
-		return
-	}
-	columnName := normalizeIdentifier(ctx.Column_name(), r.currentDatabase)
-	r.columnID = fmt.Sprintf(`%s.%s`, r.tableName, columnName)
 }

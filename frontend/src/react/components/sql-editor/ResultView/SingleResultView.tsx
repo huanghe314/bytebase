@@ -8,7 +8,14 @@ import {
   InfoIcon,
   XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { v4 as uuidv4 } from "uuid";
 import {
@@ -27,10 +34,11 @@ import { EllipsisText } from "@/react/components/ui/ellipsis-text";
 import { Switch } from "@/react/components/ui/switch";
 import { Tooltip } from "@/react/components/ui/tooltip";
 import { useExecuteSQL } from "@/react/hooks/useExecuteSQL";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useSQLEditorQueryDataPolicy } from "@/react/hooks/useSQLEditorBridge";
 import { cn } from "@/react/lib/utils";
-import { useSQLEditorVueState } from "@/react/stores/sqlEditor/editor-vue-state";
-import { useSQLEditorTabStore } from "@/react/stores/sqlEditor/tab-vue-state";
+import { useAppStore } from "@/react/stores/app";
+import { useSQLEditorEditorState } from "@/react/stores/sqlEditor/editor";
+import { useSQLEditorTabState } from "@/react/stores/sqlEditor/tab";
 import type {
   SQLEditorDatabaseQueryContext,
   SQLEditorQueryParams,
@@ -79,8 +87,14 @@ export interface SingleResultViewProps {
   database: Database;
   result: QueryResult;
   showExport: boolean;
+  // Optional tooltip shown on the export button — used to explain when the
+  // export is enabled by a JIT access grant despite the policy disabling it.
+  exportTooltip?: ReactNode;
   maximumExportCount?: number;
   onExport?: (req: DataExportRequest & { statement: string }) => void;
+  // Rendered in the toolbar when `showExport` is false — e.g. a
+  // "Request export" affordance when the policy disables direct export.
+  requestExportSlot?: ReactNode;
 }
 
 type ViewMode = "RESULT" | "EMPTY" | "AFFECTED-ROWS" | "ERROR";
@@ -215,8 +229,10 @@ function SingleResultViewInner({
   database,
   result,
   showExport,
+  exportTooltip,
   maximumExportCount,
   onExport,
+  requestExportSlot,
   engine,
   activeResult: _activeResult,
   columns,
@@ -228,15 +244,25 @@ function SingleResultViewInner({
   setNoSQLTableView,
 }: SingleResultViewInnerProps) {
   const { t } = useTranslation();
-  const tabStore = useSQLEditorTabStore();
-  const editorStore = useSQLEditorVueState();
-  const currentTabMode = useVueState(() => tabStore.currentTab?.mode);
-  const resultRowsLimit = useVueState(() => editorStore.resultRowsLimit);
-  const policyMaxRows = useVueState(
-    () => editorStore.queryDataPolicy.maximumResultRows
+  const project = useSQLEditorEditorState((s) => s.project);
+  const queryDataPolicy = useSQLEditorQueryDataPolicy(project);
+  const currentTabMode = useSQLEditorTabState(
+    (s) => s.tabsById.get(s.currentTabId)?.mode
   );
+  const resultRowsLimit = useSQLEditorEditorState((s) => s.resultRowsLimit);
+  const policyMaxRows = queryDataPolicy.maximumResultRows;
   const { runQuery } = useExecuteSQL();
   const { copyAll } = useSelectionContext();
+
+  const supportFormats = useMemo(
+    () => [
+      ExportFormat.CSV,
+      ExportFormat.JSON,
+      ExportFormat.SQL,
+      ExportFormat.XLSX,
+    ],
+    []
+  );
 
   const dataTableRef = useRef<
     VirtualDataTableHandle | VirtualDataBlockHandle | null
@@ -329,6 +355,12 @@ function SingleResultViewInner({
     [rows, columns, cellValueMatches]
   );
 
+  // Tracks whether the previous searchParams already resolved to the
+  // "active search, zero matches" state. Used to fire the no-results
+  // notification only on the transition into that state — typing extra
+  // characters that keep the match set empty must not re-notify.
+  const wasInNoResultsRef = useRef(false);
+
   useEffect(() => {
     const next = getNextCandidateRowIndex(0, searchParams);
     const indexes: number[] = [];
@@ -339,7 +371,19 @@ function SingleResultViewInner({
     }
     setSearchCandidateRowIndexs(indexes);
     setSearchCandidateActiveIndex(0);
-  }, [searchParams, getNextCandidateRowIndex]);
+
+    const searchActive =
+      searchParams.query.trim().length > 0 || searchParams.scopes.length > 0;
+    const isNoResults = searchActive && indexes.length === 0;
+    if (isNoResults && !wasInNoResultsRef.current) {
+      useAppStore.getState().notify({
+        module: "bytebase",
+        style: "INFO",
+        title: t("sql-editor.search-no-result"),
+      });
+    }
+    wasInNoResultsRef.current = isNoResults;
+  }, [searchParams, getNextCandidateRowIndex, t]);
 
   const activeRowIndex =
     searchCandidateRowIndexs[searchCandidateActiveIndex] ?? -1;
@@ -549,22 +593,20 @@ function SingleResultViewInner({
                   {t("common.copy")}
                 </Button>
               )}
-              {showExport && (
+              {showExport ? (
                 <DataExportButton
                   size="sm"
                   disabled={!result || isEmpty(result)}
-                  supportFormats={[
-                    ExportFormat.CSV,
-                    ExportFormat.JSON,
-                    ExportFormat.SQL,
-                    ExportFormat.XLSX,
-                  ]}
+                  supportFormats={supportFormats}
                   viewMode="DRAWER"
                   supportPassword
+                  tooltip={exportTooltip}
                   maximumExportCount={maximumExportCount}
                   formContent={<DatabaseInfo database={database} />}
                   onExport={handleExport}
                 />
+              ) : (
+                requestExportSlot
               )}
             </div>
             <SelectionCopyTooltips />

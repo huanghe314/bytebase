@@ -17,17 +17,13 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/react/components/ui/sheet";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
+import { useAppStore } from "@/react/stores/app";
+import { experimentalCreateIssueByPlan } from "@/react/stores/app/issue";
 import { router } from "@/router";
-import {
-  experimentalCreateIssueByPlan,
-  pushNotification,
-  useCurrentUserV1,
-  useEnvironmentV1Store,
-  useInstanceV1Store,
-  useProjectV1Store,
-} from "@/store";
+import { pushNotification } from "@/store";
 import {
   defaultCharsetOfEngineV1,
   defaultCollationOfEngineV1,
@@ -64,10 +60,9 @@ export function CreateDatabaseSheet({
   projectName: fixedProjectName,
 }: CreateDatabaseSheetProps) {
   const { t } = useTranslation();
-  const projectStore = useProjectV1Store();
-  const instanceStore = useInstanceV1Store();
-  const environmentStore = useEnvironmentV1Store();
-  const currentUser = useCurrentUserV1();
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  const currentUser = useCurrentUser();
 
   const [projectName, setProjectName] = useState("");
   const [instanceName, setInstanceName] = useState("");
@@ -89,9 +84,7 @@ export function CreateDatabaseSheet({
   const [selectedInstance, setSelectedInstance] = useState<
     Instance | undefined
   >();
-  const environments = useVueState(
-    () => environmentStore.environmentList ?? []
-  );
+  const environments = useAppStore((s) => s.environmentList);
 
   const [selectedProject, setSelectedProject] = useState<
     | {
@@ -111,9 +104,10 @@ export function CreateDatabaseSheet({
   // for BYT-9310. Do not collapse these back together without a separate spec.
   const projectReactive = useVueState(() =>
     effectiveProjectName
-      ? projectStore.getProjectByName(effectiveProjectName)
+      ? useAppStore.getState().getProjectByName(effectiveProjectName)
       : undefined
   );
+  void projectsByName;
 
   // Note on hydration: projectStore.getProjectByName returns an
   // unknownProject() sentinel when the project is not yet cached. The sentinel
@@ -131,7 +125,8 @@ export function CreateDatabaseSheet({
     setSelectedProject(undefined);
     if (!effectiveProjectName) return;
     const fetchId = ++projectFetchRef.current;
-    projectStore
+    useAppStore
+      .getState()
       .getOrFetchProjectByName(effectiveProjectName)
       .then((project) => {
         if (fetchId !== projectFetchRef.current) return;
@@ -166,7 +161,7 @@ export function CreateDatabaseSheet({
     // effect to re-fire spuriously in test harnesses where `useTranslation`
     // is mocked to return a fresh closure per render. Same convention as
     // the auto-fill effect below.
-  }, [effectiveProjectName, projectStore]);
+  }, [effectiveProjectName]);
 
   // Auto-fill when the project doesn't enforce manual titles.
   // Intentional omissions from the dep array: `title` and `titleEdited` are
@@ -241,7 +236,7 @@ export function CreateDatabaseSheet({
       )
     ) {
       const fetchId = ++instanceFetchRef.current;
-      const full = await instanceStore.getOrFetchInstanceByName(name);
+      const full = await useAppStore.getState().getOrFetchInstanceByName(name);
       if (fetchId !== instanceFetchRef.current) return;
       if (full?.roles) {
         setInstanceRoles(
@@ -257,8 +252,9 @@ export function CreateDatabaseSheet({
     if (!allowCreate || creating) return;
     setCreating(true);
     try {
-      const project =
-        await projectStore.getOrFetchProjectByName(effectiveProjectName);
+      const project = await useAppStore
+        .getState()
+        .getOrFetchProjectByName(effectiveProjectName);
       const engine = selectedInstance?.engine ?? 0;
       const createDatabaseConfig = create(Plan_CreateDatabaseConfigSchema, {
         target: instanceName,
@@ -280,12 +276,12 @@ export function CreateDatabaseSheet({
       const planCreate = create(PlanSchema, {
         title: effectiveTitle,
         specs: [spec],
-        creator: currentUser.value.name,
+        creator: currentUser.name,
       });
       const issueCreate = create(IssueSchema, {
         title: effectiveTitle,
         type: Issue_Type.DATABASE_CHANGE,
-        creator: `users/${currentUser.value.email}`,
+        creator: `users/${currentUser.email}`,
         labels: issueLabels,
       });
       const { createdIssue } = await experimentalCreateIssueByPlan(

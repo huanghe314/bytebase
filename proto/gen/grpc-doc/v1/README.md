@@ -606,6 +606,7 @@
     - [Release.VCSSource](#bytebase-v1-Release-VCSSource)
     - [UndeleteReleaseRequest](#bytebase-v1-UndeleteReleaseRequest)
     - [UpdateReleaseRequest](#bytebase-v1-UpdateReleaseRequest)
+    - [VCSUser](#bytebase-v1-VCSUser)
   
     - [Release.Type](#bytebase-v1-Release-Type)
   
@@ -683,6 +684,7 @@
 - [v1/subscription_service.proto](#v1_subscription_service-proto)
     - [CancelPurchaseRequest](#bytebase-v1-CancelPurchaseRequest)
     - [CreatePurchaseRequest](#bytebase-v1-CreatePurchaseRequest)
+    - [ExportVCSProviderUsersRequest](#bytebase-v1-ExportVCSProviderUsersRequest)
     - [GetPaymentInfoRequest](#bytebase-v1-GetPaymentInfoRequest)
     - [GetSubscriptionRequest](#bytebase-v1-GetSubscriptionRequest)
     - [ListPurchasePlansRequest](#bytebase-v1-ListPurchasePlansRequest)
@@ -823,6 +825,7 @@ Authorization method for RPC calls.
 | create_time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 | update_time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 | reason | [string](#string) |  |  |
+| export | [bool](#bool) |  | Whether export the query result. |
 
 
 
@@ -886,9 +889,9 @@ Authorization method for RPC calls.
 | parent | [string](#string) |  | The parent project of the access grants. Format: projects/{project} |
 | page_size | [int32](#int32) |  | The maximum number of access grants to return. |
 | page_token | [string](#string) |  | A page token from a previous ListAccessGrants call. |
-| filter | [string](#string) |  | Filter expression using AIP-160 syntax. Supported fields: - name: the fullname in &#34;projects/{project}/accessGrants/{access_grant}&#34; format, support &#34;==&#34; operator. - creator: the creator name in &#34;users/{email}&#34; format, support &#34;==&#34; operator. - status: the access status, support &#34;==&#34; and &#34;in&#34; operator. - issue: the access issue fullname, support &#34;==&#34; operator. - expire_time: the access expire time in &#34;2006-01-02T15:04:05Z07:00&#34; format, support &#34;&gt;=&#34;, &#34;&gt;&#34;, &#34;&lt;=&#34; and &#34;&lt;&#34; operator. - create_time: the access creation time in &#34;2006-01-02T15:04:05Z07:00&#34; format, support &#34;&gt;=&#34;, &#34;&gt;&#34;, &#34;&lt;=&#34; and &#34;&lt;&#34; operator. - query: the access query, support &#34;==&#34; and &#34;.contains(xx)&#34; operator - target: the target database fullname, support &#34;==&#34; operator.
+| filter | [string](#string) |  | Filter expression using AIP-160 syntax. Supported fields: - name: the fullname in &#34;projects/{project}/accessGrants/{access_grant}&#34; format, support &#34;==&#34; operator. - creator: the creator name in &#34;users/{email}&#34; format, support &#34;==&#34; operator. - status: the access status, support &#34;==&#34; and &#34;in&#34; operator. - issue: the access issue fullname, support &#34;==&#34; operator. - expire_time: the access expire time in &#34;2006-01-02T15:04:05Z07:00&#34; format, support &#34;&gt;=&#34;, &#34;&gt;&#34;, &#34;&lt;=&#34; and &#34;&lt;&#34; operator. - create_time: the access creation time in &#34;2006-01-02T15:04:05Z07:00&#34; format, support &#34;&gt;=&#34;, &#34;&gt;&#34;, &#34;&lt;=&#34; and &#34;&lt;&#34; operator. - query: the access query, support &#34;==&#34; and &#34;.contains(xx)&#34; operator - target: the target database fullname, support &#34;==&#34; operator. - unmask: whether the grant allows unmasking sensitive data, support &#34;==&#34; operator with a boolean literal. - export: whether the grant allows exporting the query result, support &#34;==&#34; operator with a boolean literal.
 
-Examples: - creator == &#34;users/dev@example.com&#34; - status == &#34;ACTIVE&#34; - status in [&#34;ACTIVE&#34;, &#34;PENDING&#34;] - creator == &#34;users/dev@example.com&#34; &amp;&amp; status == &#34;ACTIVE&#34; - issue == &#34;projects/x/issues/123&#34; - status == &#34;ACTIVE&#34; &amp;&amp; expire_time &gt; &#34;2024-02-01T00:00:00Z&#34; - target == &#34;instances/sample/databases/employee&#34; |
+Examples: - creator == &#34;users/dev@example.com&#34; - status == &#34;ACTIVE&#34; - status in [&#34;ACTIVE&#34;, &#34;PENDING&#34;] - creator == &#34;users/dev@example.com&#34; &amp;&amp; status == &#34;ACTIVE&#34; - issue == &#34;projects/x/issues/123&#34; - status == &#34;ACTIVE&#34; &amp;&amp; expire_time &gt; &#34;2024-02-01T00:00:00Z&#34; - target == &#34;instances/sample/databases/employee&#34; - unmask == true - export == true &amp;&amp; status == &#34;ACTIVE&#34; |
 | order_by | [string](#string) |  | The order by of access grants. Support creator, expire_time, create_time. The default sorting order is ascending. For example: - order_by = &#34;creator&#34; - order_by = &#34;expire_time desc&#34; - order_by = &#34;expire_time asc, create_time desc&#34; |
 
 
@@ -4485,6 +4488,7 @@ DatabaseService manages databases and their schemas.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | content | [bytes](#bytes) |  | The export file content. |
+| applied_access_grant | [string](#string) |  | The just-in-time access grant applied to this export, if any. Format: projects/{project}/accessGrants/{accessGrant}. Empty when the user was authorized through normal ACL rather than a grant. |
 
 
 
@@ -4581,6 +4585,7 @@ DatabaseService manages databases and their schemas.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | results | [QueryResult](#bytebase-v1-QueryResult) | repeated | The query results. |
+| applied_access_grant | [string](#string) |  | The just-in-time access grant applied to this query, if any. Format: projects/{project}/accessGrants/{accessGrant}. Empty when the user was authorized through normal ACL rather than a grant. |
 
 
 
@@ -6581,7 +6586,7 @@ The `source` field filters which rules apply. The `condition` field then evaluat
 
 All supported variables: statement.affected_rows: affected row count in the DDL/DML, support &#34;==&#34;, &#34;!=&#34;, &#34;&lt;&#34;, &#34;&lt;=&#34;, &#34;&gt;&#34;, &#34;&gt;=&#34; operations. statement.table_rows: table row count number, support &#34;==&#34;, &#34;!=&#34;, &#34;&lt;&#34;, &#34;&lt;=&#34;, &#34;&gt;&#34;, &#34;&gt;=&#34; operations. resource.environment_id: the environment resource id, support &#34;==&#34;, &#34;!=&#34;, &#34;in [xx]&#34;, &#34;!(in [xx])&#34; operations. resource.project_id: the project resource id, support &#34;==&#34;, &#34;!=&#34;, &#34;in [xx]&#34;, &#34;!(in [xx])&#34;, &#34;contains()&#34;, &#34;matches()&#34;, &#34;startsWith()&#34;, &#34;endsWith()&#34; operations. resource.db_engine: the database engine type, support &#34;==&#34;, &#34;!=&#34;, &#34;in [xx]&#34;, &#34;!(in [xx])&#34; operations. Check the Engine enum for values. statement.sql_type: the SQL type, support &#34;==&#34;, &#34;!=&#34;, &#34;in [xx]&#34;, &#34;!(in [xx])&#34; operations. resource.database_name: the database name, support &#34;==&#34;, &#34;!=&#34;, &#34;in [xx]&#34;, &#34;!(in [xx])&#34;, &#34;contains()&#34;, &#34;matches()&#34;, &#34;startsWith()&#34;, &#34;endsWith()&#34; operations. resource.schema_name: the schema name, support &#34;==&#34;, &#34;!=&#34;, &#34;in [xx]&#34;, &#34;!(in [xx])&#34;, &#34;contains()&#34;, &#34;matches()&#34;, &#34;startsWith()&#34;, &#34;endsWith()&#34; operations. resource.table_name: the table name, support &#34;==&#34;, &#34;!=&#34;, &#34;in [xx]&#34;, &#34;!(in [xx])&#34;, &#34;contains()&#34;, &#34;matches()&#34;, &#34;startsWith()&#34;, &#34;endsWith()&#34; operations. statement.text: the SQL statement, support &#34;contains()&#34;, &#34;matches()&#34;, &#34;startsWith()&#34;, &#34;endsWith()&#34; operations. request.expiration_days: the role expiration days for the request, support &#34;==&#34;, &#34;!=&#34;, &#34;&lt;&#34;, &#34;&lt;=&#34;, &#34;&gt;&#34;, &#34;&gt;=&#34; operations. request.role: the request role full name, support &#34;==&#34;, &#34;!=&#34;, &#34;in [xx]&#34;, &#34;!(in [xx])&#34;, &#34;contains()&#34;, &#34;matches()&#34;, &#34;startsWith()&#34;, &#34;endsWith()&#34; operations.
 
-When source is CHANGE_DATABASE, support: statement.*, resource.* (excluding request.*) When source is CREATE_DATABASE, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name When source is EXPORT_DATA, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name, resource.schema_name, resource.table_name When source is REQUEST_ROLE, support: resource.project_id, request.expiration_days, request.role When source is REQUEST_ACCESS, support: resource.environment_id, resource.project_id, request.unmask
+When source is CHANGE_DATABASE, support: statement.*, resource.* (excluding request.*) When source is CREATE_DATABASE, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name When source is EXPORT_DATA, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name, resource.schema_name, resource.table_name When source is REQUEST_ROLE, support: resource.project_id, request.expiration_days, request.role When source is REQUEST_ACCESS, support: resource.environment_id, resource.project_id, request.unmask, request.data_export
 
 For examples: resource.environment_id == &#34;prod&#34; &amp;&amp; statement.affected_rows &gt;= 100 resource.table_name.matches(&#34;sensitive_.*&#34;) &amp;&amp; resource.db_engine == &#34;MYSQL&#34; |
 | source | [WorkspaceApprovalSetting.Rule.Source](#bytebase-v1-WorkspaceApprovalSetting-Rule-Source) |  |  |
@@ -6836,6 +6841,7 @@ Actuator concept is similar to the Spring Boot Actuator.
 | restriction | [Restriction](#bytebase-v1-Restriction) |  |  |
 | default_project | [string](#string) |  | The default project for unassigned databases. Format: projects/{id} |
 | user_count_in_iam | [int32](#int32) |  | The number of users in the workspace IAM (for seat limit display). |
+| active_vcs_user_count | [int32](#int32) |  | The number of active VCS users seen in the active window. |
 
 
 
@@ -9789,6 +9795,7 @@ ProjectService manages projects that group databases and changes.
 | release | [Release](#bytebase-v1-Release) |  | The release to check. |
 | targets | [string](#string) | repeated | The targets to dry-run the release. Can be database or databaseGroup. Format: projects/{project}/databaseGroups/{databaseGroup} instances/{instance}/databases/{database} |
 | custom_rules | [string](#string) |  | Custom linting rules in natural language for AI-powered validation. Each rule should be a clear statement describing the desired schema constraint. Example: &#34;All tables must have a primary key&#34; Example: &#34;VARCHAR columns should specify a maximum length&#34; |
+| vcs_user | [VCSUser](#bytebase-v1-VCSUser) |  | The non-bot VCS pull request or merge request creator observed by bytebase-release. If absent, Bytebase skips VCS user tracking and VCS user limit enforcement. |
 
 
 
@@ -10034,6 +10041,24 @@ Version control system source information.
 | ----- | ---- | ----- | ----------- |
 | release | [Release](#bytebase-v1-Release) |  | The release to update. |
 | update_mask | [google.protobuf.FieldMask](#google-protobuf-FieldMask) |  | The list of fields to be updated. |
+
+
+
+
+
+
+<a name="bytebase-v1-VCSUser"></a>
+
+### VCSUser
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| vcs_type | [VCSType](#bytebase-v1-VCSType) |  |  |
+| user_id | [string](#string) |  |  |
+| user_name | [string](#string) |  |  |
+| display_name | [string](#string) |  |  |
 
 
 
@@ -11119,6 +11144,16 @@ SheetService manages SQL scripts and saved queries.
 
 
 
+<a name="bytebase-v1-ExportVCSProviderUsersRequest"></a>
+
+### ExportVCSProviderUsersRequest
+
+
+
+
+
+
+
 <a name="bytebase-v1-GetPaymentInfoRequest"></a>
 
 ### GetPaymentInfoRequest
@@ -11172,12 +11207,13 @@ SheetService manages SQL scripts and saved queries.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| total_price | [string](#string) |  |  |
+| total_price | [string](#string) |  | Total amount paid for the current billing period, in the smallest currency unit (e.g. cents). |
 | currency | [string](#string) |  |  |
 | period_start | [string](#string) |  |  |
 | period_end | [string](#string) |  |  |
 | invoice_url | [string](#string) |  | Stripe Billing Portal URL for invoice management. |
 | cancel_at_period_end | [bool](#bool) |  | Whether the subscription is scheduled to cancel at the end of the current billing period. |
+| next_period_price | [string](#string) |  | Amount that will be charged at the next renewal, in the smallest currency unit (e.g. cents). Empty when the subscription will not renew (e.g. scheduled to cancel at period end). |
 
 
 
@@ -11538,6 +11574,7 @@ SubscriptionService manages enterprise subscriptions and licensing.
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | GetSubscription | [GetSubscriptionRequest](#bytebase-v1-GetSubscriptionRequest) | [Subscription](#bytebase-v1-Subscription) | GetSubscription returns the current subscription. If there is no license, we will return a free plan subscription without expiration time. If there is expired license, we will return a free plan subscription with the expiration time of the expired license. |
+| ExportVCSProviderUsers | [ExportVCSProviderUsersRequest](#bytebase-v1-ExportVCSProviderUsersRequest) | [.google.api.HttpBody](#google-api-HttpBody) | Exports active VCS users as CSV. |
 | UploadLicense | [UploadLicenseRequest](#bytebase-v1-UploadLicenseRequest) | [Subscription](#bytebase-v1-Subscription) | Uploads an enterprise license (self-hosted only). |
 | CreatePurchase | [CreatePurchaseRequest](#bytebase-v1-CreatePurchaseRequest) | [PurchaseResponse](#bytebase-v1-PurchaseResponse) | CreatePurchase creates a new subscription purchase (SaaS only). Returns a Stripe Checkout URL for the user to complete payment. |
 | UpdatePurchase | [UpdatePurchaseRequest](#bytebase-v1-UpdatePurchaseRequest) | [PurchaseResponse](#bytebase-v1-PurchaseResponse) | UpdatePurchase updates an existing subscription (SaaS only). May return a Stripe Checkout URL if payment method change is needed. |

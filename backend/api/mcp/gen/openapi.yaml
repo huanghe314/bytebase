@@ -6211,6 +6211,42 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/bytebase.v1.PurchaseResponse'
+  /bytebase.v1.SubscriptionService/ExportVCSProviderUsers:
+    post:
+      tags:
+        - bytebase.v1.SubscriptionService
+      summary: ExportVCSProviderUsers
+      description: Exports active VCS users as CSV.
+      operationId: bytebase.v1.SubscriptionService.ExportVCSProviderUsers
+      parameters:
+        - name: Connect-Protocol-Version
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/connect-protocol-version'
+        - name: Connect-Timeout-Ms
+          in: header
+          schema:
+            $ref: '#/components/schemas/connect-timeout-header'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/bytebase.v1.ExportVCSProviderUsersRequest'
+        required: true
+      responses:
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/connect.error'
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/google.api.HttpBody'
   /bytebase.v1.SubscriptionService/GetPaymentInfo:
     post:
       tags:
@@ -7842,6 +7878,10 @@ components:
             reason:
               type: string
               title: reason
+            export:
+              type: boolean
+              title: export
+              description: Whether export the query result.
         - oneOf:
             - type: object
               properties:
@@ -7995,6 +8035,11 @@ components:
           title: user_count_in_iam
           format: int32
           description: The number of users in the workspace IAM (for seat limit display).
+        activeVcsUserCount:
+          type: integer
+          title: active_vcs_user_count
+          format: int32
+          description: The number of active VCS users seen in the active window.
       title: ActuatorInfo
       additionalProperties: false
       description: |-
@@ -9276,6 +9321,12 @@ components:
              Each rule should be a clear statement describing the desired schema constraint.
              Example: "All tables must have a primary key"
              Example: "VARCHAR columns should specify a maximum length"
+        vcsUser:
+          title: vcs_user
+          description: |-
+            The non-bot VCS pull request or merge request creator observed by bytebase-release.
+             If absent, Bytebase skips VCS user tracking and VCS user limit enforcement.
+          $ref: '#/components/schemas/bytebase.v1.VCSUser'
       title: CheckReleaseRequest
       additionalProperties: false
     bytebase.v1.CheckReleaseResponse:
@@ -11345,7 +11396,18 @@ components:
           title: content
           format: byte
           description: The export file content.
+        appliedAccessGrant:
+          type: string
+          title: applied_access_grant
+          description: |-
+            The just-in-time access grant applied to this export, if any.
+             Format: projects/{project}/accessGrants/{accessGrant}.
+             Empty when the user was authorized through normal ACL rather than a grant.
       title: ExportResponse
+      additionalProperties: false
+    bytebase.v1.ExportVCSProviderUsersRequest:
+      type: object
+      title: ExportVCSProviderUsersRequest
       additionalProperties: false
     bytebase.v1.ExtensionMetadata:
       type: object
@@ -12898,6 +12960,8 @@ components:
              - create_time: the access creation time in "2006-01-02T15:04:05Z07:00" format, support ">=", ">", "<=" and "<" operator.
              - query: the access query, support "==" and ".contains(xx)" operator
              - target: the target database fullname, support "==" operator.
+             - unmask: whether the grant allows unmasking sensitive data, support "==" operator with a boolean literal.
+             - export: whether the grant allows exporting the query result, support "==" operator with a boolean literal.
 
              Examples:
              - creator == "users/dev@example.com"
@@ -12907,6 +12971,8 @@ components:
              - issue == "projects/x/issues/123"
              - status == "ACTIVE" && expire_time > "2024-02-01T00:00:00Z"
              - target == "instances/sample/databases/employee"
+             - unmask == true
+             - export == true && status == "ACTIVE"
         orderBy:
           type: string
           title: order_by
@@ -14669,6 +14735,7 @@ components:
         totalPrice:
           type: string
           title: total_price
+          description: Total amount paid for the current billing period, in the smallest currency unit (e.g. cents).
         currency:
           type: string
           title: currency
@@ -14686,6 +14753,12 @@ components:
           type: boolean
           title: cancel_at_period_end
           description: Whether the subscription is scheduled to cancel at the end of the current billing period.
+        nextPeriodPrice:
+          type: string
+          title: next_period_price
+          description: |-
+            Amount that will be charged at the next renewal, in the smallest currency unit (e.g. cents).
+             Empty when the subscription will not renew (e.g. scheduled to cancel at period end).
       title: PaymentInfo
       additionalProperties: false
     bytebase.v1.PermissionDeniedDetail:
@@ -15796,6 +15869,13 @@ components:
             $ref: '#/components/schemas/bytebase.v1.QueryResult'
           title: results
           description: The query results.
+        appliedAccessGrant:
+          type: string
+          title: applied_access_grant
+          description: |-
+            The just-in-time access grant applied to this query, if any.
+             Format: projects/{project}/accessGrants/{accessGrant}.
+             Empty when the user was authorized through normal ACL rather than a grant.
       title: QueryResponse
       additionalProperties: false
     bytebase.v1.QueryResult:
@@ -20070,6 +20150,23 @@ components:
         - BITBUCKET
         - AZURE_DEVOPS
       description: Version control system type.
+    bytebase.v1.VCSUser:
+      type: object
+      properties:
+        vcsType:
+          title: vcs_type
+          $ref: '#/components/schemas/bytebase.v1.VCSType'
+        userId:
+          type: string
+          title: user_id
+        userName:
+          type: string
+          title: user_name
+        displayName:
+          type: string
+          title: display_name
+      title: VCSUser
+      additionalProperties: false
     bytebase.v1.VerifyCheckoutSessionRequest:
       type: object
       properties:
@@ -20412,7 +20509,7 @@ components:
              When source is CREATE_DATABASE, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name
              When source is EXPORT_DATA, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name, resource.schema_name, resource.table_name
              When source is REQUEST_ROLE, support: resource.project_id, request.expiration_days, request.role
-             When source is REQUEST_ACCESS, support: resource.environment_id, resource.project_id, request.unmask
+             When source is REQUEST_ACCESS, support: resource.environment_id, resource.project_id, request.unmask, request.data_export
 
              For examples:
              resource.environment_id == "prod" && statement.affected_rows >= 100
@@ -20638,6 +20735,72 @@ components:
           description: Deserialized error detail payload. The 'type' field indicates the schema. This field is for easier debugging and should not be relied upon for application logic.
       additionalProperties: true
       description: Contains an arbitrary serialized message along with a @type that describes the type of the serialized message, with an additional debug field for ConnectRPC error details.
+    google.api.HttpBody:
+      type: object
+      properties:
+        contentType:
+          type: string
+          title: content_type
+          description: The HTTP Content-Type header value specifying the content type of the body.
+        data:
+          type: string
+          title: data
+          format: byte
+          description: The HTTP request/response body as raw binary.
+        extensions:
+          type: array
+          items:
+            $ref: '#/components/schemas/google.protobuf.Any'
+          title: extensions
+          description: |-
+            Application specific response metadata. Must be set in the first response
+             for streaming APIs.
+      title: HttpBody
+      additionalProperties: false
+      description: |-
+        Message that represents an arbitrary HTTP body. It should only be used for
+         payload formats that can't be represented as JSON, such as raw binary or
+         an HTML page.
+
+
+         This message can be used both in streaming and non-streaming API methods in
+         the request as well as the response.
+
+         It can be used as a top-level request field, which is convenient if one
+         wants to extract parameters from either the URL or HTTP template into the
+         request fields and also want access to the raw HTTP body.
+
+         Example:
+
+             message GetResourceRequest {
+               // A unique request id.
+               string request_id = 1;
+
+               // The raw HTTP body is bound to this field.
+               google.api.HttpBody http_body = 2;
+
+             }
+
+             service ResourceService {
+               rpc GetResource(GetResourceRequest)
+                 returns (google.api.HttpBody);
+               rpc UpdateResource(google.api.HttpBody)
+                 returns (google.protobuf.Empty);
+
+             }
+
+         Example with streaming methods:
+
+             service CaldavService {
+               rpc GetCalendar(stream google.api.HttpBody)
+                 returns (stream google.api.HttpBody);
+               rpc UpdateCalendar(stream google.api.HttpBody)
+                 returns (stream google.api.HttpBody);
+
+             }
+
+         Use of this type only changes how the request and response bodies are
+         handled, all other features will continue to work unchanged.
     google.api.expr.v1alpha1.Constant:
       type: object
       oneOf:

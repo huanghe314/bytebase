@@ -13,17 +13,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/react/components/ui/popover";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import { cn } from "@/react/lib/utils";
-import { useSQLEditorTabStore } from "@/react/stores/sqlEditor/tab-vue-state";
+import { useAppStore } from "@/react/stores/app";
+import { useSQLEditorTabState } from "@/react/stores/sqlEditor/tab";
 import { router } from "@/router";
 import { SQL_EDITOR_WORKSHEET_MODULE } from "@/router/sqlEditor";
-import {
-  pushNotification,
-  useActuatorV1Store,
-  useCurrentUserV1,
-  useWorkSheetStore,
-} from "@/store";
 import type { Worksheet } from "@/types/proto-es/v1/worksheet_service_pb";
 import { Worksheet_Visibility } from "@/types/proto-es/v1/worksheet_service_pb";
 import { extractProjectResourceName, extractWorksheetID } from "@/utils";
@@ -45,16 +40,11 @@ type Props = {
  */
 export function SharePopoverBody({ worksheet }: Props) {
   const { t } = useTranslation();
-  const actuatorStore = useActuatorV1Store();
-  const currentUserStore = useCurrentUserV1();
-  const worksheetStore = useWorkSheetStore();
-  const tabStore = useSQLEditorTabStore();
-
-  const workspaceExternalURL = useVueState(
-    () => actuatorStore.serverInfo?.externalUrl
+  const workspaceExternalURL = useAppStore((s) => s.serverInfo?.externalUrl);
+  const currentUser = useCurrentUser();
+  const tabStatus = useSQLEditorTabState(
+    (s) => s.tabsById.get(s.currentTabId)?.status
   );
-  const currentUser = useVueState(() => currentUserStore.value);
-  const tabStatus = useVueState(() => tabStore.currentTab?.status);
 
   const accessOptions = useMemo<AccessOption[]>(
     () => [
@@ -119,20 +109,21 @@ export function SharePopoverBody({ worksheet }: Props) {
       return;
     }
     setCurrentAccess(option);
-    await worksheetStore.patchWorksheet(
-      { ...worksheet, visibility: option.value },
-      ["visibility"]
-    );
+    await useAppStore
+      .getState()
+      .patchWorksheet({ ...worksheet, visibility: option.value }, [
+        "visibility",
+      ]);
 
     try {
       await navigator.clipboard.writeText(sharedTabLink);
-      pushNotification({
+      useAppStore.getState().notify({
         module: "bytebase",
         style: "SUCCESS",
         title: t("sql-editor.url-copied-to-clipboard"),
       });
     } catch {
-      pushNotification({
+      useAppStore.getState().notify({
         module: "bytebase",
         style: "SUCCESS",
         title: t("common.updated"),
@@ -148,7 +139,7 @@ export function SharePopoverBody({ worksheet }: Props) {
   const handleCopyLink = async () => {
     try {
       await navigator.clipboard.writeText(sharedTabLink);
-      pushNotification({
+      useAppStore.getState().notify({
         module: "bytebase",
         style: "SUCCESS",
         title: t("sql-editor.url-copied-to-clipboard"),
@@ -167,6 +158,9 @@ export function SharePopoverBody({ worksheet }: Props) {
         </div>
         <Popover open={selectorOpen} onOpenChange={setSelectorOpen}>
           <PopoverTrigger
+            // The trigger renders a <div>, not a native <button>; tell Base
+            // UI so it doesn't warn about missing native button semantics.
+            nativeButton={false}
             render={
               <div
                 data-access-trigger

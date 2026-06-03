@@ -14,19 +14,12 @@ import { Button } from "@/react/components/ui/button";
 import { Input } from "@/react/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/react/components/ui/radio-group";
 import { useVueState } from "@/react/hooks/useVueState";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import { SQL_EDITOR_HOME_MODULE } from "@/router/sqlEditor";
-import {
-  useActuatorV1Store,
-  useAppFeature,
-  useProjectV1Store,
-  useRoleStore,
-  useSettingV1Store,
-  useWorkspaceV1Store,
-} from "@/store";
+import { useAppFeature } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import { DatabaseChangeMode } from "@/types/proto-es/v1/setting_service_pb";
-import { unknownProject } from "@/types/v1/project";
 import { extractGrpcErrorMessage, getErrorCode } from "@/utils/connect";
 
 type Purpose = "edit-schema" | "query-data";
@@ -56,8 +49,12 @@ export function SetupPage() {
       await router.isReady();
       try {
         await Promise.all([
-          useRoleStore().fetchRoleList(),
-          useWorkspaceV1Store().fetchIamPolicy(),
+          // Force-refresh server info so `enableOnboarding()` reflects the
+          // post-signup active-user count. This page renders outside any
+          // shell, so useEnsureWorkspaceCommonData hasn't run.
+          useAppStore.getState().fetchServerInfo(),
+          useAppStore.getState().listRoles(),
+          useAppStore.getState().fetchWorkspaceIamPolicy(),
         ]);
       } catch (error) {
         // Roles/IAM pre-fetch failed — proceed to render the wizard anyway.
@@ -101,9 +98,7 @@ function SetupWizard() {
   const resourceFieldRef = useRef<ResourceIdFieldRef>(null);
   const [resourceValid, setResourceValid] = useState(false);
 
-  const enableOnboarding = useVueState(
-    () => useActuatorV1Store().enableOnboarding
-  );
+  const enableOnboarding = useAppStore((s) => s.enableOnboarding());
   const databaseChangeMode = useVueState(
     () => useAppFeature("bb.feature.database-change-mode").value
   );
@@ -138,8 +133,6 @@ function SetupWizard() {
     setCurrentStep(next);
   };
 
-  const projectV1Store = useProjectV1Store();
-
   const skip = () => router.push("/");
 
   const finish = async () => {
@@ -147,12 +140,11 @@ function SetupWizard() {
     setLoading(true);
     try {
       if (data === "self-setup") {
-        const project = { ...unknownProject(), title: projectTitle };
-        await projectV1Store.createProject(project, resourceId);
+        await useAppStore.getState().createProject(projectTitle, resourceId);
       } else {
-        await useActuatorV1Store().setupSample();
+        await useAppStore.getState().setupSample();
       }
-      await useSettingV1Store().updateWorkspaceProfile({
+      await useAppStore.getState().updateWorkspaceProfile({
         payload: { databaseChangeMode: mode },
         updateMask: create(FieldMaskSchema, {
           paths: ["value.workspace_profile.database_change_mode"],
@@ -167,10 +159,12 @@ function SetupWizard() {
   const validateProjectResourceID = useCallback(
     async (id: string) => {
       try {
-        await projectV1Store.getOrFetchProjectByName(
-          `${projectNamePrefix}${id}`,
-          true /* silent */
-        );
+        await useAppStore
+          .getState()
+          .getOrFetchProjectByName(
+            `${projectNamePrefix}${id}`,
+            true /* silent */
+          );
         return [
           {
             type: "error" as const,
@@ -191,7 +185,7 @@ function SetupWizard() {
         ];
       }
     },
-    [projectV1Store, t]
+    [t]
   );
 
   return (

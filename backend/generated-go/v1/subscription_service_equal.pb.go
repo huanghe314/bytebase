@@ -13,6 +13,16 @@ func (x *GetSubscriptionRequest) Equal(y *GetSubscriptionRequest) bool {
 	return true
 }
 
+func (x *ExportVCSProviderUsersRequest) Equal(y *ExportVCSProviderUsersRequest) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	return true
+}
+
 func (x *UploadLicenseRequest) Equal(y *UploadLicenseRequest) bool {
 	if x == y {
 		return true
@@ -158,6 +168,9 @@ func (x *PaymentInfo) Equal(y *PaymentInfo) bool {
 		return false
 	}
 	if x.CancelAtPeriodEnd != y.CancelAtPeriodEnd {
+		return false
+	}
+	if x.NextPeriodPrice != y.NextPeriodPrice {
 		return false
 	}
 	return true

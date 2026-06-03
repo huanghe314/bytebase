@@ -33,14 +33,10 @@ import {
   useSessionPageSize,
 } from "@/react/hooks/useSessionPageSize";
 import { cn } from "@/react/lib/utils";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import { PROJECT_V1_ROUTE_ISSUES } from "@/router/dashboard/projectV1";
-import {
-  pushNotification,
-  useAuthStore,
-  useProjectV1Store,
-  useUIStateStore,
-} from "@/store";
+import { pushNotification, useAuthStore } from "@/store";
 import { getProjectName } from "@/store/modules/v1/common";
 import { State } from "@/types/proto-es/v1/common_pb";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
@@ -153,7 +149,6 @@ function ProjectActionDropdown({
   onAction: () => void;
 }) {
   const { t } = useTranslation();
-  const projectStore = useProjectV1Store();
 
   const canDelete = hasProjectPermissionV2(project, "bb.projects.delete");
   const canUndelete = hasProjectPermissionV2(project, "bb.projects.undelete");
@@ -168,24 +163,24 @@ function ProjectActionDropdown({
     ) {
       return;
     }
-    await projectStore.archiveProject(project);
+    await useAppStore.getState().archiveProject(project);
     pushNotification({
       module: "bytebase",
       style: "SUCCESS",
       title: t("common.archived"),
     });
     onAction();
-  }, [project, projectStore, t, onAction]);
+  }, [project, t, onAction]);
 
   const handleRestore = useCallback(async () => {
-    await projectStore.restoreProject(project);
+    await useAppStore.getState().restoreProject(project);
     pushNotification({
       module: "bytebase",
       style: "SUCCESS",
       title: t("common.restored"),
     });
     onAction();
-  }, [project, projectStore, t, onAction]);
+  }, [project, t, onAction]);
 
   if (!canDelete && !canUndelete) return null;
 
@@ -232,7 +227,6 @@ function ProjectActionDropdown({
 
 export function ProjectsPage() {
   const { t } = useTranslation();
-  const projectStore = useProjectV1Store();
   const authStore = useAuthStore();
 
   // Search state — managed as SearchParams (query + scopes)
@@ -307,9 +301,9 @@ export function ProjectsPage() {
 
   // Mark project visit on mount
   useEffect(() => {
-    const uiStateStore = useUIStateStore();
-    if (!uiStateStore.getIntroStateByKey("project.visit")) {
-      uiStateStore.saveIntroStateByKey({
+    const store = useAppStore.getState();
+    if (!store.getIntroStateByKey("project.visit")) {
+      store.saveIntroStateByKey({
         key: "project.visit",
         newState: true,
       });
@@ -387,7 +381,7 @@ export function ProjectsPage() {
 
       try {
         const token = isRefresh ? "" : nextPageTokenRef.current;
-        const result = await projectStore.fetchProjectList({
+        const result = await useAppStore.getState().fetchProjectList({
           pageToken: token,
           pageSize,
           filter: {
@@ -426,7 +420,6 @@ export function ProjectsPage() {
       selectedState,
       selectedLabels,
       orderBy,
-      projectStore,
     ]
   );
 
@@ -466,9 +459,9 @@ export function ProjectsPage() {
   const selectedProjectList = useMemo(() => {
     if (selectedNames.size === 0) return [];
     return Array.from(selectedNames)
-      .map((name) => projectStore.getProjectByName(name))
+      .map((name) => useAppStore.getState().getProjectByName(name))
       .filter((p): p is Project => p !== undefined);
-  }, [selectedNames, projectStore]);
+  }, [selectedNames]);
 
   const handleBatchOperation = useCallback(() => {
     setSelectedNames(new Set());
@@ -492,7 +485,9 @@ export function ProjectsPage() {
       const activeProjects = selectedProjectList.filter(
         (p) => p.state === State.ACTIVE
       );
-      await projectStore.batchDeleteProjects(activeProjects.map((p) => p.name));
+      await useAppStore
+        .getState()
+        .batchDeleteProjects(activeProjects.map((p) => p.name));
       pushNotification({
         module: "bytebase",
         style: "SUCCESS",
@@ -511,7 +506,7 @@ export function ProjectsPage() {
         description: err.message,
       });
     }
-  }, [selectedProjectList, projectStore, t, handleBatchOperation]);
+  }, [selectedProjectList, t, handleBatchOperation]);
 
   const handleBatchRestore = useCallback(async () => {
     try {
@@ -519,7 +514,9 @@ export function ProjectsPage() {
         (p) => p.state === State.DELETED
       );
       await Promise.all(
-        archivedProjects.map((project) => projectStore.restoreProject(project))
+        archivedProjects.map((project) =>
+          useAppStore.getState().restoreProject(project)
+        )
       );
       pushNotification({
         module: "bytebase",
@@ -537,13 +534,13 @@ export function ProjectsPage() {
         description: err.message,
       });
     }
-  }, [selectedProjectList, projectStore, t, handleBatchOperation]);
+  }, [selectedProjectList, t, handleBatchOperation]);
 
   const handleBatchDelete = useCallback(async () => {
     try {
-      await projectStore.batchPurgeProjects(
-        selectedProjectList.map((p) => p.name)
-      );
+      await useAppStore
+        .getState()
+        .batchPurgeProjects(selectedProjectList.map((p) => p.name));
       pushNotification({
         module: "bytebase",
         style: "SUCCESS",
@@ -562,7 +559,7 @@ export function ProjectsPage() {
         description: err.message,
       });
     }
-  }, [selectedProjectList, projectStore, t, handleBatchOperation]);
+  }, [selectedProjectList, t, handleBatchOperation]);
 
   const batchActions: SelectionAction[] = [
     {

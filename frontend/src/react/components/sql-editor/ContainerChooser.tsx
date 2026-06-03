@@ -1,12 +1,12 @@
 import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useAppDatabaseMetadata } from "@/react/hooks/useAppDatabaseMetadata";
+import { useConnectionOfCurrentSQLEditorTab } from "@/react/hooks/useSQLEditorBridge";
+import { useVueRoute } from "@/react/hooks/useVueRoute";
 import {
-  useConnectionOfCurrentSQLEditorTab,
-  useSQLEditorTabStore,
-} from "@/react/stores/sqlEditor/tab-vue-state";
-import { router } from "@/router";
-import { useDBSchemaV1Store } from "@/store";
+  getSQLEditorTabsState,
+  useSQLEditorTabState,
+} from "@/react/stores/sqlEditor/tab";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import { ConnectChooser } from "./ConnectChooser";
 
@@ -19,16 +19,18 @@ const OptionValueUnspecified = "-1";
  */
 export function ContainerChooser() {
   const { t } = useTranslation();
-  const tabStore = useSQLEditorTabStore();
-  const dbSchemaStore = useDBSchemaV1Store();
-  const connection = useConnectionOfCurrentSQLEditorTab();
+  const { instance, database } = useConnectionOfCurrentSQLEditorTab();
 
-  const engine = useVueState(() => connection.instance.value.engine);
-  const databaseName = useVueState(() => connection.database.value.name);
-  const tabTable = useVueState(() => tabStore.currentTab?.connection.table);
-  const schemas = useVueState(
-    () => dbSchemaStore.getDatabaseMetadata(databaseName).schemas
+  const engine = instance.engine;
+  const databaseName = database.name;
+  const tabTable = useSQLEditorTabState(
+    (s) => s.tabsById.get(s.currentTabId)?.connection.table
   );
+  // Parent SchemaPane (E4 migration) drives the metadata fetch; here we
+  // only need the cached read.
+  const { schemas } = useAppDatabaseMetadata(databaseName, {
+    autoFetch: false,
+  });
 
   const show = engine === Engine.COSMOSDB;
 
@@ -51,9 +53,15 @@ export function ContainerChooser() {
   const isChosen = value !== OptionValueUnspecified;
 
   const handleChange = (next: string) => {
-    if (!tabStore.currentTab) return;
-    tabStore.currentTab.connection.table =
-      next === OptionValueUnspecified ? undefined : next;
+    const tabsState = getSQLEditorTabsState();
+    const currentTab = tabsState.tabsById.get(tabsState.currentTabId);
+    if (!currentTab) return;
+    tabsState.updateCurrentTab({
+      connection: {
+        ...currentTab.connection,
+        table: next === OptionValueUnspecified ? undefined : next,
+      },
+    });
   };
 
   // Seed from URL query parameter on mount and whenever the query param OR
@@ -61,10 +69,8 @@ export function ContainerChooser() {
   // tracked both `route.query.table` and `tab.value` (the latter via the
   // setter's reactive reads) so that switching to a new tab with the URL
   // query still present re-seeded the new tab's connection.table.
-  const queryParam = useVueState(
-    () => router.currentRoute.value.query.table as string | undefined
-  );
-  const currentTabId = useVueState(() => tabStore.currentTab?.id);
+  const queryParam = useVueRoute().query.table as string | undefined;
+  const currentTabId = useSQLEditorTabState((s) => s.currentTabId);
   useEffect(() => {
     if (queryParam) handleChange(queryParam);
   }, [queryParam, currentTabId]);

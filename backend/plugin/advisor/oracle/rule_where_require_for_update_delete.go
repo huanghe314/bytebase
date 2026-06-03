@@ -4,14 +4,12 @@ package oracle
 import (
 	"context"
 
-	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/parser/plsql"
+	"github.com/bytebase/omni/oracle/ast"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
 	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
-	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -34,22 +32,8 @@ func (*WhereRequireForUpdateDeleteAdvisor) Check(_ context.Context, checkCtx adv
 	}
 
 	rule := NewWhereRequireForUpdateDeleteRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase)
-	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range checkCtx.ParsedStatements {
-		if stmt.AST == nil {
-			continue
-		}
-		antlrAST, ok := base.GetANTLRAST(stmt.AST)
-		if !ok {
-			continue
-		}
-		rule.SetBaseLine(stmt.BaseLine())
-		checker.SetBaseLine(stmt.BaseLine())
-		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
-	}
-
-	return checker.GetAdviceList()
+	return RunOmniRules(checkCtx.ParsedStatements, []OmniRule{rule})
 }
 
 // WhereRequireForUpdateDeleteRule is the rule implementation for WHERE clause requirement in UPDATE/DELETE.
@@ -72,42 +56,47 @@ func (*WhereRequireForUpdateDeleteRule) Name() string {
 	return "where.require-for-update-delete"
 }
 
-// OnEnter is called when the parser enters a rule context.
-func (r *WhereRequireForUpdateDeleteRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
-	switch nodeType {
-	case "Update_statement":
-		r.handleUpdateStatement(ctx.(*parser.Update_statementContext))
-	case "Delete_statement":
-		r.handleDeleteStatement(ctx.(*parser.Delete_statementContext))
+// OnStatement checks top-level UPDATE and DELETE statements in the omni AST.
+func (r *WhereRequireForUpdateDeleteRule) OnStatement(node ast.Node) {
+	switch n := node.(type) {
+	case *ast.UpdateStmt:
+		if n.WhereClause == nil {
+			r.AddAdvice(
+				r.level,
+				code.StatementNoWhere.Int32(),
+				"WHERE clause is required for UPDATE statement.",
+				common.ConvertANTLRLineToPosition(r.locLine(n.Loc)),
+			)
+		}
+	case *ast.DeleteStmt:
+		if n.WhereClause == nil {
+			r.AddAdvice(
+				r.level,
+				code.StatementNoWhere.Int32(),
+				"WHERE clause is required for DELETE statement.",
+				common.ConvertANTLRLineToPosition(r.locLine(n.Loc)),
+			)
+		}
+	case *ast.PLSQLBlock:
+		r.checkPLSQLBlock(n)
 	default:
-		// Ignore other node types
 	}
-	return nil
 }
+
+func (r *WhereRequireForUpdateDeleteRule) checkPLSQLBlock(block *ast.PLSQLBlock) {
+	omniWalkPLSQLBlockStatements(block, func(stmt ast.StmtNode) bool {
+		switch stmt.(type) {
+		case *ast.UpdateStmt, *ast.DeleteStmt:
+			r.OnStatement(stmt)
+			return false
+		default:
+			return true
+		}
+	})
+}
+
+// OnEnter is called when the parser enters a rule context.
+
+// Ignore other node types
 
 // OnExit is called when the parser exits a rule context.
-func (*WhereRequireForUpdateDeleteRule) OnExit(_ antlr.ParserRuleContext, _ string) error {
-	return nil
-}
-
-func (r *WhereRequireForUpdateDeleteRule) handleUpdateStatement(ctx *parser.Update_statementContext) {
-	if ctx.Where_clause() == nil {
-		r.AddAdvice(
-			r.level,
-			code.StatementNoWhere.Int32(),
-			"WHERE clause is required for UPDATE statement.",
-			common.ConvertANTLRLineToPosition(r.baseLine+ctx.GetStop().GetLine()),
-		)
-	}
-}
-
-func (r *WhereRequireForUpdateDeleteRule) handleDeleteStatement(ctx *parser.Delete_statementContext) {
-	if ctx.Where_clause() == nil {
-		r.AddAdvice(
-			r.level,
-			code.StatementNoWhere.Int32(),
-			"WHERE clause is required for DELETE statement.",
-			common.ConvertANTLRLineToPosition(r.baseLine+ctx.GetStop().GetLine()),
-		)
-	}
-}

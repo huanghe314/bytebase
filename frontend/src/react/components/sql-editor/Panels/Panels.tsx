@@ -1,5 +1,5 @@
 import { Loader2, ShieldAlert } from "lucide-react";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Panel,
@@ -25,17 +25,19 @@ import { TerminalPanel } from "@/react/components/sql-editor/TerminalPanel/Termi
 import { TriggersPanel } from "@/react/components/sql-editor/TriggersPanel";
 import { ViewsPanel } from "@/react/components/sql-editor/ViewsPanel";
 import { Alert } from "@/react/components/ui/alert";
+import { useAppDatabaseMetadata } from "@/react/hooks/useAppDatabaseMetadata";
 import { useExecuteSQL } from "@/react/hooks/useExecuteSQL";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useConnectionOfCurrentSQLEditorTab } from "@/react/hooks/useSQLEditorBridge";
+import { useAppStore } from "@/react/stores/app";
 import {
   selectEditorPanelSize,
   useSQLEditorStore,
 } from "@/react/stores/sqlEditor";
 import {
-  useConnectionOfCurrentSQLEditorTab,
-  useSQLEditorTabStore,
-} from "@/react/stores/sqlEditor/tab-vue-state";
-import { useDatabaseV1Store, useDBSchemaV1Store } from "@/store";
+  getSQLEditorTabsState,
+  useCurrentSQLEditorTab,
+  useSQLEditorTabState,
+} from "@/react/stores/sqlEditor/tab";
 import { isValidDatabaseName } from "@/types";
 import {
   extractDatabaseResourceName,
@@ -73,30 +75,31 @@ const AIPaneFallback = () => (
  */
 export function Panels() {
   const { t } = useTranslation();
-  const tabStore = useSQLEditorTabStore();
   const handleEditorPanelResize = useSQLEditorStore(
     (s) => s.handleEditorPanelResize
   );
-  const dbSchemaStore = useDBSchemaV1Store();
-  const { database: databaseRef } = useConnectionOfCurrentSQLEditorTab();
+  const { database } = useConnectionOfCurrentSQLEditorTab();
 
-  const tab = useVueState(() => tabStore.currentTab);
+  const tab = useCurrentSQLEditorTab();
   // Subscribe to `mode` as its own primitive — Pinia's tabStore mutates
   // the tab proxy in place via `Object.assign`, so `() => tabStore
   // .currentTab` only fires Vue's watch on tab-switches (proxy
   // reference changes), not on `mode` flipping between "WORKSHEET" and
   // "ADMIN" within the same tab. Without this, clicking the admin-mode
   // button doesn't swap to the `TerminalPanel`.
-  const tabMode = useVueState(() => tabStore.currentTab?.mode);
-  const databaseName = useVueState(() => databaseRef.value.name);
-  const view = useVueState(() => tabStore.currentTab?.viewState?.view);
+  const tabMode = useSQLEditorTabState(
+    (s) => s.tabsById.get(s.currentTabId)?.mode
+  );
+  const databaseName = database.name;
+  const view = useSQLEditorTabState(
+    (s) => s.tabsById.get(s.currentTabId)?.viewState?.view
+  );
   const showAIPanel = useSQLEditorStore((s) => s.showAIPanel);
   const isShowingCode = useSQLEditorStore((s) => s.isShowingCode);
   const editorPanelSize = useSQLEditorStore(useShallow(selectEditorPanelSize));
 
   const showAIPaneAlongsidePanel = showAIPanel && isShowingCode;
   const { setSchema, updateViewState } = useViewStateNav();
-  const databaseV1Store = useDatabaseV1Store();
   const { execute } = useExecuteSQL();
 
   // AI plugin "run-statement" handler — mirrors Vue's
@@ -105,14 +108,15 @@ export function Panels() {
   // a Vue provide chain to access it.
   useEffect(() => {
     const off = aiContextEvents.on("run-statement", async ({ statement }) => {
-      const t = tabStore.currentTab;
+      const tabsState = getSQLEditorTabsState();
+      const t = tabsState.tabsById.get(tabsState.currentTabId);
       if (!t) return;
       updateViewState({ view: "CODE" });
       await nextAnimationFrame();
       const connection = t.connection;
-      const database = await databaseV1Store.getOrFetchDatabaseByName(
-        connection.database
-      );
+      const database = await useAppStore
+        .getState()
+        .getOrFetchDatabaseByName(connection.database);
       void execute({
         connection,
         statement,
@@ -124,27 +128,13 @@ export function Panels() {
     return () => {
       off();
     };
-  }, [tabStore, updateViewState, databaseV1Store, execute]);
+  }, [updateViewState, execute]);
 
-  const [databaseMetadata, setDatabaseMetadata] = useState<
-    | Awaited<ReturnType<typeof dbSchemaStore.getOrFetchDatabaseMetadata>>
-    | undefined
-  >();
-  useEffect(() => {
-    if (!databaseName || !isValidDatabaseName(databaseName)) {
-      setDatabaseMetadata(undefined);
-      return;
-    }
-    let cancelled = false;
-    void dbSchemaStore
-      .getOrFetchDatabaseMetadata({ database: databaseName, silent: true })
-      .then((meta) => {
-        if (!cancelled) setDatabaseMetadata(meta);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [databaseName, dbSchemaStore]);
+  // Parent drives the metadata fetch for the whole Panels subtree;
+  // children call `useAppDatabaseMetadata(..., { autoFetch: false })`.
+  const databaseMetadata = useAppDatabaseMetadata(databaseName ?? "", {
+    silent: true,
+  });
 
   // Pin the active schema to a sensible default whenever the tab,
   // database metadata, or current schema changes (mirrors the Vue
@@ -153,7 +143,6 @@ export function Panels() {
   const currentSchema = tab?.viewState?.schema;
   useEffect(() => {
     if (!tabId) return;
-    if (!databaseMetadata) return;
     if (
       !isValidDatabaseName(
         extractDatabaseResourceName(databaseMetadata.name).database

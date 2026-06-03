@@ -7,11 +7,7 @@ import {
 } from "@/types/proto-es/v1/sheet_service_pb";
 import { extractSheetUID } from "@/utils/v1/sheet";
 import type { AppSliceCreator, SheetSlice } from "./types";
-
-function toError(error: unknown): Error {
-  if (error instanceof Error) return error;
-  return new Error(String(error));
-}
+import { toError } from "./utils";
 
 function isValidSheetName(name: string): boolean {
   if (typeof name !== "string") return false;
@@ -86,4 +82,12 @@ export const createSheetSlice: AppSliceCreator<SheetSlice> = (set, get) => ({
     }));
     return response;
   },
+
+  // Synchronous cache read (undefined on miss) — mirrors the Pinia
+  // `getSheetByName`.
+  getSheetByName: (name) => get().sheetsByName[name],
+
+  // Cache-first fetch by name — `fetchSheet` already checks the cache and
+  // guards invalid names, so this is a thin alias matching the Pinia API.
+  getOrFetchSheetByName: (name) => get().fetchSheet(name),
 });

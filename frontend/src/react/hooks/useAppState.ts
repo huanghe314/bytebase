@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   getProjectResourceId,
   isConnectAlreadyExists,
@@ -15,17 +16,30 @@ import {
   nullEnvironment,
   unknownEnvironment,
 } from "@/types/v1/environment";
-import { storageKeyRecentProjects } from "@/utils/storage-keys";
+import { unknownUser } from "@/types/v1/user";
+import {
+  storageKeyRecentProjects,
+  workspaceCacheScope,
+} from "@/utils/storage-keys";
 
 export { isConnectAlreadyExists };
 
-export function useCurrentUser() {
+export function useOptionalCurrentUser() {
   const user = useAppStore((state) => state.currentUser);
   const loadCurrentUser = useAppStore((state) => state.loadCurrentUser);
   useEffect(() => {
     void loadCurrentUser();
   }, [loadCurrentUser]);
   return user;
+}
+
+export function useCurrentUser() {
+  const user = useOptionalCurrentUser();
+  // Stabilize the fallback identity: a fresh unknownUser() each render would
+  // change identity while the user is unresolved, retriggering identity-keyed
+  // effects in callers (e.g. ProfilePage, TwoFactorSetupPage) and risking a
+  // render loop.
+  return useMemo(() => user ?? unknownUser(), [user]);
 }
 
 export function useWorkspace() {
@@ -128,6 +142,7 @@ export function useServerState() {
   );
   const totalInstanceCount = useAppStore((state) => state.totalInstanceCount());
   const userCountInIam = useAppStore((state) => state.userCountInIam());
+  const activeVcsUserCount = useAppStore((state) => state.activeVcsUserCount());
   useEffect(() => {
     void loadServerInfo();
   }, [loadServerInfo]);
@@ -142,6 +157,7 @@ export function useServerState() {
     activatedInstanceCount,
     totalInstanceCount,
     userCountInIam,
+    activeVcsUserCount,
   };
 }
 
@@ -264,6 +280,67 @@ export function useInstance(name: string | undefined) {
   return instance;
 }
 
+export function useGroups() {
+  const groupsByName = useAppStore((state) => state.groupsByName);
+  return useMemo(
+    () =>
+      Object.values(groupsByName).sort((a, b) => a.name.localeCompare(b.name)),
+    [groupsByName]
+  );
+}
+
+export function useGroupByIdentifier(id: string) {
+  return useAppStore((state) => state.getGroupByIdentifier(id));
+}
+
+export function useUserByIdentifier(identifier: string | undefined) {
+  return useAppStore((state) =>
+    identifier ? state.getUserByIdentifier(identifier) : undefined
+  );
+}
+
+export function useRoleByName(name: string | undefined) {
+  return useAppStore((state) => (name ? state.getRoleByName(name) : undefined));
+}
+
+export function useReleaseByName(name: string | undefined) {
+  return useAppStore((state) =>
+    name ? state.getReleaseByName(name) : undefined
+  );
+}
+
+export function useRevisionByName(name: string | undefined) {
+  return useAppStore((state) =>
+    name ? state.getRevisionByName(name) : undefined
+  );
+}
+
+export function useChangelogByName(name: string | undefined) {
+  return useAppStore((state) =>
+    name ? state.getChangelogByName(name) : undefined
+  );
+}
+
+export function useServiceAccount(name: string) {
+  return useAppStore(useShallow((state) => state.getServiceAccount(name)));
+}
+
+export function useWorkloadIdentity(name: string) {
+  return useAppStore(useShallow((state) => state.getWorkloadIdentity(name)));
+}
+
+export function useIdentityProviderList() {
+  return useAppStore(useShallow((state) => state.identityProviderList()));
+}
+
+export function useIdentityProvider(name: string) {
+  return useAppStore((state) => state.identityProvidersByName[name]);
+}
+
+export function useAccessGrant(name: string) {
+  return useAppStore((state) => state.accessGrantsByName[name]);
+}
+
 export function useProjectList(query: string) {
   const searchProjects = useAppStore((state) => state.searchProjects);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -338,10 +415,10 @@ export function useProjectList(query: string) {
   };
 }
 
-function readRecentProjectNames(email: string) {
+function readRecentProjectNames(scope: string, email: string) {
   if (!email) return [];
   try {
-    const raw = localStorage.getItem(storageKeyRecentProjects(email));
+    const raw = localStorage.getItem(storageKeyRecentProjects(scope, email));
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed)
       ? parsed.filter((name): name is string => typeof name === "string")
@@ -352,14 +429,16 @@ function readRecentProjectNames(email: string) {
 }
 
 export function useRecentProjects() {
-  const currentUser = useCurrentUser();
+  const currentUser = useOptionalCurrentUser();
+  const isSaaS = useIsSaaSMode();
   const batchFetchProjects = useAppStore((state) => state.batchFetchProjects);
   const projectsByName = useAppStore((state) => state.projectsByName);
   const [projectNames, setProjectNames] = useState<string[]>([]);
 
+  const scope = workspaceCacheScope(isSaaS, currentUser?.workspace ?? "");
   const refreshNames = useCallback(() => {
-    setProjectNames(readRecentProjectNames(currentUser?.email ?? ""));
-  }, [currentUser?.email]);
+    setProjectNames(readRecentProjectNames(scope, currentUser?.email ?? ""));
+  }, [scope, currentUser?.email]);
 
   useEffect(() => {
     refreshNames();
@@ -382,7 +461,7 @@ export function useRecentProjects() {
 }
 
 export function useRecentVisit() {
-  useCurrentUser();
+  useOptionalCurrentUser();
   const recordRecentVisit = useAppStore((state) => state.recordRecentVisit);
   const removeRecentVisit = useAppStore((state) => state.removeRecentVisit);
   return {

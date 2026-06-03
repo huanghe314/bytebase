@@ -1558,6 +1558,21 @@
         
           
           <li>
+            <a href="#store%2fvcs_provider_user.proto">store/vcs_provider_user.proto</a>
+            <ul>
+              
+                <li>
+                  <a href="#bytebase.store.VCSProviderUserPayload"><span class="badge">M</span>VCSProviderUserPayload</a>
+                </li>
+              
+              
+              
+              
+            </ul>
+          </li>
+        
+          
+          <li>
             <a href="#store%2fworksheet.proto">store/worksheet.proto</a>
             <ul>
               
@@ -1658,6 +1673,13 @@ Format: instances/{instance}/databases/{database} </p></td>
                   <td><p>The requested duration for the access grant.
 Stored when the user provides a TTL instead of an absolute expire_time.
 The server computes expire_time from this value at activation time. </p></td>
+                </tr>
+              
+                <tr>
+                  <td>export</td>
+                  <td><a href="#bool">bool</a></td>
+                  <td></td>
+                  <td><p>Whether export the query result. </p></td>
                 </tr>
               
             </tbody>
@@ -14683,6 +14705,51 @@ Used to auto-select workspace on next login instead of requiring a workspace pic
             
           </tbody>
         </table>
+      
+
+      
+
+      
+    
+      
+      <div class="file-heading">
+        <h2 id="store/vcs_provider_user.proto">store/vcs_provider_user.proto</h2><a href="#title">Top</a>
+      </div>
+      <p></p>
+
+      
+        <h3 id="bytebase.store.VCSProviderUserPayload">VCSProviderUserPayload</h3>
+        <p></p>
+
+        
+          <table class="field-table">
+            <thead>
+              <tr><td>Field</td><td>Type</td><td>Label</td><td>Description</td></tr>
+            </thead>
+            <tbody>
+              
+                <tr>
+                  <td>user_name</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>display_name</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+            </tbody>
+          </table>
+
+          
+
+        
+      
+
       
 
       

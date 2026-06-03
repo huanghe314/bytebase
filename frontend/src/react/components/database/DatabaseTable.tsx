@@ -4,10 +4,9 @@ import {
   getPageSizeOptions,
   useSessionPageSize,
 } from "@/react/hooks/useSessionPageSize";
-import { useVueState } from "@/react/hooks/useVueState";
+import type { DatabaseFilter } from "@/react/lib/databaseFilter";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
-import { useActuatorV1Store, useDatabaseV1Store } from "@/store";
-import type { DatabaseFilter } from "@/store/modules/v1/database";
 import type { Database } from "@/types/proto-es/v1/database_service_pb";
 import { autoDatabaseRoute } from "@/utils";
 import {
@@ -53,9 +52,6 @@ export function DatabaseTable({
   onDatabasesChange,
   refreshToken,
 }: DatabaseTableProps) {
-  const databaseStore = useDatabaseV1Store();
-  const actuatorStore = useActuatorV1Store();
-
   const [databases, setDatabases] = useState<Database[]>([]);
   const [loading, setLoading] = useState(true);
   const nextPageTokenRef = useRef("");
@@ -67,9 +63,7 @@ export function DatabaseTable({
   const [sort, setSort] = useState<DatabaseTableSort | null>(null);
   const orderBy = sort ? `${sort.key} ${sort.order}` : "";
 
-  const workspaceResourceName = useVueState(
-    () => actuatorStore.workspaceResourceName
-  );
+  const workspaceResourceName = useAppStore((s) => s.workspaceResourceName());
 
   const fetchDatabases = useCallback(
     async (isRefresh: boolean) => {
@@ -83,7 +77,7 @@ export function DatabaseTable({
 
       try {
         const token = isRefresh ? "" : nextPageTokenRef.current;
-        const result = await databaseStore.fetchDatabases({
+        const result = await useAppStore.getState().fetchDatabases({
           pageToken: token,
           pageSize,
           parent: parent || workspaceResourceName,
@@ -111,7 +105,7 @@ export function DatabaseTable({
         }
       }
     },
-    [pageSize, filter, orderBy, databaseStore, parent, workspaceResourceName]
+    [pageSize, filter, orderBy, parent, workspaceResourceName]
   );
 
   const isFirstLoad = useRef(true);

@@ -11,9 +11,6 @@ const mocks = vi.hoisted(() => ({
   fetchDatabases: vi.fn(),
   fetchInstanceList: vi.fn(),
   getOrFetchDatabaseMetadata: vi.fn(),
-  databaseStore: undefined as
-    | { fetchDatabases: ReturnType<typeof vi.fn> }
-    | undefined,
   instanceStore: undefined as
     | { fetchInstanceList: ReturnType<typeof vi.fn> }
     | undefined,
@@ -35,13 +32,6 @@ const mocks = vi.hoisted(() => ({
   }),
 }));
 
-mocks.databaseStore = {
-  fetchDatabases: mocks.fetchDatabases,
-};
-mocks.instanceStore = {
-  fetchInstanceList: mocks.fetchInstanceList,
-};
-
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string, options?: { count?: number }) =>
@@ -56,12 +46,6 @@ vi.mock("@/plugins/i18n", () => ({
     },
   },
   t: (key: string) => key,
-}));
-
-vi.mock("@/store", () => ({
-  useDatabaseV1Store: () => mocks.databaseStore,
-  useEnvironmentV1Store: () => mocks.environmentStore,
-  useInstanceV1Store: () => mocks.instanceStore,
 }));
 
 vi.mock("@/react/hooks/useVueState", () => ({
@@ -97,11 +81,20 @@ vi.mock("@/react/components/AdvancedSearch", () => ({
   ),
 }));
 
-vi.mock("@/store/modules/v1/dbSchema", () => ({
-  useDBSchemaV1Store: () => ({
+vi.mock("@/react/stores/app", () => {
+  const appState = () => ({
     getOrFetchDatabaseMetadata: mocks.getOrFetchDatabaseMetadata,
-  }),
-}));
+    fetchInstanceList: mocks.fetchInstanceList,
+    fetchDatabases: mocks.fetchDatabases,
+    environmentList: mocks.environmentStore.environmentList,
+  });
+  return {
+    useAppStore: Object.assign(
+      (selector: (state: unknown) => unknown) => selector(appState()),
+      { getState: appState }
+    ),
+  };
+});
 
 vi.mock("@/react/components/EnvironmentLabel", () => ({
   EnvironmentLabel: ({ environmentName }: { environmentName: string }) => (

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { EngineIcon } from "@/react/components/EngineIcon";
 import { EnvironmentLabel } from "@/react/components/EnvironmentLabel";
 import { Combobox } from "@/react/components/ui/combobox";
-import { useActuatorV1Store, useDatabaseV1Store } from "@/store";
+import { useAppStore } from "@/react/stores/app";
 import type { Engine } from "@/types/proto-es/v1/common_pb";
 import type { Database } from "@/types/proto-es/v1/database_service_pb";
 import {
@@ -37,8 +37,7 @@ export function DatabaseSelect({
   allowedEngineTypeList,
 }: DatabaseSelectProps) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
-  const actuatorStore = useActuatorV1Store();
+  const workspaceResourceName = useAppStore((s) => s.workspaceResourceName());
   const [databases, setDatabases] = useState<Database[]>([]);
 
   // Stabilize engines array to avoid re-fetching on every render
@@ -59,9 +58,10 @@ export function DatabaseSelect({
 
   const fetchDatabases = useCallback(
     (query: string) => {
-      databaseStore
+      useAppStore
+        .getState()
         .fetchDatabases({
-          parent: projectName ?? actuatorStore.workspaceResourceName,
+          parent: projectName ?? workspaceResourceName,
           filter: {
             environment: environmentName,
             engines: stableEngines,
@@ -72,7 +72,7 @@ export function DatabaseSelect({
         })
         .then((result) => setDatabases(result.databases));
     },
-    [databaseStore, projectName, environmentName, stableEngines, actuatorStore]
+    [projectName, environmentName, stableEngines, workspaceResourceName]
   );
 
   useEffect(() => {

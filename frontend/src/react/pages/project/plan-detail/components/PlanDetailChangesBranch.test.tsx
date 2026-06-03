@@ -2,12 +2,15 @@ import type { ReactNode } from "react";
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { State } from "@/types/proto-es/v1/common_pb";
+import { Engine, State } from "@/types/proto-es/v1/common_pb";
 import type { PlanCheckRun } from "@/types/proto-es/v1/plan_service_pb";
 import type { CheckReleaseResponse_CheckResult } from "@/types/proto-es/v1/release_service_pb";
 import type { PlanDetailPageState } from "../shell/hooks/types";
 import { PlanDetailProvider } from "../shell/PlanDetailContext";
-import { PlanDetailChangesBranch } from "./PlanDetailChangesBranch";
+import {
+  DatabaseGroupTarget,
+  PlanDetailChangesBranch,
+} from "./PlanDetailChangesBranch";
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -18,7 +21,21 @@ const mocks = vi.hoisted(() => ({
   fetchDBGroupListByProjectName: vi.fn(),
   getDatabaseByName: vi.fn(),
   getDBGroupByName: vi.fn(),
+  getInstanceResource: vi.fn(),
+  getPlanOptionVisibility: vi.fn(),
   getProjectByName: vi.fn(),
+  selectedSelectValueChange: undefined as
+    | ((value: string | null | undefined) => void)
+    | undefined,
+  instanceRoleServiceClientConnect: {
+    listInstanceRoles: vi.fn(async () => ({
+      roles: [] as Array<{ roleName: string }>,
+    })),
+  },
+  localSheets: new Map<
+    string,
+    { content: Uint8Array; contentSize: bigint; name: string }
+  >(),
   patchState: vi.fn(),
   routerPush: vi.fn(),
   databaseStore: {
@@ -32,18 +49,16 @@ const mocks = vi.hoisted(() => ({
     getDBGroupByName: vi.fn(),
     getOrFetchDBGroupByName: vi.fn(async () => ({
       name: "projects/foo/databaseGroups/group-a",
-      matchedDatabases: [],
+      matchedDatabases: [] as Array<{ name: string }>,
     })),
+    createSheet: vi.fn(async (_projectName, sheet) => sheet),
+    getOrFetchSheetByName: vi.fn(async () => undefined),
   },
   environmentStore: {
     getEnvironmentByName: vi.fn(),
   },
   projectStore: {
     getProjectByName: vi.fn(),
-  },
-  sheetStore: {
-    createSheet: vi.fn(async (_projectName, sheet) => sheet),
-    getOrFetchSheetByName: vi.fn(async () => undefined),
   },
 }));
 
@@ -103,17 +118,50 @@ vi.mock("@/react/components/ui/dropdown-menu", () => ({
 }));
 
 vi.mock("@/react/components/ui/search-input", () => ({
-  SearchInput: (props: React.InputHTMLAttributes<HTMLInputElement>) => (
-    <input {...props} />
+  SearchInput: ({
+    wrapperClassName,
+    ...props
+  }: React.InputHTMLAttributes<HTMLInputElement> & {
+    wrapperClassName?: string;
+  }) => (
+    <div
+      className={`relative flex-1 ${wrapperClassName ?? ""}`}
+      data-testid="targets-search-wrapper"
+      data-wrapper-class-name={wrapperClassName}
+    >
+      <input {...props} />
+    </div>
   ),
 }));
 
 vi.mock("@/react/components/ui/select", () => ({
-  Select: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  Select: ({
+    children,
+    onValueChange,
+  }: {
+    children: ReactNode;
+    onValueChange?: (value: string | null | undefined) => void;
+  }) => {
+    mocks.selectedSelectValueChange = onValueChange;
+    return <div>{children}</div>;
+  },
   SelectContent: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
-  SelectItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SelectItem: ({
+    children,
+    value,
+  }: {
+    children: ReactNode;
+    value?: string;
+  }) => {
+    const onValueChange = mocks.selectedSelectValueChange;
+    return (
+      <button onClick={() => onValueChange?.(value)} type="button">
+        {children}
+      </button>
+    );
+  },
   SelectTrigger: ({ children }: { children: ReactNode }) => (
     <button>{children}</button>
   ),
@@ -125,7 +173,20 @@ vi.mock("@/react/components/ui/select", () => ({
 vi.mock("@/react/components/ui/sheet", () => ({
   Sheet: ({ children, open }: { children: ReactNode; open: boolean }) =>
     open ? <div>{children}</div> : null,
-  SheetBody: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SheetBody: ({
+    children,
+    className,
+  }: {
+    children: ReactNode;
+    className?: string;
+  }) => (
+    <div
+      className={`flex flex-1 flex-col overflow-y-auto px-6 py-4 ${className ?? ""}`}
+      data-testid="targets-sheet-body"
+    >
+      {children}
+    </div>
+  ),
   SheetContent: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
@@ -135,11 +196,37 @@ vi.mock("@/react/components/ui/sheet", () => ({
 }));
 
 vi.mock("@/react/components/ui/switch", () => ({
-  Switch: () => null,
+  Switch: ({
+    checked,
+    disabled,
+    onCheckedChange,
+  }: {
+    checked: boolean;
+    disabled?: boolean;
+    onCheckedChange: (checked: boolean) => void;
+  }) => (
+    <button
+      disabled={disabled}
+      onClick={() => onCheckedChange(!checked)}
+      type="button"
+    >
+      {checked ? "switch-on" : "switch-off"}
+    </button>
+  ),
 }));
 
 vi.mock("@/react/components/ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
+vi.mock("@/react/components/ui/popover", () => ({
+  Popover: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  PopoverContent: ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  ),
+  PopoverTrigger: ({ children }: { children: ReactNode }) => (
+    <button type="button">{children}</button>
+  ),
 }));
 
 vi.mock("@/react/lib/utils", () => ({
@@ -150,6 +237,7 @@ vi.mock("@/react/lib/utils", () => ({
 vi.mock("@/router", () => ({
   router: {
     push: mocks.routerPush,
+    resolve: () => ({ href: "/database-group-detail" }),
   },
 }));
 
@@ -163,12 +251,11 @@ vi.mock("@/types", () => ({
     name?.includes("/databaseGroups/"),
   isValidDatabaseName: (name: string) => name?.includes("/databases/"),
   isValidReleaseName: (name: string) => name?.includes("/releases/"),
+  unknownDatabaseGroup: () => ({ name: "", matchedDatabases: [] }),
 }));
 
 vi.mock("@/connect", () => ({
-  instanceRoleServiceClientConnect: {
-    listInstanceRoles: vi.fn(async () => ({ roles: [] })),
-  },
+  instanceRoleServiceClientConnect: mocks.instanceRoleServiceClientConnect,
   planServiceClientConnect: {
     updatePlan: vi.fn(async (request) => request.plan),
   },
@@ -178,14 +265,72 @@ vi.mock("@/store", () => ({
   getProjectNameAndDatabaseGroupName: (name: string) =>
     name.split("/databaseGroups/"),
   pushNotification: vi.fn(),
-  useCurrentUserV1: () => ({
-    value: { name: "users/me@example.com", email: "me@example.com" },
+}));
+
+// The migrated component reads resource state via imperative
+// `useAppStore.getState().<method>()` and reactive selectors over app-store
+// maps. Delegate map lookups to the existing store mocks so per-test setup
+// keeps working.
+vi.mock("@/react/stores/app", async () => {
+  const { DatabaseGroupView } = await vi.importActual<
+    typeof import("@/types/proto-es/v1/database_group_service_pb")
+  >("@/types/proto-es/v1/database_group_service_pb");
+  const databasesByName = new Proxy({} as Record<string, unknown>, {
+    get: (_t, key) =>
+      typeof key === "string"
+        ? mocks.databaseStore.getDatabaseByName(key)
+        : undefined,
+  });
+  const dbGroupsByName = new Proxy({} as Record<string, unknown>, {
+    get: (_t, key) =>
+      typeof key === "string"
+        ? mocks.dbGroupStore.getDBGroupByName(key)
+        : undefined,
+  });
+  const dbGroupViewByName = new Proxy({} as Record<string, unknown>, {
+    get: (_t, key) =>
+      typeof key === "string" ? DatabaseGroupView.FULL : undefined,
+  });
+  const projectsByName = new Proxy({} as Record<string, unknown>, {
+    get: (_t, key) =>
+      typeof key === "string"
+        ? mocks.projectStore.getProjectByName(key)
+        : undefined,
+  });
+  const useAppStore = Object.assign(
+    (
+      selector: (s: {
+        databasesByName: Record<string, unknown>;
+        dbGroupsByName: Record<string, unknown>;
+        dbGroupViewByName: Record<string, unknown>;
+        projectsByName: Record<string, unknown>;
+        environmentList: unknown[];
+      }) => unknown
+    ) =>
+      selector({
+        databasesByName,
+        dbGroupsByName,
+        dbGroupViewByName,
+        projectsByName,
+        environmentList: [],
+      }),
+    {
+      getState: () => ({
+        ...mocks.databaseStore,
+        ...mocks.dbGroupStore,
+        getProjectByName: mocks.projectStore.getProjectByName,
+        getEnvironmentByName: mocks.environmentStore.getEnvironmentByName,
+      }),
+    }
+  );
+  return { useAppStore };
+});
+
+vi.mock("@/react/hooks/useAppState", () => ({
+  useCurrentUser: () => ({
+    name: "users/me@example.com",
+    email: "me@example.com",
   }),
-  useDatabaseV1Store: () => mocks.databaseStore,
-  useDBGroupStore: () => mocks.dbGroupStore,
-  useEnvironmentV1Store: () => mocks.environmentStore,
-  useProjectV1Store: () => mocks.projectStore,
-  useSheetV1Store: () => mocks.sheetStore,
 }));
 
 vi.mock("@/utils", () => ({
@@ -195,7 +340,7 @@ vi.mock("@/utils", () => ({
   }),
   getDatabaseEnvironment: () => undefined,
   getDefaultTransactionMode: () => false,
-  getInstanceResource: () => undefined,
+  getInstanceResource: mocks.getInstanceResource,
   hasProjectPermissionV2: () => true,
 }));
 
@@ -209,19 +354,33 @@ vi.mock("@/utils/v1/databaseGroup", () => ({
 }));
 
 vi.mock("../utils/localSheet", () => ({
-  getLocalSheetByName: (name: string) => ({ name, content: "" }),
+  getLocalSheetByName: (name: string) => {
+    const existing = mocks.localSheets.get(name);
+    if (existing) return existing;
+    const sheet = { name, content: new Uint8Array(), contentSize: 0n };
+    mocks.localSheets.set(name, sheet);
+    return sheet;
+  },
   getNextLocalSheetUID: () => "-1",
+  getSpecStatementContent: (spec: {
+    config?: { case?: string; value?: { sheet?: string } };
+  }) => {
+    if (spec.config?.case !== "changeDatabaseConfig") return undefined;
+    const sheetName = spec.config.value?.sheet;
+    const sheet = sheetName ? mocks.localSheets.get(sheetName) : undefined;
+    return sheet?.content;
+  },
+  isSameStatementContent: (a?: Uint8Array, b?: Uint8Array) => {
+    if (a === b) return true;
+    if (!a || !b || a.length !== b.length) return false;
+    return a.every((byte, index) => byte === b[index]);
+  },
   removeLocalSheet: vi.fn(),
 }));
 
 vi.mock("../utils/options", () => ({
   allowGhostForDatabase: () => false,
-  getPlanOptionVisibility: () => ({
-    showGhost: false,
-    showPreBackup: false,
-    showRole: false,
-    showTransactionMode: false,
-  }),
+  getPlanOptionVisibility: mocks.getPlanOptionVisibility,
 }));
 
 vi.mock("../utils/planCheck", () => ({
@@ -253,20 +412,32 @@ vi.mock("./PlanDetailDraftChecks", () => ({
   }: {
     checkResults?: CheckReleaseResponse_CheckResult[];
     onCheckResultsChange: (
+      content: Uint8Array | undefined,
       results: CheckReleaseResponse_CheckResult[] | undefined
     ) => void;
-    selectedSpec: { id: string };
+    selectedSpec: {
+      config?: { case?: string; value?: { sheet?: string } };
+      id: string;
+    };
   }) => {
     return (
       <button
-        onClick={() =>
-          onCheckResultsChange([
+        onClick={() => {
+          const sheetName =
+            selectedSpec.config?.case === "changeDatabaseConfig"
+              ? selectedSpec.config.value?.sheet
+              : undefined;
+          const sheet = sheetName
+            ? mocks.localSheets.get(sheetName)
+            : undefined;
+          const results = [
             {
               advices: [],
               target: `check-run-for-${selectedSpec.id}`,
             } as unknown as CheckReleaseResponse_CheckResult,
-          ])
-        }
+          ];
+          onCheckResultsChange(sheet?.content, results);
+        }}
       >
         run draft checks
       </button>
@@ -278,12 +449,15 @@ vi.mock("./PlanDetailStatementSection", () => ({
   PlanDetailStatementSection: ({
     planCheckRuns,
     spec,
+    statementVersion,
   }: {
     planCheckRuns?: PlanCheckRun[];
+    statementVersion?: number;
     spec: { id: string };
   }) => (
     <div data-testid="statement-section">
-      {spec.id}:{planCheckRuns?.map((run) => run.name).join(",") ?? ""}
+      {spec.id}:{planCheckRuns?.map((run) => run.name).join(",") ?? ""}:
+      {statementVersion ?? 0}
     </div>
   ),
 }));
@@ -319,6 +493,21 @@ let root: ReturnType<typeof createRoot>;
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
+  mocks.localSheets.clear();
+  mocks.getPlanOptionVisibility.mockReturnValue({
+    shouldShow: false,
+    showGhost: false,
+    showInstanceRole: false,
+    showIsolationLevel: false,
+    showPreBackup: false,
+    showTransactionMode: false,
+  });
+  mocks.getInstanceResource.mockReturnValue({
+    engine: Engine.MYSQL,
+    engineVersion: "",
+    name: "instances/test",
+    title: "test",
+  });
   mocks.databaseStore.fetchDatabases.mockResolvedValue({
     databases: [{ name: DB_WIDGETS }, { name: DB_COGS }],
     nextPageToken: "",
@@ -478,6 +667,108 @@ async function flush() {
 }
 
 describe("PlanDetailChangesBranch", () => {
+  it("renders all targets in a single scrollable sheet list", async () => {
+    const page = buildPageState();
+    const targets = Array.from(
+      { length: 21 },
+      (_, index) => `instances/test/databases/db_${index}`
+    );
+    page.plan.specs = [
+      {
+        id: "spec-1",
+        config: {
+          case: "changeDatabaseConfig",
+          value: {
+            targets,
+          },
+        },
+      },
+    ] as unknown as PlanDetailPageState["plan"]["specs"];
+
+    act(() => {
+      root.render(
+        <PlanDetailProvider value={page}>
+          <PlanDetailChangesBranch
+            selectedSpecId="spec-1"
+            onSelectedSpecIdChange={vi.fn()}
+          />
+        </PlanDetailProvider>
+      );
+    });
+    await flush();
+
+    const viewAllButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "plan.targets.view-all"
+    );
+    expect(viewAllButton).toBeTruthy();
+
+    await act(async () => {
+      viewAllButton?.click();
+    });
+    await flush();
+
+    const sheetBody = container.querySelector(
+      "[data-testid='targets-sheet-body']"
+    );
+    const elements = Array.from(sheetBody?.querySelectorAll("*") ?? []);
+    const scrollArea = elements.find(
+      (element) =>
+        element.className.includes("min-h-0") &&
+        element.className.includes("flex-1") &&
+        element.className.includes("overflow-y-auto")
+    );
+    const targetList = scrollArea
+      ? Array.from(scrollArea.querySelectorAll("*")).find(
+          (element) =>
+            element.className.includes("flex") &&
+            element.className.includes("flex-col") &&
+            element.className.includes("gap-2")
+        )
+      : undefined;
+    const searchWrapper = container.querySelector(
+      "[data-testid='targets-search-wrapper']"
+    );
+    const targetRows =
+      targetList?.querySelectorAll(".w-full.rounded-lg.border") ?? [];
+
+    expect(sheetBody?.className).toContain("overflow-hidden");
+    expect(searchWrapper?.getAttribute("data-wrapper-class-name")).toContain(
+      "flex-none"
+    );
+    expect(scrollArea).toBeTruthy();
+    expect(targetList).toBeTruthy();
+    expect(targetRows.length).toBe(targets.length);
+  });
+
+  it("renders database group overflow as a popover action", async () => {
+    mocks.dbGroupStore.getDBGroupByName.mockReturnValue({
+      name: "projects/foo/databaseGroups/group-a",
+      matchedDatabases: Array.from({ length: 8 }, (_, index) => ({
+        name: `instances/test/databases/db_${index}`,
+      })),
+    });
+    mocks.dbGroupStore.getOrFetchDBGroupByName.mockResolvedValue({
+      name: "projects/foo/databaseGroups/group-a",
+      matchedDatabases: Array.from({ length: 8 }, (_, index) => ({
+        name: `instances/test/databases/db_${index}`,
+      })),
+    });
+
+    act(() => {
+      root.render(
+        <DatabaseGroupTarget target="projects/foo/databaseGroups/group-a" />
+      );
+    });
+    await flush();
+
+    const moreButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "common.n-more"
+    );
+
+    expect(moreButton).toBeTruthy();
+    expect(container.textContent).toContain("common.databases");
+  });
+
   it("keeps Add Change target selection when the page rerenders", async () => {
     renderHarness(0);
 
@@ -595,5 +886,285 @@ describe("PlanDetailChangesBranch", () => {
 
     expect(container.textContent).toContain("spec-2:");
     expect(container.textContent).not.toContain("spec-2:check-run-for-spec-1");
+  });
+
+  it("keeps hook order stable when the selected spec appears after an empty render", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const emptyPage = buildPageState();
+    emptyPage.plan.specs =
+      [] as unknown as PlanDetailPageState["plan"]["specs"];
+    const page = buildPageState();
+
+    try {
+      act(() => {
+        root.render(
+          <PlanDetailProvider value={emptyPage}>
+            <PlanDetailChangesBranch
+              selectedSpecId="spec-1"
+              onSelectedSpecIdChange={vi.fn()}
+            />
+          </PlanDetailProvider>
+        );
+      });
+      await flush();
+
+      expect(container.textContent).toContain("common.no-data");
+
+      act(() => {
+        root.render(
+          <PlanDetailProvider value={page}>
+            <PlanDetailChangesBranch
+              selectedSpecId="spec-1"
+              onSelectedSpecIdChange={vi.fn()}
+            />
+          </PlanDetailProvider>
+        );
+      });
+      await flush();
+    } finally {
+      consoleError.mockRestore();
+    }
+
+    expect(
+      consoleError.mock.calls.some((call) =>
+        String(call[0]).includes(
+          "React has detected a change in the order of Hooks"
+        )
+      )
+    ).toBe(false);
+  });
+
+  it("hides stale draft check runs after the create-plan statement changes", async () => {
+    const sheetName = "projects/foo/sheets/-1";
+    mocks.localSheets.set(sheetName, {
+      name: sheetName,
+      content: new TextEncoder().encode("select 1;"),
+      contentSize: 0n,
+    });
+    const page = buildPageState();
+    page.plan.specs = [
+      {
+        id: "spec-1",
+        config: {
+          case: "changeDatabaseConfig",
+          value: {
+            sheet: sheetName,
+            targets: [],
+          },
+        },
+      },
+    ] as unknown as PlanDetailPageState["plan"]["specs"];
+
+    const render = () => {
+      root.render(
+        <PlanDetailProvider value={page}>
+          <PlanDetailChangesBranch
+            selectedSpecId="spec-1"
+            onSelectedSpecIdChange={vi.fn()}
+          />
+        </PlanDetailProvider>
+      );
+    };
+
+    act(render);
+    await flush();
+
+    await act(async () => {
+      (
+        [...container.querySelectorAll("button")].find(
+          (button) => button.textContent === "run draft checks"
+        ) as HTMLButtonElement
+      ).click();
+    });
+    await flush();
+
+    expect(container.textContent).toContain("spec-1:check-run-for-spec-1");
+
+    mocks.localSheets.set(sheetName, {
+      name: sheetName,
+      content: new TextEncoder().encode("create table t(id int);"),
+      contentSize: 0n,
+    });
+
+    act(render);
+    await flush();
+
+    expect(container.textContent).toContain("spec-1::0");
+    expect(container.textContent).not.toContain("check-run-for-spec-1");
+  });
+
+  it("keeps draft check runs when the statement is reverted to the checked text", async () => {
+    const sheetName = "projects/foo/sheets/-1";
+    mocks.localSheets.set(sheetName, {
+      name: sheetName,
+      content: new TextEncoder().encode("select 1;"),
+      contentSize: 0n,
+    });
+    const page = buildPageState();
+    page.plan.specs = [
+      {
+        id: "spec-1",
+        config: {
+          case: "changeDatabaseConfig",
+          value: {
+            sheet: sheetName,
+            targets: [],
+          },
+        },
+      },
+    ] as unknown as PlanDetailPageState["plan"]["specs"];
+
+    const render = () => {
+      root.render(
+        <PlanDetailProvider value={page}>
+          <PlanDetailChangesBranch
+            selectedSpecId="spec-1"
+            onSelectedSpecIdChange={vi.fn()}
+          />
+        </PlanDetailProvider>
+      );
+    };
+
+    act(render);
+    await flush();
+
+    await act(async () => {
+      (
+        [...container.querySelectorAll("button")].find(
+          (button) => button.textContent === "run draft checks"
+        ) as HTMLButtonElement
+      ).click();
+    });
+    await flush();
+
+    expect(container.textContent).toContain("spec-1:check-run-for-spec-1");
+
+    // Reverting to the same text mints a fresh Uint8Array (new reference) with
+    // identical bytes; the prior checks are still valid, so they must stay.
+    mocks.localSheets.set(sheetName, {
+      name: sheetName,
+      content: new TextEncoder().encode("select 1;"),
+      contentSize: 0n,
+    });
+
+    act(render);
+    await flush();
+
+    expect(container.textContent).toContain("spec-1:check-run-for-spec-1");
+  });
+
+  it("refreshes the statement section after changing create-plan options", async () => {
+    mocks.getPlanOptionVisibility.mockReturnValue({
+      shouldShow: true,
+      showGhost: false,
+      showInstanceRole: false,
+      showIsolationLevel: false,
+      showPreBackup: false,
+      showTransactionMode: true,
+    });
+    const page = buildPageState();
+    page.plan.specs = [
+      {
+        id: "spec-1",
+        config: {
+          case: "changeDatabaseConfig",
+          value: {
+            sheet: "projects/foo/sheets/-1",
+            targets: [DB_WIDGETS],
+          },
+        },
+      },
+    ] as unknown as PlanDetailPageState["plan"]["specs"];
+
+    act(() => {
+      root.render(
+        <PlanDetailProvider value={page}>
+          <PlanDetailChangesBranch
+            selectedSpecId="spec-1"
+            onSelectedSpecIdChange={vi.fn()}
+          />
+        </PlanDetailProvider>
+      );
+    });
+    await flush();
+
+    expect(container.textContent).toContain("spec-1::0");
+
+    await act(async () => {
+      (
+        [...container.querySelectorAll("button")].find(
+          (button) => button.textContent === "switch-off"
+        ) as HTMLButtonElement | undefined
+      )?.click();
+    });
+    await flush();
+
+    expect(container.textContent).toContain("spec-1::1");
+  });
+
+  it("clears the selected role with the default role option", async () => {
+    mocks.getPlanOptionVisibility.mockReturnValue({
+      shouldShow: true,
+      showGhost: false,
+      showInstanceRole: true,
+      showIsolationLevel: false,
+      showPreBackup: false,
+      showTransactionMode: false,
+    });
+    mocks.instanceRoleServiceClientConnect.listInstanceRoles.mockResolvedValue({
+      roles: [{ roleName: "bbsample" }],
+    });
+    const sheetName = "projects/foo/sheets/-1";
+    const statement =
+      "/* === Bytebase Role Setter. DO NOT EDIT. === */\nSET ROLE bbsample;\nSELECT 1;";
+    mocks.localSheets.set(sheetName, {
+      name: sheetName,
+      content: new TextEncoder().encode(statement),
+      contentSize: 0n,
+    });
+    const page = buildPageState();
+    page.plan.specs = [
+      {
+        id: "spec-1",
+        config: {
+          case: "changeDatabaseConfig",
+          value: {
+            sheet: sheetName,
+            targets: [DB_WIDGETS],
+          },
+        },
+      },
+    ] as unknown as PlanDetailPageState["plan"]["specs"];
+
+    act(() => {
+      root.render(
+        <PlanDetailProvider value={page}>
+          <PlanDetailChangesBranch
+            selectedSpecId="spec-1"
+            onSelectedSpecIdChange={vi.fn()}
+          />
+        </PlanDetailProvider>
+      );
+    });
+    await flush();
+
+    expect(container.textContent).toContain("instance.default-role");
+    expect(container.textContent).toContain("bbsample");
+
+    await act(async () => {
+      (
+        [...container.querySelectorAll("button")].find(
+          (button) => button.textContent === "instance.default-role"
+        ) as HTMLButtonElement | undefined
+      )?.click();
+    });
+    await flush();
+
+    expect(container.textContent).toContain("spec-1::1");
+    expect(
+      new TextDecoder().decode(mocks.localSheets.get(sheetName)?.content)
+    ).toBe("SELECT 1;");
   });
 });

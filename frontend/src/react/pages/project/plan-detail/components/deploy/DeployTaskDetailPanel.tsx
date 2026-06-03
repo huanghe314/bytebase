@@ -10,7 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/react/components/ui/dropdown-menu";
 import { Tooltip } from "@/react/components/ui/tooltip";
-import { useEnvironmentV1Store } from "@/store";
+import { useAppStore } from "@/react/stores/app";
 import { getTimeForPbTimestampProtoEs } from "@/types";
 import type { Task } from "@/types/proto-es/v1/rollout_service_pb";
 import {
@@ -23,7 +23,6 @@ import {
   releaseNameOfTaskV1,
 } from "@/utils/v1/issue/rollout";
 import { usePlanDetailContext } from "../../shell/PlanDetailContext";
-import { DatabaseTarget } from "../PlanDetailChangesBranch";
 import { PlanDetailRollbackSheet } from "../PlanDetailRollbackSheet";
 import {
   type PlanDetailTaskRolloutAction,
@@ -31,6 +30,7 @@ import {
 } from "../PlanDetailTaskRolloutActionPanel";
 import { PlanDetailTaskRunDetail } from "../PlanDetailTaskRunDetail";
 import { PlanDetailTaskRunTable } from "../PlanDetailTaskRunTable";
+import { PlanTargetDisplay } from "../PlanTargetDisplay";
 import { DeployReleaseInfoCard } from "./DeployReleaseInfoCard";
 import { DeployTaskStatus } from "./DeployTaskStatus";
 import { useDeployTaskActions } from "./taskActions";
@@ -39,7 +39,7 @@ import { useDeployTaskStatement } from "./useDeployTaskStatement";
 export function DeployTaskDetailPanel({ task }: { task: Task }) {
   const { t } = useTranslation();
   const page = usePlanDetailContext();
-  const environmentStore = useEnvironmentV1Store();
+  const environmentList = useAppStore((s) => s.environmentList);
   const project = page.project;
   const taskRuns = useMemo(
     () =>
@@ -73,9 +73,13 @@ export function DeployTaskDetailPanel({ task }: { task: Task }) {
       ),
     [page.rollout?.stages, task.name]
   );
-  const stageTitle = stage?.environment
-    ? environmentStore.getEnvironmentByName(stage.environment).title
-    : "";
+  const stageTitle = useMemo(
+    () =>
+      stage?.environment
+        ? useAppStore.getState().getEnvironmentByName(stage.environment).title
+        : "",
+    [environmentList, stage?.environment]
+  );
   const scheduledTimeDisplay = useMemo(() => {
     const ts = getTimeForPbTimestampProtoEs(task.runTime, 0);
     if (!ts) return "";
@@ -112,9 +116,11 @@ export function DeployTaskDetailPanel({ task }: { task: Task }) {
                 {stageTitle}
               </span>
             )}
-            <div className="min-w-0 text-xl">
-              <DatabaseTarget showEnvironment target={database.name} />
-            </div>
+            <PlanTargetDisplay
+              showEnvironment
+              size="md"
+              target={database.name}
+            />
             {scheduledTimeDisplay && task.status === Task_Status.PENDING && (
               <Tooltip
                 content={

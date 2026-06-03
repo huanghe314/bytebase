@@ -1,40 +1,58 @@
 import { create } from "@bufbuild/protobuf";
 import { FieldMaskSchema } from "@bufbuild/protobuf/wkt";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { UserAvatar } from "@/react/components/UserAvatar";
 import { Button } from "@/react/components/ui/button";
 import { Input } from "@/react/components/ui/input";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useCurrentUser, useWorkspace } from "@/react/hooks/useAppState";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
-import {
-  pushNotification,
-  useCurrentUserV1,
-  useUserStore,
-  useWorkspaceV1Store,
-} from "@/store";
+import { pushNotification } from "@/store";
 import { UpdateUserRequestSchema } from "@/types/proto-es/v1/user_service_pb";
 import { WorkspaceSchema } from "@/types/proto-es/v1/workspace_service_pb";
 import { hasWorkspacePermissionV2 } from "@/utils";
 
 export function ProfileSetupPage() {
   const { t } = useTranslation();
-  const currentUser = useVueState(() => useCurrentUserV1().value);
-  const userStore = useUserStore();
-  const workspaceStore = useWorkspaceV1Store();
-  const workspace = useVueState(() => workspaceStore.currentWorkspace);
-  const workspacePolicy = useVueState(() => workspaceStore.workspaceIamPolicy);
+  const currentUser = useCurrentUser();
+  const updateUser = useAppStore((state) => state.updateUser);
+  const updateWorkspace = useAppStore((state) => state.updateWorkspace);
+  const fetchWorkspaceIamPolicy = useAppStore(
+    (state) => state.fetchWorkspaceIamPolicy
+  );
+  const workspace = useWorkspace();
+  const workspacePolicy = useAppStore((state) => state.workspacePolicy);
+
+  // The member count below gates the workspace-rename field, so make sure the
+  // policy is loaded even when this page is reached outside the setup flow.
+  useEffect(() => {
+    void fetchWorkspaceIamPolicy();
+  }, [fetchWorkspaceIamPolicy]);
 
   // Show workspace name field only if the user is the sole member of the
   // workspace (i.e. they just created it), not when they were invited.
   const canRenameWorkspace =
     hasWorkspacePermissionV2("bb.workspaces.update") &&
-    workspacePolicy.bindings.reduce(
+    (workspacePolicy?.bindings ?? []).reduce(
       (count, b) => count + b.members.length,
       0
     ) === 1;
 
-  const [name, setName] = useState(currentUser?.title ?? "");
+  // `currentUser` loads asynchronously (unknownUser with an empty email until
+  // then), so seed the name field once the real user is known rather than
+  // freezing on the placeholder title. The ref keeps it a one-shot seed so
+  // later edits aren't clobbered.
+  const [name, setName] = useState(
+    currentUser.email ? (currentUser.title ?? "") : ""
+  );
+  const nameSeededRef = useRef(Boolean(currentUser.email));
+  useEffect(() => {
+    if (!nameSeededRef.current && currentUser.email) {
+      nameSeededRef.current = true;
+      setName(currentUser.title ?? "");
+    }
+  }, [currentUser.email, currentUser.title]);
   const [workspaceTitle, setWorkspaceTitle] = useState(workspace?.title ?? "");
   const [saving, setSaving] = useState(false);
 
@@ -47,14 +65,14 @@ export function ProfileSetupPage() {
     if (!currentUser?.name || !name.trim()) return;
     setSaving(true);
     try {
-      await userStore.updateUser(
+      await updateUser(
         create(UpdateUserRequestSchema, {
           user: { name: currentUser.name, title: name.trim() },
           updateMask: create(FieldMaskSchema, { paths: ["title"] }),
         })
       );
       if (canRenameWorkspace && workspaceTitle.trim() && workspace?.name) {
-        await workspaceStore.updateWorkspace(
+        await updateWorkspace(
           create(WorkspaceSchema, {
             name: workspace.name,
             title: workspaceTitle.trim(),

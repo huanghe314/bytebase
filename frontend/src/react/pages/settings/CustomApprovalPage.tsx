@@ -6,23 +6,23 @@ import { APPROVAL_SOURCES } from "@/react/components/CustomApproval/utils";
 import { FeatureAttention } from "@/react/components/FeatureAttention";
 import { Alert } from "@/react/components/ui/alert";
 import { useVueState } from "@/react/hooks/useVueState";
+import { useAppStore } from "@/react/stores/app";
 import {
-  useSubscriptionV1Store,
   useWorkspaceApprovalSettingStore,
-} from "@/store";
+  type WorkspaceApprovalSettingState,
+} from "@/react/stores/workspaceApprovalSetting";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import { hasWorkspacePermissionV2 } from "@/utils";
 
 export function CustomApprovalPage() {
   const { t } = useTranslation();
   const store = useWorkspaceApprovalSettingStore();
-  const subscriptionStore = useSubscriptionV1Store();
   const featureAttentionRef = useRef<HTMLDivElement>(null);
 
   const [ready, setReady] = useState(false);
 
-  const hasFeature = useVueState(() =>
-    subscriptionStore.hasInstanceFeature(PlanFeature.FEATURE_APPROVAL_WORKFLOW)
+  const hasFeature = useAppStore((s) =>
+    s.hasInstanceFeature(PlanFeature.FEATURE_APPROVAL_WORKFLOW)
   );
   const allowAdmin = hasWorkspacePermissionV2("bb.settings.set");
 
@@ -89,7 +89,7 @@ function SourceSection({
   onShowFeatureModal,
 }: {
   source: (typeof APPROVAL_SOURCES)[number];
-  store: ReturnType<typeof useWorkspaceApprovalSettingStore>;
+  store: WorkspaceApprovalSettingState;
   allowAdmin: boolean;
   hasFeature: boolean;
   onShowFeatureModal: () => void;

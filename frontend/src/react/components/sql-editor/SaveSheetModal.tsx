@@ -8,8 +8,8 @@ import {
 } from "@/react/components/ui/dialog";
 import { Input } from "@/react/components/ui/input";
 import { useSQLEditorEvent } from "@/react/hooks/useSQLEditorEvent";
+import { useAppStore } from "@/react/stores/app";
 import { useSQLEditorStore } from "@/react/stores/sqlEditor";
-import { useWorkSheetStore } from "@/store";
 import type { SQLEditorTab } from "@/types";
 import { UNKNOWN_ID } from "@/types";
 import { extractWorksheetID } from "@/utils";
@@ -18,7 +18,6 @@ import { FolderForm } from "./FolderForm";
 
 export function SaveSheetModal() {
   const { t } = useTranslation();
-  const worksheetStore = useWorkSheetStore();
   const abortAutoSave = useSQLEditorStore((s) => s.abortAutoSave);
   const maybeUpdateWorksheet = useSQLEditorStore((s) => s.maybeUpdateWorksheet);
   const createWorksheet = useSQLEditorStore((s) => s.createWorksheet);
@@ -29,7 +28,12 @@ export function SaveSheetModal() {
   const [folder, setFolder] = useState("");
   const [rawTab, setRawTab] = useState<SQLEditorTab | undefined>(undefined);
 
-  const needShowModal = (tab: SQLEditorTab) => !tab.worksheet;
+  // A manual save opens the modal when the worksheet has never been saved
+  // OR is still untitled, so the user can give it a title rather than
+  // silently persisting an "Untitled" worksheet. Auto-save never reaches
+  // here (it calls `maybeUpdateWorksheet` directly).
+  const needShowModal = (tab: SQLEditorTab) =>
+    !tab.worksheet || !tab.title.trim();
 
   const doSaveSheet = async (
     tab?: SQLEditorTab,
@@ -85,7 +89,9 @@ export function SaveSheetModal() {
     // (for the silent path) — bypassing React's async setState batching.
     let nextFolder = "";
     if (tab.worksheet) {
-      const worksheet = worksheetStore.getWorksheetByName(tab.worksheet);
+      const worksheet = useAppStore
+        .getState()
+        .getWorksheetByName(tab.worksheet);
       if (worksheet) {
         nextFolder = sheetContext.getPwdForWorksheet(worksheet);
       }

@@ -1,8 +1,5 @@
 import { orderBy } from "lodash-es";
-import {
-  useEnvironmentV1Store,
-  useInstanceResourceByName,
-} from "@/store/modules/v1";
+import { useAppStore } from "@/react/stores/app";
 import type {
   SQLEditorTreeFactor as Factor,
   SQLEditorTreeNodeTarget as NodeTarget,
@@ -13,6 +10,7 @@ import {
   extractSQLEditorLabelFactor as extractLabelFactor,
   LeafTreeNodeTypes,
   unknownEnvironment,
+  unknownInstance,
 } from "@/types";
 import type { Database } from "@/types/proto-es/v1/database_service_pb";
 import type { InstanceResource } from "@/types/proto-es/v1/instance_service_pb";
@@ -99,14 +97,20 @@ const mapGroupNode = (
   parent: TreeNode | undefined
 ) => {
   if (factor === "environment") {
-    const environment = useEnvironmentV1Store().getEnvironmentByName(
-      value || ""
-    );
+    const environment = useAppStore
+      .getState()
+      .getEnvironmentByName(value || "");
     return mapTreeNodeByType("environment", environment, parent);
   }
   if (factor === "instance") {
-    const { instance } = useInstanceResourceByName(value);
-    return mapTreeNodeByType("instance", instance.value, parent);
+    const appStore = useAppStore.getState();
+    // Best-effort: trigger a background fetch and render the cached
+    // instance (or an `unknownInstance` placeholder until the fetch
+    // resolves). Matches the legacy Pinia `useInstanceResourceByName`
+    // behavior — synchronous read with an async hydrate.
+    void appStore.fetchInstance(value);
+    const instance = appStore.instancesByName[value] ?? unknownInstance();
+    return mapTreeNodeByType("instance", instance, parent);
   }
   const key = extractLabelFactor(factor);
   if (key) {

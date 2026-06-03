@@ -5,16 +5,12 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/antlr4-go/antlr/v4"
-
-	parser "github.com/bytebase/parser/plsql"
+	"github.com/bytebase/omni/oracle/ast"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
 	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
-	"github.com/bytebase/bytebase/backend/plugin/parser/base"
-	"github.com/bytebase/bytebase/backend/plugin/parser/plsql"
 )
 
 var (
@@ -41,24 +37,12 @@ func (*StatementDmlDryRunAdvisor) Check(ctx context.Context, checkCtx advisor.Co
 	}
 
 	rule := NewStatementDmlDryRunRule(ctx, level, checkCtx.Rule.Type.String(), checkCtx.Driver)
-	checker := NewGenericChecker([]Rule{rule})
 
 	if checkCtx.Driver != nil {
-		for _, stmt := range checkCtx.ParsedStatements {
-			if stmt.AST == nil {
-				continue
-			}
-			antlrAST, ok := base.GetANTLRAST(stmt.AST)
-			if !ok {
-				continue
-			}
-			rule.SetBaseLine(stmt.BaseLine())
-			checker.SetBaseLine(stmt.BaseLine())
-			antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
-		}
+		return RunOmniRules(checkCtx.ParsedStatements, []OmniRule{rule})
 	}
 
-	return checker.GetAdviceList()
+	return rule.GetAdviceList()
 }
 
 // StatementDmlDryRunRule is the rule implementation for DML dry run checks.
@@ -84,50 +68,18 @@ func (*StatementDmlDryRunRule) Name() string {
 	return "statement.dml-dry-run"
 }
 
-// OnEnter is called when the parser enters a rule context.
-func (r *StatementDmlDryRunRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
-	switch nodeType {
-	case "Insert_statement":
-		r.handleInsertStatement(ctx.(*parser.Insert_statementContext))
-	case "Update_statement":
-		r.handleUpdateStatement(ctx.(*parser.Update_statementContext))
-	case "Delete_statement":
-		r.handleDeleteStatement(ctx.(*parser.Delete_statementContext))
-	case "Merge_statement":
-		r.handleMergeStatement(ctx.(*parser.Merge_statementContext))
+// OnStatement dry-runs top-level DML statements from the omni AST.
+func (r *StatementDmlDryRunRule) OnStatement(node ast.Node) {
+	switch node.(type) {
+	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.MergeStmt:
+		r.handleStmt(r.stmtText, r.baseLine+1)
 	default:
 	}
-	return nil
 }
+
+// OnEnter is called when the parser enters a rule context.
 
 // OnExit is called when the parser exits a rule context.
-func (*StatementDmlDryRunRule) OnExit(_ antlr.ParserRuleContext, _ string) error {
-	return nil
-}
-
-func (r *StatementDmlDryRunRule) handleInsertStatement(ctx *parser.Insert_statementContext) {
-	if plsql.IsTopLevelStatement(ctx.GetParent()) {
-		r.handleStmt(ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx), r.baseLine+ctx.GetStart().GetLine())
-	}
-}
-
-func (r *StatementDmlDryRunRule) handleUpdateStatement(ctx *parser.Update_statementContext) {
-	if plsql.IsTopLevelStatement(ctx.GetParent()) {
-		r.handleStmt(ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx), r.baseLine+ctx.GetStart().GetLine())
-	}
-}
-
-func (r *StatementDmlDryRunRule) handleDeleteStatement(ctx *parser.Delete_statementContext) {
-	if plsql.IsTopLevelStatement(ctx.GetParent()) {
-		r.handleStmt(ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx), r.baseLine+ctx.GetStart().GetLine())
-	}
-}
-
-func (r *StatementDmlDryRunRule) handleMergeStatement(ctx *parser.Merge_statementContext) {
-	if plsql.IsTopLevelStatement(ctx.GetParent()) {
-		r.handleStmt(ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx), r.baseLine+ctx.GetStart().GetLine())
-	}
-}
 
 func (r *StatementDmlDryRunRule) handleStmt(text string, lineNumber int) {
 	if r.explainCount >= common.MaximumLintExplainSize {

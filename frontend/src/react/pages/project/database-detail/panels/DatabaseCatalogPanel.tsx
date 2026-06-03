@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from "@/react/components/ui/dialog";
 import { Input } from "@/react/components/ui/input";
+import { useDatabaseCatalog } from "@/react/hooks/useDatabaseCatalog";
 import { useVueState } from "@/react/hooks/useVueState";
 import type {
   MaskData,
@@ -28,14 +29,8 @@ import {
   getMaskDataIdentifier,
   isCurrentColumnException,
 } from "@/react/lib/sensitive-data/utils";
-import {
-  featureToRef,
-  pushNotification,
-  useDatabaseCatalog,
-  useDatabaseCatalogV1Store,
-  usePolicyV1Store,
-  useSettingV1Store,
-} from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { featureToRef, pushNotification } from "@/store";
 import type { Permission } from "@/types";
 import type {
   ColumnCatalog,
@@ -190,12 +185,8 @@ const itemKey = (item: MaskData) => {
 
 export function DatabaseCatalogPanel({ database }: { database: Database }) {
   const { t } = useTranslation();
-  const policyStore = usePolicyV1Store();
-  const databaseCatalogStore = useDatabaseCatalogV1Store();
-  const settingStore = useSettingV1Store();
 
-  const databaseCatalog = useDatabaseCatalog(database.name, false);
-  const catalog = useVueState(() => databaseCatalog.value);
+  const catalog = useDatabaseCatalog(database.name, false);
   const project = getDatabaseProject(database);
   const instance = getInstanceResource(database);
   const isMaskingForNoSQL = instanceV1MaskingForNoSQL(instance);
@@ -207,19 +198,17 @@ export function DatabaseCatalogPanel({ database }: { database: Database }) {
     (permission) => hasProjectPermissionV2(project, permission)
   );
 
-  const semanticTypeList = useVueState(() => {
-    const setting = settingStore.getSettingByName(
-      Setting_SettingName.SEMANTIC_TYPES
-    );
-    return setting?.value?.value.case === "semanticType"
-      ? ((setting.value.value.value.types ??
+  const semanticTypeSetting = useAppStore((s) =>
+    s.getSettingByName(Setting_SettingName.SEMANTIC_TYPES)
+  );
+  const semanticTypeList = useMemo<SemanticTypeSetting_SemanticType[]>(() => {
+    return semanticTypeSetting?.value?.value.case === "semanticType"
+      ? ((semanticTypeSetting.value.value.value.types ??
           []) as SemanticTypeSetting_SemanticType[])
       : [];
-  });
-  const classificationConfig = useVueState(() =>
-    settingStore.getProjectClassification(
-      project.dataClassificationConfigId ?? ""
-    )
+  }, [semanticTypeSetting]);
+  const classificationConfig = useAppStore((s) =>
+    s.getProjectClassification(project.dataClassificationConfigId ?? "")
   );
   const hasSensitiveDataFeature = useVueState(
     () => featureToRef(PlanFeature.FEATURE_DATA_MASKING, instance).value
@@ -234,15 +223,16 @@ export function DatabaseCatalogPanel({ database }: { database: Database }) {
   );
 
   useEffect(() => {
-    void settingStore.getOrFetchSettingByName(
+    const store = useAppStore.getState();
+    void store.getOrFetchSettingByName(
       Setting_SettingName.SEMANTIC_TYPES,
       true
     );
-    void settingStore.getOrFetchSettingByName(
+    void store.getOrFetchSettingByName(
       Setting_SettingName.DATA_CLASSIFICATION,
       true
     );
-  }, [settingStore]);
+  }, []);
 
   useEffect(() => {
     setSearchText("");
@@ -299,10 +289,12 @@ export function DatabaseCatalogPanel({ database }: { database: Database }) {
     showGrantAccessDialog && checkedColumnList.length > 0;
 
   const removeMaskingExceptions = async (sensitiveColumn: MaskData) => {
-    const policy = await policyStore.getOrFetchPolicyByParentAndType({
-      parentPath: database.project,
-      policyType: PolicyType.MASKING_EXEMPTION,
-    });
+    const policy = await useAppStore
+      .getState()
+      .getOrFetchPolicyByParentAndType({
+        parentPath: database.project,
+        policyType: PolicyType.MASKING_EXEMPTION,
+      });
     if (!policy) {
       return;
     }
@@ -326,7 +318,7 @@ export function DatabaseCatalogPanel({ database }: { database: Database }) {
       }),
     };
 
-    await policyStore.upsertPolicy({
+    await useAppStore.getState().upsertPolicy({
       parentPath: database.project,
       policy,
     });
@@ -346,7 +338,7 @@ export function DatabaseCatalogPanel({ database }: { database: Database }) {
       item.target.classification = "";
       item.classificationId = "";
     }
-    await databaseCatalogStore.updateDatabaseCatalog(catalog);
+    await useAppStore.getState().updateDatabaseCatalog(catalog);
     pushNotification({
       module: "bytebase",
       style: "SUCCESS",
@@ -364,7 +356,7 @@ export function DatabaseCatalogPanel({ database }: { database: Database }) {
     }
     item.target.semanticType = semanticTypeId;
     item.semanticTypeId = semanticTypeId;
-    await databaseCatalogStore.updateDatabaseCatalog(catalog);
+    await useAppStore.getState().updateDatabaseCatalog(catalog);
     pushNotification({
       module: "bytebase",
       style: "SUCCESS",
@@ -381,7 +373,7 @@ export function DatabaseCatalogPanel({ database }: { database: Database }) {
     }
     item.target.classification = classificationId;
     item.classificationId = classificationId;
-    await databaseCatalogStore.updateDatabaseCatalog(catalog);
+    await useAppStore.getState().updateDatabaseCatalog(catalog);
     pushNotification({
       module: "bytebase",
       style: "SUCCESS",

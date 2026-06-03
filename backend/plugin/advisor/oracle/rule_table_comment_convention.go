@@ -5,15 +5,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/parser/plsql"
+	"github.com/bytebase/omni/oracle/ast"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
 	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
-	"github.com/bytebase/bytebase/backend/plugin/parser/base"
-	plsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/plsql"
 )
 
 var (
@@ -36,22 +33,8 @@ func (*TableCommentConventionAdvisor) Check(_ context.Context, checkCtx advisor.
 	commentPayload := checkCtx.Rule.GetCommentConventionPayload()
 
 	rule := NewTableCommentConventionRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase, commentPayload)
-	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range checkCtx.ParsedStatements {
-		if stmt.AST == nil {
-			continue
-		}
-		antlrAST, ok := base.GetANTLRAST(stmt.AST)
-		if !ok {
-			continue
-		}
-		rule.SetBaseLine(stmt.BaseLine())
-		checker.SetBaseLine(stmt.BaseLine())
-		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
-	}
-
-	return checker.GetAdviceList()
+	return RunOmniRules(checkCtx.ParsedStatements, []OmniRule{rule})
 }
 
 // TableCommentConventionRule is the rule implementation for table comment convention.
@@ -83,42 +66,25 @@ func (*TableCommentConventionRule) Name() string {
 	return "table.comment-convention"
 }
 
-// OnEnter is called when the parser enters a rule context.
-func (r *TableCommentConventionRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
-	switch nodeType {
-	case "Create_table":
-		r.handleCreateTable(ctx.(*parser.Create_tableContext))
-	case "Comment_on_table":
-		r.handleCommentOnTable(ctx.(*parser.Comment_on_tableContext))
+// OnStatement records table creation and COMMENT ON TABLE statements from omni.
+func (r *TableCommentConventionRule) OnStatement(node ast.Node) {
+	switch n := node.(type) {
+	case *ast.CreateTableStmt:
+		tableName := omniObjectName(n.Name, r.currentDatabase)
+		r.tableNames = append(r.tableNames, tableName)
+		r.tableLine[tableName] = r.locLine(n.Loc)
+	case *ast.CommentStmt:
+		if n.ObjectType != ast.OBJECT_TABLE {
+			return
+		}
+		r.tableComment[omniObjectName(n.Object, r.currentDatabase)] = n.Comment
 	default:
 	}
-	return nil
 }
+
+// OnEnter is called when the parser enters a rule context.
 
 // OnExit is called when the parser exits a rule context.
-func (*TableCommentConventionRule) OnExit(_ antlr.ParserRuleContext, _ string) error {
-	return nil
-}
-
-func (r *TableCommentConventionRule) handleCreateTable(ctx *parser.Create_tableContext) {
-	schemaName := r.currentDatabase
-	if ctx.Schema_name() != nil {
-		schemaName = normalizeIdentifier(ctx.Schema_name(), r.currentDatabase)
-	}
-
-	tableName := fmt.Sprintf("%s.%s", schemaName, normalizeIdentifier(ctx.Table_name(), r.currentDatabase))
-	r.tableNames = append(r.tableNames, tableName)
-	r.tableLine[tableName] = r.baseLine + ctx.GetStart().GetLine()
-}
-
-func (r *TableCommentConventionRule) handleCommentOnTable(ctx *parser.Comment_on_tableContext) {
-	if ctx.Tableview_name() == nil {
-		return
-	}
-
-	tableName := normalizeIdentifier(ctx.Tableview_name(), r.currentDatabase)
-	r.tableComment[tableName] = plsqlparser.NormalizeQuotedString(ctx.Quoted_string())
-}
 
 // GetAdviceList returns the advice list.
 func (r *TableCommentConventionRule) GetAdviceList() ([]*storepb.Advice, error) {

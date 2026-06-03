@@ -10,9 +10,12 @@ import {
 } from "@/react/components/ui/alert-dialog";
 import { Button } from "@/react/components/ui/button";
 import { Input } from "@/react/components/ui/input";
-import { useCurrentUser, useWorkspace } from "@/react/hooks/useAppState";
-import { useVueState } from "@/react/hooks/useVueState";
-import { pushNotification, useWorkspaceV1Store } from "@/store";
+import {
+  useOptionalCurrentUser,
+  useWorkspace,
+} from "@/react/hooks/useAppState";
+import { useAppStore } from "@/react/stores/app";
+import { pushNotification } from "@/store";
 import { PresetRoleType } from "@/types/iam/role";
 import { userBindingPrefix } from "@/types/v1/user";
 import { hasWorkspacePermissionV2 } from "@/utils";
@@ -20,9 +23,8 @@ import { hasWorkspacePermissionV2 } from "@/utils";
 export function DangerZoneSection() {
   const { t } = useTranslation();
   const workspace = useWorkspace();
-  const currentUser = useCurrentUser()!;
-  const workspaceStore = useWorkspaceV1Store();
-  const workspacePolicy = useVueState(() => workspaceStore.workspaceIamPolicy);
+  const currentUser = useOptionalCurrentUser()!;
+  const workspacePolicy = useAppStore((state) => state.workspacePolicy);
 
   const canDelete = hasWorkspacePermissionV2("bb.workspaces.delete");
 
@@ -31,7 +33,7 @@ export function DangerZoneSection() {
   // contain other users — the backend does the definitive check.
   const hasOtherAdmin = useMemo(() => {
     const currentBinding = `${userBindingPrefix}${currentUser.email}`;
-    for (const binding of workspacePolicy.bindings) {
+    for (const binding of workspacePolicy?.bindings ?? []) {
       if (binding.role !== PresetRoleType.WORKSPACE_ADMIN) continue;
       for (const member of binding.members) {
         if (member === currentBinding) continue;

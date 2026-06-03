@@ -5,14 +5,12 @@ import (
 	"context"
 	"strings"
 
-	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/parser/plsql"
+	"github.com/bytebase/omni/oracle/ast"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
 	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
-	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -35,22 +33,8 @@ func (*WhereRequireForSelectAdvisor) Check(_ context.Context, checkCtx advisor.C
 	}
 
 	rule := NewWhereRequireForSelectRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase)
-	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range checkCtx.ParsedStatements {
-		if stmt.AST == nil {
-			continue
-		}
-		antlrAST, ok := base.GetANTLRAST(stmt.AST)
-		if !ok {
-			continue
-		}
-		rule.SetBaseLine(stmt.BaseLine())
-		checker.SetBaseLine(stmt.BaseLine())
-		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
-	}
-
-	return checker.GetAdviceList()
+	return RunOmniRules(checkCtx.ParsedStatements, []OmniRule{rule})
 }
 
 // WhereRequireForSelectRule is the rule implementation for WHERE clause requirement in SELECT.
@@ -73,33 +57,34 @@ func (*WhereRequireForSelectRule) Name() string {
 	return "where.require-for-select"
 }
 
-// OnEnter is called when the parser enters a rule context.
-func (r *WhereRequireForSelectRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
-	if nodeType == "Query_block" {
-		r.handleQueryBlock(ctx.(*parser.Query_blockContext))
-	}
-	return nil
+// OnStatement checks SELECT statements with FROM clauses in the omni AST.
+func (r *WhereRequireForSelectRule) OnStatement(node ast.Node) {
+	omniWalk(node, func(n ast.Node) {
+		selectStmt, ok := n.(*ast.SelectStmt)
+		if !ok {
+			return
+		}
+		if selectStmt.FromClause == nil || len(selectStmt.FromClause.Items) == 0 {
+			return
+		}
+		if len(selectStmt.FromClause.Items) == 1 {
+			if table, ok := selectStmt.FromClause.Items[0].(*ast.TableRef); ok && table.Name != nil && strings.EqualFold(table.Name.Name, "DUAL") {
+				return
+			}
+		}
+		if selectStmt.WhereClause == nil {
+			r.AddAdvice(
+				r.level,
+				code.StatementNoWhere.Int32(),
+				"WHERE clause is required for SELECT statement.",
+				common.ConvertANTLRLineToPosition(r.locLine(selectStmt.Loc)),
+			)
+		}
+	})
 }
+
+// OnEnter is called when the parser enters a rule context.
 
 // OnExit is called when the parser exits a rule context.
-func (*WhereRequireForSelectRule) OnExit(_ antlr.ParserRuleContext, _ string) error {
-	return nil
-}
 
-func (r *WhereRequireForSelectRule) handleQueryBlock(ctx *parser.Query_blockContext) {
-	// Allow SELECT queries without a FROM clause to proceed, e.g. SELECT 1.
-	if ctx.From_clause() == nil || ctx.From_clause().Table_ref_list() == nil {
-		return
-	}
-	if strings.ToLower(ctx.From_clause().Table_ref_list().GetText()) == "dual" {
-		return
-	}
-	if ctx.Where_clause() == nil {
-		r.AddAdvice(
-			r.level,
-			code.StatementNoWhere.Int32(),
-			"WHERE clause is required for SELECT statement.",
-			common.ConvertANTLRLineToPosition(r.baseLine+ctx.GetStop().GetLine()),
-		)
-	}
-}
+// Allow SELECT queries without a FROM clause to proceed, e.g. SELECT 1.

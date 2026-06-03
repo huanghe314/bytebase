@@ -26,8 +26,9 @@ const mocks = vi.hoisted(() => {
     })),
     getTableCatalog: vi.fn(),
     featureToRef: vi.fn(() => ({ value: true })),
-    useDBSchemaV1Store: vi.fn(),
-    useSettingV1Store: vi.fn(),
+    dbSchemaStore: vi.fn(),
+    getOrFetchSettingByName: vi.fn(),
+    getProjectClassification: vi.fn(() => undefined),
     getDatabaseProject: vi.fn((database: { project: string }) => ({
       name: database.project,
       dataClassificationConfigId: "classification-config",
@@ -68,13 +69,42 @@ vi.mock("@/router", () => ({
   },
 }));
 
+// The component now reads dbSchema getters plus the former setting-store
+// methods (getProjectClassification / getOrFetchSettingByName) via the app
+// store. Merge the setting mocks into the `mocks.dbSchemaStore` shape so the
+// test bodies' per-scenario `.mockReturnValue({ getSchemaList, ... })` calls
+// keep working without further changes.
+vi.mock("@/react/stores/app", () => {
+  const getState = () => ({
+    getOrFetchSettingByName: mocks.getOrFetchSettingByName,
+    getProjectClassification: mocks.getProjectClassification,
+    ...((mocks.dbSchemaStore() ?? {}) as Record<string, unknown>),
+  });
+  return {
+    useAppStore: Object.assign(
+      (selector?: (s: ReturnType<typeof getState>) => unknown) =>
+        selector ? selector(getState()) : getState(),
+      { getState }
+    ),
+  };
+});
+
+vi.mock("@/react/hooks/useAppDatabaseMetadata", () => ({
+  useAppDatabaseMetadata: (name: string) =>
+    mocks.dbSchemaStore().getDatabaseMetadata?.(name) ?? { schemas: [] },
+}));
+
 vi.mock("@/store", () => ({
-  useDBSchemaV1Store: mocks.useDBSchemaV1Store,
-  useDatabaseCatalog: mocks.useDatabaseCatalog,
+  featureToRef: mocks.featureToRef,
+}));
+
+vi.mock("@/react/hooks/useDatabaseCatalog", () => ({
+  useDatabaseCatalog: () => mocks.useDatabaseCatalog(),
+}));
+
+vi.mock("@/react/stores/app/databaseCatalog", () => ({
   getColumnCatalog: mocks.getColumnCatalog,
   getTableCatalog: mocks.getTableCatalog,
-  featureToRef: mocks.featureToRef,
-  useSettingV1Store: mocks.useSettingV1Store,
 }));
 
 vi.mock("@/utils", () => ({
@@ -203,8 +233,8 @@ beforeEach(async () => {
   mocks.bytesToString.mockImplementation((size: number) => `${size} B`);
   mocks.hasProjectPermissionV2.mockReset();
   mocks.hasProjectPermissionV2.mockReturnValue(true);
-  mocks.useDBSchemaV1Store.mockReset();
-  mocks.useDBSchemaV1Store.mockReturnValue({
+  mocks.dbSchemaStore.mockReset();
+  mocks.dbSchemaStore.mockReturnValue({
     getSchemaList: vi.fn(() => [{ name: "public" }]),
     getTableList: vi.fn(() => [makeTable("orders")]),
     getViewList: vi.fn(() => []),
@@ -217,9 +247,7 @@ beforeEach(async () => {
   });
   mocks.useDatabaseCatalog.mockReset();
   mocks.useDatabaseCatalog.mockReturnValue({
-    value: {
-      schemas: [],
-    },
+    schemas: [],
   });
   mocks.getColumnCatalog.mockReset();
   mocks.getColumnCatalog.mockReturnValue({
@@ -232,11 +260,9 @@ beforeEach(async () => {
   });
   mocks.featureToRef.mockReset();
   mocks.featureToRef.mockReturnValue({ value: true });
-  mocks.useSettingV1Store.mockReset();
-  mocks.useSettingV1Store.mockReturnValue({
-    getOrFetchSettingByName: vi.fn(),
-    getProjectClassification: vi.fn(() => undefined),
-  });
+  mocks.getOrFetchSettingByName.mockReset();
+  mocks.getProjectClassification.mockReset();
+  mocks.getProjectClassification.mockReturnValue(undefined);
   mocks.getDatabaseProject.mockReset();
   mocks.getDatabaseProject.mockImplementation(
     (database: { project: string }) => ({
@@ -264,7 +290,7 @@ beforeEach(async () => {
 
 describe("DatabaseObjectExplorer", () => {
   test("renders the default schema label when the schema name is empty", async () => {
-    mocks.useDBSchemaV1Store.mockReturnValue({
+    mocks.dbSchemaStore.mockReturnValue({
       getSchemaList: vi.fn(() => [{ name: "" }]),
       getTableList: vi.fn(() => []),
       getViewList: vi.fn(() => []),

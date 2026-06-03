@@ -8,11 +8,8 @@ import type {
   MonacoModule,
 } from "@/react/components/monaco/types";
 import { formatEditorContent } from "@/react/components/monaco/utils";
-import { useVueState } from "@/react/hooks/useVueState";
-import {
-  useConnectionOfCurrentSQLEditorTab,
-  useSQLEditorTabStore,
-} from "@/react/stores/sqlEditor/tab-vue-state";
+import { useConnectionOfCurrentSQLEditorTab } from "@/react/hooks/useSQLEditorBridge";
+import { useSQLEditorTabState } from "@/react/stores/sqlEditor/tab";
 import type { SQLEditorQueryParams } from "@/types";
 import { dialectOfEngineV1 } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
@@ -20,9 +17,8 @@ import { languageOfEngineV1 } from "@/types/sqlEditor/editor";
 import { instanceV1AllowsExplain } from "@/utils";
 import { sqlEditorEvents } from "@/views/sql-editor/events";
 import {
-  checkCursorAtFirstLine,
+  checkCursorAtFirst,
   checkCursorAtLast,
-  checkCursorAtLastLine,
   checkIsEnterEndsStatement,
 } from "./utils";
 
@@ -58,11 +54,10 @@ export function CompactSQLEditor({
   onHistory,
   onClearScreen,
 }: CompactSQLEditorProps) {
-  const tabStore = useSQLEditorTabStore();
   const { connection, instance, database } =
     useConnectionOfCurrentSQLEditorTab();
 
-  const engine = useVueState(() => instance.value.engine);
+  const engine = instance.engine;
   const language = useMemo(
     () => languageOfEngineV1(engine ?? Engine.MYSQL),
     [engine]
@@ -72,11 +67,11 @@ export function CompactSQLEditor({
     [engine]
   );
 
-  const databaseName = useVueState(() => database.value.name);
-  const instanceName = useVueState(() => instance.value.name);
-  const schema = useVueState(() => tabStore.currentTab?.connection.schema, {
-    deep: true,
-  });
+  const databaseName = database.name;
+  const instanceName = instance.name;
+  const schema = useSQLEditorTabState(
+    (s) => s.tabsById.get(s.currentTabId)?.connection.schema
+  );
 
   // Latest-prop refs so Monaco actions registered once can read live values.
   const propsRef = useRef({
@@ -143,7 +138,7 @@ export function CompactSQLEditor({
       const execute = (explain = false) => {
         const c = connectionRef.current;
         propsRef.current.onExecute({
-          connection: { ...c.value },
+          connection: { ...c },
           statement: propsRef.current.content,
           engine: engineRef.current ?? Engine.MYSQL,
           explain,
@@ -169,13 +164,9 @@ export function CompactSQLEditor({
         "cursorAtLast",
         checkCursorAtLast(editor)
       );
-      const cursorAtFirstLine = editor.createContextKey<boolean>(
-        "cursorAtFirstLine",
-        checkCursorAtFirstLine(editor)
-      );
-      const cursorAtLastLine = editor.createContextKey<boolean>(
-        "cursorAtLastLine",
-        checkCursorAtLastLine(editor)
+      const cursorAtFirst = editor.createContextKey<boolean>(
+        "cursorAtFirst",
+        checkCursorAtFirst(editor)
       );
 
       const subscriptions: IDisposable[] = [];
@@ -189,8 +180,7 @@ export function CompactSQLEditor({
       subscriptions.push(
         editor.onDidChangeCursorPosition(() => {
           cursorAtLast.set(checkCursorAtLast(editor));
-          cursorAtFirstLine.set(checkCursorAtFirstLine(editor));
-          cursorAtLastLine.set(checkCursorAtLastLine(editor));
+          cursorAtFirst.set(checkCursorAtFirst(editor));
         })
       );
 
@@ -228,15 +218,18 @@ export function CompactSQLEditor({
         () => execute(false),
         "!readonly && isEnterEndsStatement && cursorAtLast && editorTextFocus && !suggestWidgetVisible && !renameInputVisible && !inSnippetMode && !quickFixWidgetVisible"
       );
+      // History only fires at the cursor extremes — beginning of input for
+      // Up, end of input for Down. Inside the buffer the arrows behave as
+      // normal cursor navigation, so multi-line edits aren't trapped.
       editor.addCommand(
         monaco.KeyCode.UpArrow,
         () => propsRef.current.onHistory("up", editor),
-        "isTerminalEditor && !readonly && !content && editorTextFocus && !suggestWidgetVisible && !renameInputVisible && !inSnippetMode && !quickFixWidgetVisible"
+        "isTerminalEditor && !readonly && cursorAtFirst && editorTextFocus && !suggestWidgetVisible && !renameInputVisible && !inSnippetMode && !quickFixWidgetVisible"
       );
       editor.addCommand(
         monaco.KeyCode.DownArrow,
         () => propsRef.current.onHistory("down", editor),
-        "isTerminalEditor && !readonly && cursorAtLastLine && editorTextFocus && !suggestWidgetVisible && !renameInputVisible && !inSnippetMode && !quickFixWidgetVisible"
+        "isTerminalEditor && !readonly && cursorAtLast && editorTextFocus && !suggestWidgetVisible && !renameInputVisible && !inSnippetMode && !quickFixWidgetVisible"
       );
 
       // Stash the readonly key so the outer effect can flip it on
@@ -286,7 +279,7 @@ export function CompactSQLEditor({
       run: () => {
         const c = connectionRef.current;
         propsRef.current.onExecute({
-          connection: { ...c.value },
+          connection: { ...c },
           statement: propsRef.current.content,
           engine,
           explain: true,

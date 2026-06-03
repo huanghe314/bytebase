@@ -11,12 +11,12 @@ import {
   DialogTitle,
 } from "@/react/components/ui/dialog";
 import { useVueState } from "@/react/hooks/useVueState";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import {
   PROJECT_V1_ROUTE_DATABASE_GROUP_DETAIL,
   PROJECT_V1_ROUTE_DATABASE_GROUPS_CREATE,
 } from "@/router/dashboard/projectV1";
-import { useDBGroupStore, useProjectV1Store } from "@/store";
 import {
   getProjectNameAndDatabaseGroupName,
   projectNamePrefix,
@@ -32,11 +32,14 @@ export function ProjectDatabaseGroupsPage({
   projectId: string;
 }) {
   const { t } = useTranslation();
-  const projectStore = useProjectV1Store();
-  const dbGroupStore = useDBGroupStore();
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  void projectsByName;
 
   const projectName = `${projectNamePrefix}${projectId}`;
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
+  );
 
   const [dbGroupList, setDbGroupList] = useState<DatabaseGroup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,13 +49,14 @@ export function ProjectDatabaseGroupsPage({
   useEffect(() => {
     setLoading(true);
     setDbGroupList([]);
-    dbGroupStore
+    useAppStore
+      .getState()
       .fetchDBGroupListByProjectName(projectName, DatabaseGroupView.BASIC)
       .then((list) => {
         setDbGroupList(list);
         setLoading(false);
       });
-  }, [projectName, dbGroupStore]);
+  }, [projectName]);
 
   const canCreate = useMemo(
     () =>
@@ -92,10 +96,10 @@ export function ProjectDatabaseGroupsPage({
 
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
-    await dbGroupStore.deleteDatabaseGroup(deleteTarget.name);
+    await useAppStore.getState().deleteDatabaseGroup(deleteTarget.name);
     setDbGroupList((prev) => prev.filter((g) => g.name !== deleteTarget.name));
     setDeleteTarget(null);
-  }, [deleteTarget, dbGroupStore]);
+  }, [deleteTarget]);
 
   return (
     <div className="py-4 flex flex-col gap-y-2">

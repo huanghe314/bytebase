@@ -3,8 +3,10 @@ import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { planServiceClientConnect } from "@/connect";
 import { PlanCheckSection } from "@/react/components/plan-check/PlanCheckSection";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import { useVueState } from "@/react/hooks/useVueState";
-import { pushNotification, useCurrentUserV1, useProjectV1Store } from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { pushNotification } from "@/store";
 import { extractUserEmail, projectNamePrefix } from "@/store/modules/v1/common";
 import {
   GetPlanCheckRunRequestSchema,
@@ -19,11 +21,15 @@ import { useIssueDetailContext } from "../context/IssueDetailContext";
 export function IssueDetailChecks() {
   const { t } = useTranslation();
   const page = useIssueDetailContext();
-  const projectStore = useProjectV1Store();
-  const currentUser = useVueState(() => useCurrentUserV1().value);
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  const currentUser = useCurrentUser();
   const [isRunningChecks, setIsRunningChecks] = useState(false);
   const projectName = `${projectNamePrefix}${page.projectId}`;
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
+  );
+  void projectsByName;
 
   const summary = useMemo(
     () =>

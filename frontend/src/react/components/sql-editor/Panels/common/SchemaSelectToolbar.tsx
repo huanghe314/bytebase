@@ -6,9 +6,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/react/components/ui/select";
-import { useVueState } from "@/react/hooks/useVueState";
-import { useConnectionOfCurrentSQLEditorTab } from "@/react/stores/sqlEditor/tab-vue-state";
-import { useDBSchemaV1Store } from "@/store";
+import { useAppDatabaseMetadata } from "@/react/hooks/useAppDatabaseMetadata";
+import { useConnectionOfCurrentSQLEditorTab } from "@/react/hooks/useSQLEditorBridge";
 import { hasSchemaProperty } from "@/utils";
 import { useViewStateNav } from "./useViewStateNav";
 
@@ -21,19 +20,16 @@ import { useViewStateNav } from "./useViewStateNav";
  */
 export function SchemaSelectToolbar() {
   const { t } = useTranslation();
-  const dbSchemaStore = useDBSchemaV1Store();
   const { database, instance } = useConnectionOfCurrentSQLEditorTab();
-  const databaseName = useVueState(() => database.value.name);
-  const engine = useVueState(() => instance.value.engine);
-  const databaseMetadata = useVueState(
-    () => dbSchemaStore.getDatabaseMetadata(databaseName ?? ""),
-    { deep: true }
-  );
+  const databaseName = database.name;
+  const engine = instance.engine;
+  const databaseMetadata = useAppDatabaseMetadata(databaseName ?? "", {
+    autoFetch: false,
+  });
 
   const { schema, setSchema } = useViewStateNav();
 
   if (engine === undefined || !hasSchemaProperty(engine)) return null;
-  if (!databaseMetadata) return null;
 
   const options = databaseMetadata.schemas.map((s) => ({
     label: s.name || t("db.schema.default"),

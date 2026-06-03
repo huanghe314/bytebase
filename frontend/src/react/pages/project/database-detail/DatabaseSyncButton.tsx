@@ -3,11 +3,8 @@ import { RefreshCw } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/react/components/ui/button";
-import {
-  pushNotification,
-  useDatabaseV1Store,
-  useDBSchemaV1Store,
-} from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { pushNotification } from "@/store";
 import type { Database } from "@/types/proto-es/v1/database_service_pb";
 
 const extractDatabaseName = (resource: string) => {
@@ -25,16 +22,17 @@ export function DatabaseSyncButton({
   disabled?: boolean;
 }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
-  const dbSchemaStore = useDBSchemaV1Store();
+  const getOrFetchDatabaseMetadata = useAppStore(
+    (s) => s.getOrFetchDatabaseMetadata
+  );
   const [syncing, setSyncing] = useState(false);
 
   const handleClick = useCallback(async () => {
     setSyncing(true);
 
     try {
-      await databaseStore.syncDatabase(database.name);
-      await dbSchemaStore.getOrFetchDatabaseMetadata({
+      await useAppStore.getState().syncDatabase(database.name);
+      await getOrFetchDatabaseMetadata({
         database: database.name,
         skipCache: true,
       });
@@ -61,7 +59,7 @@ export function DatabaseSyncButton({
     } finally {
       setSyncing(false);
     }
-  }, [database, databaseStore, dbSchemaStore, t]);
+  }, [database, getOrFetchDatabaseMetadata, t]);
 
   return (
     <Button

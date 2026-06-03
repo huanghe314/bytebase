@@ -35,9 +35,8 @@ vi.mock("@/react/hooks/useVueState", () => ({
   useVueState: () => undefined,
 }));
 
-vi.mock("@/store", () => ({
-  useReleaseStore: () => ({}),
-  useRolloutStore: () => ({}),
+vi.mock("@/react/stores/app", () => ({
+  useAppStore: () => vi.fn(),
 }));
 
 vi.mock("@/utils", () => ({

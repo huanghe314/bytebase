@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   routerIsReady: vi.fn(async () => {}),
   routerPush: vi.fn(),
-  fetchRoleList: vi.fn(async () => {}),
+  listRoles: vi.fn(async () => {}),
   fetchIamPolicy: vi.fn(async () => {}),
   getOrFetchProjectByName: vi.fn(async () => {
     throw new ConnectError("not found", Code.NotFound);
@@ -34,25 +34,27 @@ vi.mock("@/router/sqlEditor", () => ({
 }));
 
 vi.mock("@/store", () => ({
-  useActuatorV1Store: () => ({
-    enableOnboarding: true,
-    setupSample: mocks.setupSample,
-  }),
   useAppFeature: () => ({ value: 0 }),
-  useProjectV1Store: () => ({
+}));
+
+vi.mock("@/react/stores/app", () => {
+  const state = {
+    enableOnboarding: () => true,
+    listRoles: mocks.listRoles,
+    fetchWorkspaceIamPolicy: mocks.fetchIamPolicy,
     getOrFetchProjectByName: mocks.getOrFetchProjectByName,
     createProject: mocks.createProject,
-  }),
-  useRoleStore: () => ({
-    fetchRoleList: mocks.fetchRoleList,
-  }),
-  useSettingV1Store: () => ({
+    setupSample: mocks.setupSample,
     updateWorkspaceProfile: mocks.updateWorkspaceProfile,
-  }),
-  useWorkspaceV1Store: () => ({
-    fetchIamPolicy: mocks.fetchIamPolicy,
-  }),
-}));
+  };
+  return {
+    useAppStore: Object.assign(
+      (selector?: (s: typeof state) => unknown) =>
+        selector ? selector(state) : state,
+      { getState: () => state }
+    ),
+  };
+});
 
 vi.mock("@/react/hooks/useVueState", () => ({
   useVueState: mocks.useVueState,

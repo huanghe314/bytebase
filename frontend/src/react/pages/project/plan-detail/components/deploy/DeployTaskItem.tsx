@@ -27,12 +27,12 @@ import {
   releaseNameOfTaskV1,
 } from "@/utils/v1/issue/rollout";
 import { usePlanDetailContext } from "../../shell/PlanDetailContext";
-import { DatabaseTarget } from "../PlanDetailChangesBranch";
 import { PlanDetailRollbackSheet } from "../PlanDetailRollbackSheet";
 import {
   type PlanDetailTaskRolloutAction,
   PlanDetailTaskRolloutActionPanel,
 } from "../PlanDetailTaskRolloutActionPanel";
+import { PlanTargetDisplay } from "../PlanTargetDisplay";
 import { DeployLatestTaskRunInfo } from "./DeployLatestTaskRunInfo";
 import { DeployReleaseInfoCard } from "./DeployReleaseInfoCard";
 import { DeployTaskStatus } from "./DeployTaskStatus";
@@ -165,9 +165,7 @@ export function DeployTaskItem({
                 status={task.status}
               />
               <div className="flex min-w-0 items-center gap-x-2">
-                <div className="min-w-0">
-                  <DatabaseTarget target={task.target} />
-                </div>
+                <PlanTargetDisplay size="md" target={task.target} />
                 {isExpanded && !readonly && (
                   <button
                     className="flex shrink-0 items-center gap-x-1 text-xs text-accent transition-opacity hover:opacity-80"
@@ -300,11 +298,13 @@ export function DeployTaskItem({
                     <>
                       <ReadonlyMonaco
                         className={cn(
-                          "relative max-h-64 min-h-[120px] overflow-hidden rounded border text-sm",
+                          "relative rounded border text-sm",
                           isTruncated && "rounded-b-none"
                         )}
                         content={statement}
                         language="sql"
+                        min={128}
+                        max={256}
                       />
                       {isTruncated && (
                         <div className="rounded-b border border-t-0 bg-gray-50 px-3 py-1.5 text-xs text-gray-500">

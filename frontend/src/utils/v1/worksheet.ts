@@ -1,18 +1,10 @@
-import {
-  useCurrentUserV1,
-  useDatabaseV1Store,
-  useProjectV1Store,
-} from "@/store";
+import { getProjectByName } from "@/react/stores/app/projectAccess";
+import { getCurrentUserV1 } from "@/store";
 import { extractUserEmail } from "@/store/modules/v1/common";
 import { UNKNOWN_ID, UNKNOWN_PROJECT_NAME } from "@/types";
 import type { Worksheet } from "@/types/proto-es/v1/worksheet_service_pb";
 import { Worksheet_Visibility } from "@/types/proto-es/v1/worksheet_service_pb";
-import {
-  emptySQLEditorConnection,
-  extractDatabaseResourceName,
-  hasProjectPermissionV2,
-  hasWorkspacePermissionV2,
-} from "@/utils";
+import { hasProjectPermissionV2, hasWorkspacePermissionV2 } from "@/utils";
 
 export const extractWorksheetID = (name: string) => {
   const pattern = /(?:^|\/)worksheets\/([^/]+)(?:$|\/)/;
@@ -25,9 +17,9 @@ export const extractWorksheetID = (name: string) => {
 // PROJECT_WRITE: workspace Owner/DBA and all members in the project.
 // PROJECT_READ: workspace Owner/DBA and all members in the project.
 export const isWorksheetReadableV1 = (sheet: Worksheet) => {
-  const currentUser = useCurrentUserV1();
+  const currentUser = getCurrentUserV1();
 
-  if (extractUserEmail(sheet.creator) === currentUser.value.email) {
+  if (extractUserEmail(sheet.creator) === currentUser.email) {
     // Always readable to the creator
     return true;
   }
@@ -41,7 +33,7 @@ export const isWorksheetReadableV1 = (sheet: Worksheet) => {
       return false;
     case Worksheet_Visibility.PROJECT_READ:
     case Worksheet_Visibility.PROJECT_WRITE: {
-      const projectV1 = useProjectV1Store().getProjectByName(sheet.project);
+      const projectV1 = getProjectByName(sheet.project);
       if (projectV1.name === UNKNOWN_PROJECT_NAME) {
         return false;
       }
@@ -56,9 +48,9 @@ export const isWorksheetReadableV1 = (sheet: Worksheet) => {
 // PROJECT_WRITE: workspace Owner/DBA and all members in the project.
 // PROJECT_READ: workspace Owner/DBA and project owner.
 export const isWorksheetWritableV1 = (sheet: Worksheet) => {
-  const currentUser = useCurrentUserV1();
+  const currentUser = getCurrentUserV1();
 
-  if (extractUserEmail(sheet.creator) === currentUser.value.email) {
+  if (extractUserEmail(sheet.creator) === currentUser.email) {
     // Always writable to the creator
     return true;
   }
@@ -67,7 +59,7 @@ export const isWorksheetWritableV1 = (sheet: Worksheet) => {
     return true;
   }
 
-  const projectV1 = useProjectV1Store().getProjectByName(sheet.project);
+  const projectV1 = getProjectByName(sheet.project);
   if (projectV1.name === UNKNOWN_PROJECT_NAME) {
     return false;
   }
@@ -83,21 +75,7 @@ export const isWorksheetWritableV1 = (sheet: Worksheet) => {
   return false;
 };
 
-export const extractWorksheetConnection = async (worksheet: {
-  database: string;
-}) => {
-  const connection = emptySQLEditorConnection();
-  if (worksheet.database) {
-    try {
-      const database = await useDatabaseV1Store().getOrFetchDatabaseByName(
-        worksheet.database
-      );
-      const { instance } = extractDatabaseResourceName(database.name);
-      connection.instance = instance;
-      connection.database = database.name;
-    } catch {
-      // Skip.
-    }
-  }
-  return connection;
-};
+// `extractWorksheetConnection` moved to `@/react/lib/sqlEditorConnection`
+// so the database lookup can go through the React app store without
+// dragging `@/react/stores/app` into the `@/utils` import graph (which
+// would create a static ESM cycle).

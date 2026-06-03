@@ -7,9 +7,9 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/react/components/ui/popover";
-import { useVueState } from "@/react/hooks/useVueState";
-import { useSQLEditorVueState } from "@/react/stores/sqlEditor/editor-vue-state";
-import { hasFeature, useProjectV1Store } from "@/store";
+import { useAppProject } from "@/react/hooks/useAppProject";
+import { useAppStore } from "@/react/stores/app";
+import { useSQLEditorEditorState } from "@/react/stores/sqlEditor/editor";
 import type { MaskingReason } from "@/types/proto-es/v1/sql_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import { AccessGrantRequestDrawer } from "./AccessGrantRequestDrawer";
@@ -30,16 +30,15 @@ export function MaskingReasonPopover({
   const { t } = useTranslation();
   const [showDrawer, setShowDrawer] = useState(false);
 
-  const projectStore = useProjectV1Store();
-  const editorStore = useSQLEditorVueState();
-
-  const projectName = useVueState(() => editorStore.project);
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  const projectName = useSQLEditorEditorState((s) => s.project);
+  const project = useAppProject(projectName);
+  const hasJITFeatureFlag = useAppStore((s) =>
+    s.hasFeature(PlanFeature.FEATURE_JIT)
+  );
 
   const hasJITFeature = useMemo(
-    () =>
-      !!project?.allowJustInTimeAccess && hasFeature(PlanFeature.FEATURE_JIT),
-    [project]
+    () => !!project?.allowJustInTimeAccess && hasJITFeatureFlag,
+    [project, hasJITFeatureFlag]
   );
 
   const targets = useMemo(() => (database ? [database] : []), [database]);
@@ -64,6 +63,9 @@ export function MaskingReasonPopover({
         <PopoverTrigger
           openOnHover
           delay={100}
+          // The trigger renders a <div>, not a native <button>; tell Base
+          // UI so it doesn't warn about missing native button semantics.
+          nativeButton={false}
           render={
             <div className="inline-flex items-center gap-0.5 cursor-pointer">
               {reason.semanticTypeIcon && (

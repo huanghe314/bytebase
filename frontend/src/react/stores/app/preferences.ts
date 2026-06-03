@@ -7,6 +7,7 @@ import {
 import type { AppSliceCreator, PreferencesSlice } from "./types";
 import {
   getCurrentUserEmail,
+  getWorkspaceCacheScope,
   MAX_RECENT_PROJECT,
   MAX_RECENT_VISIT,
   readJson,
@@ -25,13 +26,14 @@ const QUICKSTART_RESET_KEYS = [
 ];
 
 export const createPreferencesSlice: AppSliceCreator<PreferencesSlice> = (
-  _set,
+  set,
   get
 ) => ({
+  introStateVersion: 0,
   setRecentProject: (name) => {
     const email = getCurrentUserEmail(get);
     if (!email || !name) return;
-    const key = storageKeyRecentProjects(email);
+    const key = storageKeyRecentProjects(getWorkspaceCacheScope(get), email);
     const previous = readJson<string[]>(key, []);
     writeJson(
       key,
@@ -45,7 +47,7 @@ export const createPreferencesSlice: AppSliceCreator<PreferencesSlice> = (
   recordRecentVisit: (path) => {
     const email = getCurrentUserEmail(get);
     if (!email) return;
-    const key = storageKeyRecentVisit(email);
+    const key = storageKeyRecentVisit(getWorkspaceCacheScope(get), email);
     const previous = readJson<string[]>(key, []);
     const pathOnly = path.replace(/[?#].*$/, "");
     const next = [
@@ -58,7 +60,7 @@ export const createPreferencesSlice: AppSliceCreator<PreferencesSlice> = (
   removeRecentVisit: (path) => {
     const email = getCurrentUserEmail(get);
     if (!email) return;
-    const key = storageKeyRecentVisit(email);
+    const key = storageKeyRecentVisit(getWorkspaceCacheScope(get), email);
     const previous = readJson<string[]>(key, []);
     writeJson(
       key,
@@ -76,6 +78,31 @@ export const createPreferencesSlice: AppSliceCreator<PreferencesSlice> = (
       ...Object.fromEntries(QUICKSTART_RESET_KEYS.map((key) => [key, false])),
     };
     writeJson(key, next);
+    set((state) => ({ introStateVersion: state.introStateVersion + 1 }));
     emitReactQuickstartReset({ keys: QUICKSTART_RESET_KEYS });
+  },
+
+  // Mirrors the Pinia `useUIStateStore.getIntroStateByKey`. Reads the per-user
+  // localStorage map; `introStateVersion` (read by callers' selectors) is what
+  // makes a subsequent `saveIntroStateByKey` re-trigger the read.
+  getIntroStateByKey: (key) => {
+    const email = getCurrentUserEmail(get);
+    if (!email) return false;
+    const map = readJson<Record<string, boolean>>(
+      storageKeyIntroState(email),
+      {}
+    );
+    return map[key] ?? false;
+  },
+
+  // Mirrors the Pinia `useUIStateStore.saveIntroStateByKey`: persists a
+  // single intro flag (e.g. `data.query`) to the per-user localStorage map.
+  saveIntroStateByKey: ({ key, newState }) => {
+    const email = getCurrentUserEmail(get);
+    if (!email) return;
+    const storageKey = storageKeyIntroState(email);
+    const previous = readJson<Record<string, boolean>>(storageKey, {});
+    writeJson(storageKey, { ...previous, [key]: newState });
+    set((state) => ({ introStateVersion: state.introStateVersion + 1 }));
   },
 });

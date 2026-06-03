@@ -2,6 +2,7 @@ import { cloneDeep } from "lodash-es";
 import { ChevronDown, ChevronRight, Info, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useShallow } from "zustand/react/shallow";
 import {
   AdvancedSearch,
   emptySearchParams,
@@ -23,23 +24,23 @@ import { Tooltip } from "@/react/components/ui/tooltip";
 import { Tree, type TreeDataNode } from "@/react/components/ui/tree";
 import { countVisibleRows } from "@/react/components/ui/tree-utils";
 import { useCommonSearchScopeOptions } from "@/react/components/useCommonSearchScopeOptions";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useAppDatabase } from "@/react/hooks/useAppDatabase";
+import { useAppProject } from "@/react/hooks/useAppProject";
+import { useCurrentUser } from "@/react/hooks/useAppState";
+import { useSQLEditorFeature } from "@/react/hooks/useSQLEditorBridge";
+import type { DatabaseFilter } from "@/react/lib/databaseFilter";
+import { instanceNamePrefix } from "@/react/lib/resourceName";
+import { getConnectionForSQLEditorTab } from "@/react/lib/sqlEditorConnection";
 import { cn } from "@/react/lib/utils";
+import { useAppStore } from "@/react/stores/app";
 import { useSQLEditorStore } from "@/react/stores/sqlEditor";
-import { useSQLEditorVueState } from "@/react/stores/sqlEditor/editor-vue-state";
-import { useSQLEditorTabStore } from "@/react/stores/sqlEditor/tab-vue-state";
+import { useSQLEditorEditorState } from "@/react/stores/sqlEditor/editor";
 import {
-  featureToRef,
-  pushNotification,
-  useCurrentUserV1,
-  useDatabaseV1Store,
-  useDBGroupStore,
-  useEnvironmentV1Store,
-  useInstanceV1Store,
-  useProjectV1Store,
-} from "@/store";
-import { instanceNamePrefix } from "@/store/modules/v1/common";
-import type { DatabaseFilter } from "@/store/modules/v1/database";
+  getSQLEditorTabsState,
+  useCurrentSQLEditorTab,
+  useIsInBatchMode,
+  useSupportBatchMode,
+} from "@/react/stores/sqlEditor/tab";
 import type {
   BatchQueryContext,
   QueryDataSourceType,
@@ -59,7 +60,6 @@ import { DataSourceType } from "@/types/proto-es/v1/instance_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import {
   extractDatabaseResourceName,
-  getConnectionForSQLEditorTab,
   getInstanceResource,
   getValueFromSearchParams,
   getValuesFromSearchParams,
@@ -138,36 +138,35 @@ function ConnectionPaneWithHoverState(props: Props) {
 
 function ConnectionPaneInner({ show, onMissingFeature }: Props) {
   const { t } = useTranslation();
-  const tabStore = useSQLEditorTabStore();
-  const editorStore = useSQLEditorVueState();
   const setShowConnectionPanel = useSQLEditorStore(
     (s) => s.setShowConnectionPanel
   );
-  const databaseStore = useDatabaseV1Store();
-  const dbGroupStore = useDBGroupStore();
-  const environmentStore = useEnvironmentV1Store();
-  const projectStore = useProjectV1Store();
-  const instanceStore = useInstanceV1Store();
+  const getOrFetchDatabaseByName = useAppStore(
+    (s) => s.getOrFetchDatabaseByName
+  );
+  const batchGetOrFetchDatabases = useAppStore(
+    (s) => s.batchGetOrFetchDatabases
+  );
+  const fetchDBGroup = useAppStore((s) => s.fetchDBGroup);
   const setTreeState = useSQLEditorStore((s) => s.setTreeState);
   const treeNodeKeysByTarget = useSQLEditorStore((s) => s.treeNodeKeysByTarget);
-  const currentUser = useCurrentUserV1();
+  const currentUserEmail = useCurrentUser().email;
 
-  const supportBatchMode = useVueState(() => tabStore.supportBatchMode);
-  const isInBatchMode = useVueState(() => tabStore.isInBatchMode);
+  const supportBatchMode = useSupportBatchMode();
+  const isInBatchMode = useIsInBatchMode();
   const treeStoreState = useSQLEditorStore((s) => s.treeState);
-  const currentTab = useVueState(() => tabStore.currentTab);
-  const currentUserEmail = useVueState(() => currentUser.value.email);
-  const projectName = useVueState(() => editorStore.project);
-  const projectContextReady = useVueState(
-    () => editorStore.projectContextReady
+  const currentTab = useCurrentSQLEditorTab();
+  const projectName = useSQLEditorEditorState((s) => s.project);
+  const projectContextReady = useSQLEditorEditorState(
+    (s) => s.projectContextReady
   );
-  const environmentList = useVueState(() => environmentStore.environmentList);
+  const environmentList = useAppStore((s) => s.environmentList);
 
-  const hasBatchQueryFeature = useVueState(
-    () => featureToRef(PlanFeature.FEATURE_BATCH_QUERY).value
+  const hasBatchQueryFeature = useSQLEditorFeature(
+    PlanFeature.FEATURE_BATCH_QUERY
   );
-  const hasDatabaseGroupFeature = useVueState(
-    () => featureToRef(PlanFeature.FEATURE_DATABASE_GROUPS).value
+  const hasDatabaseGroupFeature = useSQLEditorFeature(
+    PlanFeature.FEATURE_DATABASE_GROUPS
   );
 
   // Paywall triggers go to the parent (lifted out of this subtree so the
@@ -214,27 +213,34 @@ function ConnectionPaneInner({ show, onMissingFeature }: Props) {
     [currentTab?.batchQueryContext?.databaseGroups]
   );
 
+  // Ensure each selected group is fetched with the FULL view so its
+  // `matchedDatabases` are available for the coverage map + query routing.
+  useEffect(() => {
+    for (const groupName of selectedDatabaseGroupNames) {
+      void fetchDBGroup(groupName, DatabaseGroupView.FULL);
+    }
+  }, [fetchDBGroup, selectedDatabaseGroupNames]);
+
   // Map<databaseResourceName, groupTitle> for every database covered by
   // any currently-selected database group. Mirrors Vue's
   // `flattenSelectedDatabasesFromGroup` and drives the tree-row checkbox
   // so users can see which databases are already implicitly included via
   // group selection (rendered as checked + disabled + tooltip in batch
-  // mode). useVueState — the underlying group cache mutates without the
-  // store reference changing, so a deep subscription catches new
-  // matchedDatabases as they arrive from the FULL-view fetch.
-  const groupCoveredDatabaseTitles = useVueState(
-    () => {
+  // mode). `useShallow` over the Map keeps the snapshot stable (zustand's
+  // shallow equality compares Map entries) and picks up the FULL-view
+  // `matchedDatabases` as they land in the store.
+  const groupCoveredDatabaseTitles = useAppStore(
+    useShallow((s) => {
       const map = new Map<string, string>();
       for (const groupName of selectedDatabaseGroupNames) {
-        const group = dbGroupStore.getDBGroupByName(groupName);
-        if (!isValidDatabaseGroupName(group.name)) continue;
+        const group = s.dbGroupsByName[groupName];
+        if (!group || !isValidDatabaseGroupName(group.name)) continue;
         for (const m of group.matchedDatabases) {
           map.set(m.name, group.title);
         }
       }
       return map;
-    },
-    { deep: true }
+    })
   );
 
   const selectedDatabaseNames = useMemo(() => {
@@ -253,11 +259,8 @@ function ConnectionPaneInner({ show, onMissingFeature }: Props) {
     selectedDatabaseGroupNames.length,
   ]);
 
-  const projectTitle = useVueState(() => {
-    const p = editorStore.project;
-    if (!p) return "";
-    return projectStore.getProjectByName(p).title;
-  });
+  const currentProject = useAppProject(projectName);
+  const projectTitle = projectName ? currentProject.title : "";
 
   const scopeOptions = useCommonSearchScopeOptions([
     "instance",
@@ -320,15 +323,15 @@ function ConnectionPaneInner({ show, onMissingFeature }: Props) {
 
   // Keep the `dataSourceType` in the tab store aligned with the UI.
   useEffect(() => {
-    tabStore.updateBatchQueryContext({ dataSourceType });
-  }, [tabStore, dataSourceType]);
+    getSQLEditorTabsState().updateBatchQueryContext({ dataSourceType });
+  }, [dataSourceType]);
 
   // Pre-fetch display data for currently-selected databases (so tags render
   // with the right title immediately).
   useEffect(() => {
     if (!currentTab) return;
-    void databaseStore.batchGetOrFetchDatabases(selectedDatabaseNames);
-  }, [currentTab, databaseStore, selectedDatabaseNames]);
+    void batchGetOrFetchDatabases(selectedDatabaseNames);
+  }, [currentTab, batchGetOrFetchDatabases, selectedDatabaseNames]);
 
   // Drive treeStore.state transitions so the mask spinner lifts when the
   // project is ready and hides again when the project changes.
@@ -355,23 +358,28 @@ function ConnectionPaneInner({ show, onMissingFeature }: Props) {
   useEffect(() => {
     let cancelled = false;
     const compute = async () => {
-      const connection = tabStore.currentTab?.connection;
+      const tabsState = getSQLEditorTabsState();
+      const connection = tabsState.tabsById.get(
+        tabsState.currentTabId
+      )?.connection;
       if (!connection) {
         if (!cancelled) setSelectedKeys([]);
         return;
       }
       if (connection.database) {
-        const database = await databaseStore.getOrFetchDatabaseByName(
-          connection.database
-        );
+        const database = await getOrFetchDatabaseByName(connection.database);
         if (cancelled) return;
         setSelectedKeys(treeNodeKeysByTarget("database", database));
         return;
       }
       if (connection.instance) {
-        const instance = instanceStore.getInstanceByName(connection.instance);
+        const instance = await useAppStore
+          .getState()
+          .fetchInstance(connection.instance);
         if (cancelled) return;
-        setSelectedKeys(treeNodeKeysByTarget("instance", instance));
+        setSelectedKeys(
+          instance ? treeNodeKeysByTarget("instance", instance) : []
+        );
         return;
       }
       if (!cancelled) setSelectedKeys([]);
@@ -386,7 +394,7 @@ function ConnectionPaneInner({ show, onMissingFeature }: Props) {
       cancelled = true;
       unsubscribe();
     };
-  }, [tabStore, databaseStore, instanceStore, treeNodeKeysByTarget]);
+  }, [getOrFetchDatabaseByName, treeNodeKeysByTarget]);
 
   // Context-menu imperative handle.
   const contextMenuRef = useRef<ConnectionContextMenuHandle>(null);
@@ -421,13 +429,10 @@ function ConnectionPaneInner({ show, onMissingFeature }: Props) {
     async (ctx: BatchQueryContext): Promise<boolean> => {
       setSwitchingConnection(true);
       try {
-        const queryable = await getQueryableDatabase(
-          ctx,
-          databaseStore,
-          dbGroupStore
-        );
+        const queryable = await getQueryableDatabase(ctx);
+        const tabsState = getSQLEditorTabsState();
         const currentConnection = getConnectionForSQLEditorTab(
-          tabStore.currentTab
+          tabsState.tabsById.get(tabsState.currentTabId)
         );
         if (
           !currentConnection.database?.name ||
@@ -440,14 +445,14 @@ function ConnectionPaneInner({ show, onMissingFeature }: Props) {
             batchQueryContext: ctx,
           });
         } else {
-          tabStore.updateBatchQueryContext(ctx);
+          getSQLEditorTabsState().updateBatchQueryContext(ctx);
         }
         return !!queryable;
       } finally {
         setSwitchingConnection(false);
       }
     },
-    [tabStore, databaseStore, dbGroupStore]
+    []
   );
 
   const handleToggleDatabase = useCallback(
@@ -486,7 +491,7 @@ function ConnectionPaneInner({ show, onMissingFeature }: Props) {
       if (ok) {
         setShowConnectionPanel(false);
       } else {
-        pushNotification({
+        useAppStore.getState().notify({
           module: "bytebase",
           style: "CRITICAL",
           title: t("sql-editor.no-queriable-database"),
@@ -519,7 +524,7 @@ function ConnectionPaneInner({ show, onMissingFeature }: Props) {
       });
       const ok = await onBatchQueryContextChange(ctx);
       if (next.length > 0 && !ok) {
-        pushNotification({
+        useAppStore.getState().notify({
           module: "bytebase",
           style: "CRITICAL",
           title: t("sql-editor.no-queriable-database"),
@@ -710,7 +715,6 @@ function BatchModeHeader({
   onUncheckDatabaseGroup: (name: string) => void;
 }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
 
   return (
     <div className="w-full px-4 mt-4">
@@ -732,7 +736,6 @@ function BatchModeHeader({
             name={db}
             disabled={switchingConnection}
             onClose={() => onToggleDatabase(db, false)}
-            resolveDatabase={() => databaseStore.getDatabaseByName(db)}
           />
         ))}
         {hasDatabaseGroupFeature &&
@@ -779,17 +782,13 @@ function SelectedDatabaseTag({
   name,
   disabled,
   onClose,
-  resolveDatabase,
 }: {
   name: string;
   disabled: boolean;
   onClose: () => void;
-  resolveDatabase: () => ReturnType<
-    ReturnType<typeof useDatabaseV1Store>["getDatabaseByName"]
-  >;
 }) {
   const { t } = useTranslation();
-  const database = useVueState(resolveDatabase);
+  const database = useAppDatabase(name);
   const instance = useMemo(() => {
     if (!database) return null;
     return getInstanceResource(database);
@@ -1244,20 +1243,18 @@ function collectAllNodeKeys(nodes: SQLEditorTreeNode[]): string[] {
  * "no-queriable-database" notification is only surfaced when the function
  * returns `undefined` (i.e. no databases at all in any picked group).
  */
-async function getQueryableDatabase(
-  ctx: BatchQueryContext,
-  databaseStore: ReturnType<typeof useDatabaseV1Store>,
-  dbGroupStore: ReturnType<typeof useDBGroupStore>
-) {
+async function getQueryableDatabase(ctx: BatchQueryContext) {
   if (ctx.databases.length > 0) {
-    return databaseStore.getDatabaseByName(ctx.databases[0]);
+    return useAppStore.getState().getDatabaseByName(ctx.databases[0]);
   }
   for (const groupName of ctx.databaseGroups ?? []) {
-    const group = dbGroupStore.getDBGroupByName(groupName);
-    if (!isValidDatabaseGroupName(group.name)) continue;
-    const databases = await databaseStore.batchGetOrFetchDatabases(
-      group.matchedDatabases.map((d) => d.name)
-    );
+    const group = await useAppStore
+      .getState()
+      .fetchDBGroup(groupName, DatabaseGroupView.FULL);
+    if (!group || !isValidDatabaseGroupName(group.name)) continue;
+    const databases = await useAppStore
+      .getState()
+      .batchGetOrFetchDatabases(group.matchedDatabases.map((d) => d.name));
     if (databases.length > 0) return databases[0];
   }
   return undefined;

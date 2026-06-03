@@ -47,15 +47,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/react/components/ui/table";
+import { useIdentityProviderList } from "@/react/hooks/useAppState";
 import { useVueState } from "@/react/hooks/useVueState";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import { WORKSPACE_ROUTE_IDENTITY_PROVIDER_DETAIL } from "@/router/dashboard/workspaceRoutes";
-import {
-  pushNotification,
-  useActuatorV1Store,
-  useSubscriptionV1Store,
-} from "@/store";
-import { useIdentityProviderStore } from "@/store/modules/idp";
+import { pushNotification } from "@/store";
 import {
   getIdentityProviderResourceId,
   idpNamePrefix,
@@ -139,9 +136,8 @@ interface FieldMappingState {
 
 function ExternalURLInfo({ type }: { type: IdentityProviderType }) {
   const { t } = useTranslation();
-  const actuatorStore = useActuatorV1Store();
   const externalUrl = useVueState(
-    () => actuatorStore.serverInfo?.externalUrl ?? ""
+    () => useAppStore.getState().serverInfo?.externalUrl ?? ""
   );
 
   const redirectUrl = useMemo(() => {
@@ -1299,12 +1295,14 @@ function CreateWizardDrawer({
   onCreated: (provider: IdentityProvider) => void;
 }) {
   const { t } = useTranslation();
-  const identityProviderStore = useIdentityProviderStore();
-  const subscriptionStore = useSubscriptionV1Store();
+  const createIdentityProvider = useAppStore(
+    (state) => state.createIdentityProvider
+  );
+  const identityProviderList = useIdentityProviderList();
   useEscapeKey(onClose);
 
   const hasEnterpriseSSOFeature = useVueState(() =>
-    subscriptionStore.hasFeature(PlanFeature.FEATURE_ENTERPRISE_SSO)
+    useAppStore.getState().hasFeature(PlanFeature.FEATURE_ENTERPRISE_SSO)
   );
 
   const [currentStep, setCurrentStep] = useState(1);
@@ -1553,8 +1551,7 @@ function CreateWizardDrawer({
     if (!canCreate) return;
     setIsCreating(true);
     try {
-      const createdProvider =
-        await identityProviderStore.createIdentityProvider(idpToCreate);
+      const createdProvider = await createIdentityProvider(idpToCreate);
       pushNotification({
         module: "bytebase",
         style: "SUCCESS",
@@ -1580,11 +1577,12 @@ function CreateWizardDrawer({
 
   const validateResourceId = useCallback(
     async (val: string) => {
-      try {
-        await identityProviderStore.getOrFetchIdentityProviderByName(
-          `${idpNamePrefix}${val}`,
-          true
-        );
+      if (
+        val &&
+        identityProviderList.some(
+          (idp) => idp.name === `${idpNamePrefix}${val}`
+        )
+      ) {
         return [
           {
             type: "error" as const,
@@ -1593,11 +1591,10 @@ function CreateWizardDrawer({
             }),
           },
         ];
-      } catch {
-        return [];
       }
+      return [];
     },
-    [identityProviderStore, t]
+    [identityProviderList, t]
   );
 
   // Step labels
@@ -1710,9 +1707,9 @@ function CreateWizardDrawer({
                   <div className="max-w-2xl mx-auto w-full">
                     {PROVIDER_TYPE_LIST.map((item) => {
                       const Icon = getProviderIcon(item.type);
-                      const hasFeature = subscriptionStore.hasFeature(
-                        item.feature
-                      );
+                      const hasFeature = useAppStore
+                        .getState()
+                        .hasFeature(item.feature);
                       return (
                         <label
                           key={item.type}
@@ -1767,9 +1764,9 @@ function CreateWizardDrawer({
                   <div className="max-w-3xl mx-auto grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {templateList.map((tmpl) => {
                       const Icon = getTemplateIcon(tmpl.title);
-                      const hasFeature = subscriptionStore.hasFeature(
-                        tmpl.feature
-                      );
+                      const hasFeature = useAppStore
+                        .getState()
+                        .hasFeature(tmpl.feature);
                       return (
                         <label
                           key={tmpl.title}
@@ -1968,27 +1965,24 @@ function CreateWizardDrawer({
 
 export function IDPsPage() {
   const { t } = useTranslation();
-  const identityProviderStore = useIdentityProviderStore();
-
-  const subscriptionStore = useSubscriptionV1Store();
+  const identityProviderList = useIdentityProviderList();
+  const listIdentityProviders = useAppStore(
+    (state) => state.listIdentityProviders
+  );
 
   const [ready, setReady] = useState(false);
   const [showCreateDrawer, setShowCreateDrawer] = useState(false);
 
   const hasSSOFeature = useVueState(() =>
-    subscriptionStore.hasFeature(PlanFeature.FEATURE_GOOGLE_AND_GITHUB_SSO)
+    useAppStore.getState().hasFeature(PlanFeature.FEATURE_GOOGLE_AND_GITHUB_SSO)
   );
   const canCreate = hasWorkspacePermissionV2("bb.identityProviders.create");
 
-  const identityProviderList = useVueState(() => [
-    ...identityProviderStore.identityProviderList,
-  ]);
-
   useEffect(() => {
-    identityProviderStore
-      .fetchIdentityProviderList(useActuatorV1Store().workspaceResourceName)
-      .finally(() => setReady(true));
-  }, []);
+    listIdentityProviders(
+      useAppStore.getState().workspaceResourceName()
+    ).finally(() => setReady(true));
+  }, [listIdentityProviders]);
 
   const handleCreateSSO = () => {
     if (!hasSSOFeature) return;

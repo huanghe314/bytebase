@@ -16,17 +16,11 @@ import {
 } from "@/react/components/ui/tabs";
 import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
+import { useAppStore } from "@/react/stores/app";
+import { extractWorkloadIdentityId } from "@/react/stores/app/workloadIdentity";
 import { router } from "@/router";
 import { SETTING_ROUTE_WORKSPACE_GENERAL } from "@/router/dashboard/workspaceSetting";
-import {
-  extractWorkloadIdentityId,
-  useActuatorV1Store,
-  useDatabaseV1Store,
-  useProjectV1Store,
-} from "@/store";
-import { useDBGroupStore } from "@/store/modules/dbGroup";
 import { projectNamePrefix } from "@/store/modules/v1/common";
-import { useWorkloadIdentityStore } from "@/store/modules/workloadIdentity";
 import { DatabaseGroupView } from "@/types/proto-es/v1/database_group_service_pb";
 import type { WorkloadIdentity } from "@/types/proto-es/v1/workload_identity_service_pb";
 import { WorkloadIdentityConfig_ProviderType } from "@/types/proto-es/v1/workload_identity_service_pb";
@@ -41,14 +35,21 @@ import {
 
 export function ProjectGitOpsPage({ projectId }: { projectId: string }) {
   const { t } = useTranslation();
-  const actuatorStore = useActuatorV1Store();
-  const workloadIdentityStore = useWorkloadIdentityStore();
-  const dbGroupStore = useDBGroupStore();
-  const databaseStore = useDatabaseV1Store();
-  const projectStore = useProjectV1Store();
+  const serverInfo = useAppStore((s) => s.serverInfo);
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  const listWorkloadIdentities = useAppStore(
+    (state) => state.listWorkloadIdentities
+  );
+  const fetchWorkloadIdentity = useAppStore(
+    (state) => state.fetchWorkloadIdentity
+  );
 
   const projectName = `${projectNamePrefix}${projectId}`;
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  // subscribe to re-render on project cache change
+  void projectsByName;
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
+  );
 
   const [showCreateDrawer, setShowCreateDrawer] = useState(false);
   const [selectedIdentityName, setSelectedIdentityName] = useState("");
@@ -67,6 +68,11 @@ export function ProjectGitOpsPage({ projectId }: { projectId: string }) {
   // Workload identity options
   const [wiOptions, setWiOptions] = useState<ComboboxOption[]>([]);
   const [wiSearch, setWiSearch] = useState("");
+  const selectedIdentity = useAppStore((state) =>
+    selectedIdentityName
+      ? state.getWorkloadIdentity(selectedIdentityName)
+      : undefined
+  );
 
   const fetchWorkloadIdentities = useCallback(
     async (search: string) => {
@@ -74,7 +80,7 @@ export function ProjectGitOpsPage({ projectId }: { projectId: string }) {
       let pageToken: string | undefined;
       // Fetch all pages so every identity is discoverable.
       do {
-        const resp = await workloadIdentityStore.listWorkloadIdentities({
+        const resp = await listWorkloadIdentities({
           parent: projectName,
           filter: { query: search },
           pageToken,
@@ -92,7 +98,7 @@ export function ProjectGitOpsPage({ projectId }: { projectId: string }) {
       } while (pageToken);
       setWiOptions(all);
     },
-    [projectName, workloadIdentityStore]
+    [projectName, listWorkloadIdentities]
   );
 
   useEffect(() => {
@@ -102,7 +108,8 @@ export function ProjectGitOpsPage({ projectId }: { projectId: string }) {
   // Database group options
   const [dbGroupOptions, setDbGroupOptions] = useState<ComboboxOption[]>([]);
   useEffect(() => {
-    dbGroupStore
+    useAppStore
+      .getState()
       .fetchDBGroupListByProjectName(projectName, DatabaseGroupView.BASIC)
       .then((groups) => {
         setDbGroupOptions(
@@ -113,7 +120,7 @@ export function ProjectGitOpsPage({ projectId }: { projectId: string }) {
         );
       })
       .catch(() => {});
-  }, [projectName, dbGroupStore]);
+  }, [projectName]);
 
   // Database options for individual selection
   const [dbOptions, setDbOptions] = useState<ComboboxOption[]>([]);
@@ -123,7 +130,7 @@ export function ProjectGitOpsPage({ projectId }: { projectId: string }) {
       const all: ComboboxOption[] = [];
       let pageToken: string | undefined;
       do {
-        const resp = await databaseStore.fetchDatabases({
+        const resp = await useAppStore.getState().fetchDatabases({
           parent: projectName,
           filter: dbSearch ? { query: dbSearch } : {},
           pageSize: getDefaultPagination(),
@@ -141,22 +148,15 @@ export function ProjectGitOpsPage({ projectId }: { projectId: string }) {
       setDbOptions(all);
     };
     fetchAllDatabases().catch(() => {});
-  }, [projectName, dbSearch, databaseStore]);
+  }, [projectName, dbSearch]);
 
   // Fetch the selected identity into the store cache so getWorkloadIdentity
   // returns the real object (with workloadIdentityConfig) instead of a stub.
   useEffect(() => {
     if (selectedIdentityName) {
-      workloadIdentityStore
-        .getOrFetchWorkloadIdentity(selectedIdentityName)
-        .catch(() => {});
+      fetchWorkloadIdentity(selectedIdentityName).catch(() => {});
     }
-  }, [selectedIdentityName, workloadIdentityStore]);
-
-  const selectedIdentity = useVueState(() => {
-    if (!selectedIdentityName) return undefined;
-    return workloadIdentityStore.getWorkloadIdentity(selectedIdentityName);
-  });
+  }, [selectedIdentityName, fetchWorkloadIdentity]);
 
   const selectedConfig = selectedIdentity?.workloadIdentityConfig;
 
@@ -197,8 +197,9 @@ export function ProjectGitOpsPage({ projectId }: { projectId: string }) {
 
   const branch = parsedSubject?.branch || "main";
 
-  const bytebaseUrl = useVueState(() =>
-    (actuatorStore.serverInfo?.externalUrl ?? "").replace(/\/$/, "")
+  const bytebaseUrl = useMemo(
+    () => (serverInfo?.externalUrl ?? "").replace(/\/$/, ""),
+    [serverInfo]
   );
 
   const workloadIdentityEmail = selectedIdentityName

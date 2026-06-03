@@ -5,14 +5,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/parser/plsql"
+	"github.com/bytebase/omni/oracle/ast"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
 	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
-	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	plsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/plsql"
 )
 
@@ -36,22 +34,8 @@ func (*NamingTableNoKeywordAdvisor) Check(_ context.Context, checkCtx advisor.Co
 	}
 
 	rule := NewNamingTableNoKeywordRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase)
-	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range checkCtx.ParsedStatements {
-		if stmt.AST == nil {
-			continue
-		}
-		antlrAST, ok := base.GetANTLRAST(stmt.AST)
-		if !ok {
-			continue
-		}
-		rule.SetBaseLine(stmt.BaseLine())
-		checker.SetBaseLine(stmt.BaseLine())
-		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
-	}
-
-	return checker.GetAdviceList()
+	return RunOmniRules(checkCtx.ParsedStatements, []OmniRule{rule})
 }
 
 // NamingTableNoKeywordRule is the rule implementation for table naming convention without keyword.
@@ -74,46 +58,32 @@ func (*NamingTableNoKeywordRule) Name() string {
 	return "naming.table-no-keyword"
 }
 
-// OnEnter is called when the parser enters a rule context.
-func (r *NamingTableNoKeywordRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
-	switch nodeType {
-	case "Create_table":
-		r.handleCreateTable(ctx.(*parser.Create_tableContext))
-	case "Alter_table_properties":
-		r.handleAlterTableProperties(ctx.(*parser.Alter_table_propertiesContext))
+// OnStatement checks table names in omni DDL statements.
+func (r *NamingTableNoKeywordRule) OnStatement(node ast.Node) {
+	switch n := node.(type) {
+	case *ast.CreateTableStmt:
+		r.checkTableName(omniLastObjectName(n.Name), n.Loc)
+	case *ast.AlterTableStmt:
+		for _, cmd := range omniAlterTableCmds(n) {
+			if cmd.Action == ast.AT_RENAME && cmd.NewName != "" {
+				r.checkTableName(cmd.NewName, cmd.Loc)
+			}
+		}
 	default:
 	}
-	return nil
 }
+
+func (r *NamingTableNoKeywordRule) checkTableName(tableName string, loc ast.Loc) {
+	if tableName != "" && plsqlparser.IsOracleKeyword(tableName) {
+		r.AddAdvice(
+			r.level,
+			code.NameIsKeywordIdentifier.Int32(),
+			fmt.Sprintf("Table name %q is a keyword identifier and should be avoided.", tableName),
+			common.ConvertANTLRLineToPosition(r.locLine(loc)),
+		)
+	}
+}
+
+// OnEnter is called when the parser enters a rule context.
 
 // OnExit is called when the parser exits a rule context.
-func (*NamingTableNoKeywordRule) OnExit(_ antlr.ParserRuleContext, _ string) error {
-	return nil
-}
-
-func (r *NamingTableNoKeywordRule) handleCreateTable(ctx *parser.Create_tableContext) {
-	tableName := normalizeIdentifier(ctx.Table_name(), r.currentDatabase)
-	if plsqlparser.IsOracleKeyword(tableName) {
-		r.AddAdvice(
-			r.level,
-			code.NameIsKeywordIdentifier.Int32(),
-			fmt.Sprintf("Table name %q is a keyword identifier and should be avoided.", tableName),
-			common.ConvertANTLRLineToPosition(r.baseLine+ctx.GetStart().GetLine()),
-		)
-	}
-}
-
-func (r *NamingTableNoKeywordRule) handleAlterTableProperties(ctx *parser.Alter_table_propertiesContext) {
-	if ctx.Tableview_name() == nil {
-		return
-	}
-	tableName := lastIdentifier(normalizeIdentifier(ctx.Tableview_name(), r.currentDatabase))
-	if plsqlparser.IsOracleKeyword(tableName) {
-		r.AddAdvice(
-			r.level,
-			code.NameIsKeywordIdentifier.Int32(),
-			fmt.Sprintf("Table name %q is a keyword identifier and should be avoided.", tableName),
-			common.ConvertANTLRLineToPosition(r.baseLine+ctx.GetStart().GetLine()),
-		)
-	}
-}

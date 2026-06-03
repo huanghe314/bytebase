@@ -9,11 +9,15 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   useTranslation: vi.fn(() => ({ t: (key: string) => key })),
-  useVueState: vi.fn<(getter: () => unknown) => unknown>(),
-  useActuatorV1Store: vi.fn(),
-  useCurrentUserV1: vi.fn(),
-  useWorkSheetStore: vi.fn(),
-  useSQLEditorTabStore: vi.fn(),
+  usePiniaBridge: vi.fn<(getter: () => unknown) => unknown>(),
+  serverInfo: { externalUrl: "https://example.com" } as
+    | { externalUrl: string }
+    | undefined,
+  useCurrentUser: vi.fn(),
+  patchWorksheet: vi.fn().mockResolvedValue({}),
+  // `useSQLEditorTabState(selector)` runs `selector` against this stub
+  // state; the component selects `tabsById.get(currentTabId)?.status`.
+  tabStatus: "CLEAN" as string,
   pushNotification: vi.fn(),
   extractProjectResourceName: vi.fn(
     (name: string) => name.split("/")[1] ?? name
@@ -26,19 +30,42 @@ vi.mock("react-i18next", () => ({
   useTranslation: mocks.useTranslation,
 }));
 
-vi.mock("@/react/hooks/useVueState", () => ({
-  useVueState: mocks.useVueState,
+vi.mock("@/react/hooks/usePiniaBridge", () => ({
+  usePiniaBridge: mocks.usePiniaBridge,
 }));
 
-vi.mock("@/store", () => ({
-  useActuatorV1Store: mocks.useActuatorV1Store,
-  useCurrentUserV1: mocks.useCurrentUserV1,
-  useWorkSheetStore: mocks.useWorkSheetStore,
-  pushNotification: mocks.pushNotification,
+vi.mock("@/react/hooks/useAppState", () => ({
+  useCurrentUser: mocks.useCurrentUser,
 }));
 
-vi.mock("@/react/stores/sqlEditor/tab-vue-state", () => ({
-  useSQLEditorTabStore: mocks.useSQLEditorTabStore,
+vi.mock("@/react/stores/app", () => {
+  // `notify` reuses the `pushNotification` vi.fn so the existing test
+  // assertions on `mocks.pushNotification` keep working after the migration
+  // from the Pinia helper to the app-store notification slice.
+  const state = () => ({
+    serverInfo: mocks.serverInfo,
+    patchWorksheet: mocks.patchWorksheet,
+    notify: mocks.pushNotification,
+  });
+  return {
+    useAppStore: Object.assign(
+      (selector: (s: ReturnType<typeof state>) => unknown) => selector(state()),
+      { getState: state }
+    ),
+  };
+});
+
+vi.mock("@/react/stores/sqlEditor/tab", () => ({
+  useSQLEditorTabState: (
+    selector: (s: {
+      currentTabId: string;
+      tabsById: Map<string, { status: string }>;
+    }) => unknown
+  ) =>
+    selector({
+      currentTabId: "t1",
+      tabsById: new Map([["t1", { status: mocks.tabStatus }]]),
+    }),
 }));
 
 vi.mock("@/utils", () => ({
@@ -116,20 +143,15 @@ beforeEach(async () => {
 
   mocks.useTranslation.mockReturnValue({ t: (key: string) => key });
 
-  mocks.useActuatorV1Store.mockReturnValue({
-    serverInfo: { externalUrl: "https://example.com" },
+  mocks.serverInfo = { externalUrl: "https://example.com" };
+  mocks.useCurrentUser.mockReturnValue({
+    email: "test@example.com",
+    name: "users/test@example.com",
   });
-  mocks.useCurrentUserV1.mockReturnValue({
-    value: { email: "test@example.com", name: "users/test@example.com" },
-  });
-  mocks.useWorkSheetStore.mockReturnValue({
-    patchWorksheet: vi.fn().mockResolvedValue({}),
-  });
-  mocks.useSQLEditorTabStore.mockReturnValue({
-    currentTab: { status: "CLEAN" },
-  });
+  mocks.patchWorksheet.mockResolvedValue({});
+  mocks.tabStatus = "CLEAN";
 
-  mocks.useVueState.mockImplementation((getter: () => unknown) => getter());
+  mocks.usePiniaBridge.mockImplementation((getter: () => unknown) => getter());
 
   // Mock clipboard
   Object.defineProperty(navigator, "clipboard", {
@@ -175,10 +197,13 @@ describe("SharePopoverBody", () => {
   });
 
   test("visibility selector disabled when user is not creator", () => {
-    mocks.useCurrentUserV1.mockReturnValue({
-      value: { email: "other@example.com", name: "users/other@example.com" },
+    mocks.useCurrentUser.mockReturnValue({
+      email: "other@example.com",
+      name: "users/other@example.com",
     });
-    mocks.useVueState.mockImplementation((getter: () => unknown) => getter());
+    mocks.usePiniaBridge.mockImplementation((getter: () => unknown) =>
+      getter()
+    );
 
     const { container, render, unmount } = renderIntoContainer(
       <SharePopoverBody worksheet={mockWorksheet as never} />
@@ -191,8 +216,7 @@ describe("SharePopoverBody", () => {
   });
 
   test("handleChangeAccess calls patchWorksheet and pushNotification but does NOT close the outer popover", async () => {
-    const patchWorksheet = vi.fn().mockResolvedValue({});
-    mocks.useWorkSheetStore.mockReturnValue({ patchWorksheet });
+    const patchWorksheet = mocks.patchWorksheet;
 
     const { container, render, unmount } = renderIntoContainer(
       <SharePopoverBody worksheet={mockWorksheet as never} />
@@ -239,10 +263,10 @@ describe("SharePopoverBody", () => {
   });
 
   test("copy button disabled when currentTab status is not CLEAN", () => {
-    mocks.useSQLEditorTabStore.mockReturnValue({
-      currentTab: { status: "DIRTY" },
-    });
-    mocks.useVueState.mockImplementation((getter: () => unknown) => getter());
+    mocks.tabStatus = "DIRTY";
+    mocks.usePiniaBridge.mockImplementation((getter: () => unknown) =>
+      getter()
+    );
 
     const { container, render, unmount } = renderIntoContainer(
       <SharePopoverBody worksheet={mockWorksheet as never} />

@@ -23,12 +23,8 @@ import {
   SheetTitle,
 } from "@/react/components/ui/sheet";
 import { cn } from "@/react/lib/utils";
-import {
-  pushNotification,
-  useReleaseStore,
-  useRevisionStore,
-  useSheetV1Store,
-} from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { pushNotification } from "@/store";
 import type {
   Release,
   Release_File,
@@ -43,6 +39,7 @@ import {
   CreateRevisionRequestSchema,
   Revision_Type,
 } from "@/types/proto-es/v1/revision_service_pb";
+import { SheetSchema } from "@/types/proto-es/v1/sheet_service_pb";
 
 enum Step {
   SELECT_SOURCE = 1,
@@ -73,9 +70,12 @@ export function ImportRevisionSheet({
   onCreated: (revisions: Revision[]) => void;
 }) {
   const { t } = useTranslation();
-  const releaseStore = useReleaseStore();
-  const revisionStore = useRevisionStore();
-  const sheetStore = useSheetV1Store();
+  const listReleasesByProject = useAppStore(
+    (state) => state.listReleasesByProject
+  );
+  const listAllRevisionsByDatabase = useAppStore(
+    (state) => state.listAllRevisionsByDatabase
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedSource, setSelectedSource] = useState<"release" | "local">(
@@ -94,25 +94,23 @@ export function ImportRevisionSheet({
 
   const loadExistingRevisions = useCallback(async () => {
     try {
-      const revisions = await revisionStore.fetchAllRevisionsByDatabase(
-        databaseName,
-        { pageSize: 1000 }
-      );
+      const revisions = await listAllRevisionsByDatabase(databaseName, {
+        pageSize: 1000,
+      });
       setExistingVersions(
         new Set(revisions.map((revision) => revision.version).filter(Boolean))
       );
     } catch (error) {
       console.error("Failed to load existing revisions:", error);
     }
-  }, [databaseName, revisionStore]);
+  }, [databaseName, listAllRevisionsByDatabase]);
 
   const loadReleases = useCallback(async () => {
     setLoadingReleases(true);
     try {
-      const { releases } = await releaseStore.fetchReleasesByProject(
-        projectName,
-        { pageSize: 100 }
-      );
+      const { releases } = await listReleasesByProject(projectName, {
+        pageSize: 100,
+      });
       setReleaseList(releases);
     } catch (error) {
       pushNotification({
@@ -124,7 +122,7 @@ export function ImportRevisionSheet({
     } finally {
       setLoadingReleases(false);
     }
-  }, [projectName, releaseStore, t]);
+  }, [listReleasesByProject, projectName, t]);
 
   useEffect(() => {
     if (!open) {
@@ -292,9 +290,12 @@ export function ImportRevisionSheet({
       let requests: CreateRevisionRequest[] = [];
       if (selectedSource === "local") {
         for (const file of localFiles) {
-          const sheet = await sheetStore.createSheet(projectName, {
-            content: new TextEncoder().encode(file.content),
-          });
+          const sheet = await useAppStore.getState().createSheet(
+            projectName,
+            create(SheetSchema, {
+              content: new TextEncoder().encode(file.content),
+            })
+          );
           requests.push(
             create(CreateRevisionRequestSchema, {
               parent: databaseName,
@@ -357,7 +358,6 @@ export function ImportRevisionSheet({
     selectedFiles,
     selectedRelease,
     selectedSource,
-    sheetStore,
     t,
   ]);
 

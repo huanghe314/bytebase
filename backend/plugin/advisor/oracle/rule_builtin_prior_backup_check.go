@@ -4,16 +4,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/antlr4-go/antlr/v4"
-
-	"github.com/bytebase/parser/plsql"
+	"github.com/bytebase/omni/oracle/ast"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
 	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
-	"github.com/bytebase/bytebase/backend/plugin/parser/base"
-	plsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/plsql"
 )
 
 var (
@@ -38,22 +34,8 @@ func (*StatementPriorBackupCheckAdvisor) Check(ctx context.Context, checkCtx adv
 	}
 
 	rule := NewStatementPriorBackupCheckRule(ctx, level, checkCtx.Rule.Type.String(), checkCtx)
-	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range checkCtx.ParsedStatements {
-		if stmt.AST == nil {
-			continue
-		}
-		antlrAST, ok := base.GetANTLRAST(stmt.AST)
-		if !ok {
-			continue
-		}
-		rule.SetBaseLine(stmt.BaseLine())
-		checker.SetBaseLine(stmt.BaseLine())
-		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
-	}
-
-	return checker.GetAdviceList()
+	return RunOmniRules(checkCtx.ParsedStatements, []OmniRule{rule})
 }
 
 type StatementType int
@@ -75,121 +57,8 @@ type TableReference struct {
 }
 
 type statementInfo struct {
-	offset    int
 	statement string
-	tree      antlr.ParserRuleContext
 	table     *TableReference
-}
-
-func prepareTransformation(databaseName string, parsedStatements []base.ParsedStatement) []statementInfo {
-	extractor := &dmlExtractor{
-		databaseName: databaseName,
-	}
-
-	// Walk each parse result tree to extract DML statements
-	for _, stmt := range parsedStatements {
-		if stmt.AST == nil {
-			continue
-		}
-		antlrAST, ok := base.GetANTLRAST(stmt.AST)
-		if !ok {
-			continue
-		}
-		antlr.ParseTreeWalkerDefault.Walk(extractor, antlrAST.Tree)
-	}
-
-	return extractor.dmls
-}
-
-func IsTopLevelStatement(ctx antlr.Tree) bool {
-	if ctx == nil {
-		return true
-	}
-	switch ctx := ctx.(type) {
-	case *plsql.Unit_statementContext, *plsql.Sql_scriptContext:
-		return true
-	case *plsql.Data_manipulation_language_statementsContext:
-		return IsTopLevelStatement(ctx.GetParent())
-	default:
-		return false
-	}
-}
-
-type dmlExtractor struct {
-	*plsql.BasePlSqlParserListener
-
-	databaseName string
-	dmls         []statementInfo
-	offset       int
-}
-
-func (e *dmlExtractor) ExitUnit_statement(_ *plsql.Unit_statementContext) {
-	e.offset++
-}
-
-func (e *dmlExtractor) ExitSql_plus_command(_ *plsql.Sql_plus_commandContext) {
-	e.offset++
-}
-
-func (e *dmlExtractor) EnterDelete_statement(ctx *plsql.Delete_statementContext) {
-	if IsTopLevelStatement(ctx.GetParent()) {
-		extractor := &tableExtractor{
-			databaseName: e.databaseName,
-		}
-		antlr.ParseTreeWalkerDefault.Walk(extractor, ctx)
-		extractor.table.StatementType = StatementTypeDelete
-
-		e.dmls = append(e.dmls, statementInfo{
-			offset:    e.offset,
-			statement: ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx),
-			tree:      ctx,
-			table:     extractor.table,
-		})
-	}
-}
-
-func (e *dmlExtractor) EnterUpdate_statement(ctx *plsql.Update_statementContext) {
-	if IsTopLevelStatement(ctx.GetParent()) {
-		extractor := &tableExtractor{
-			databaseName: e.databaseName,
-		}
-		antlr.ParseTreeWalkerDefault.Walk(extractor, ctx)
-		extractor.table.StatementType = StatementTypeUpdate
-
-		e.dmls = append(e.dmls, statementInfo{
-			offset:    e.offset,
-			statement: ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx),
-			tree:      ctx,
-			table:     extractor.table,
-		})
-	}
-}
-
-type tableExtractor struct {
-	*plsql.BasePlSqlParserListener
-
-	databaseName string
-	table        *TableReference
-}
-
-func (e *tableExtractor) EnterGeneral_table_ref(ctx *plsql.General_table_refContext) {
-	dmlTableExpr := ctx.Dml_table_expression_clause()
-	if dmlTableExpr != nil && dmlTableExpr.Tableview_name() != nil {
-		_, schemaName, tableName := plsqlparser.NormalizeTableViewName("", dmlTableExpr.Tableview_name())
-		e.table = &TableReference{
-			Database:  schemaName,
-			HasSchema: true,
-			Schema:    schemaName,
-			Table:     tableName,
-		}
-		if schemaName == "" {
-			e.table.Schema = e.databaseName
-			e.table.HasSchema = false
-		}
-		if ctx.Table_alias() != nil {
-			e.table.Alias = plsqlparser.NormalizeTableAlias(ctx.Table_alias())
-		}
-	}
 }
 
 // StatementPriorBackupCheckRule is the rule implementation for prior backup checks.
@@ -199,9 +68,8 @@ type StatementPriorBackupCheckRule struct {
 	ctx      context.Context
 	checkCtx advisor.Context
 
-	updateStatements []plsql.IUpdate_statementContext
-	deleteStatements []plsql.IDelete_statementContext
-	hasDDL           bool
+	statementInfoList []statementInfo
+	hasDDL            bool
 }
 
 // NewStatementPriorBackupCheckRule creates a new StatementPriorBackupCheckRule.
@@ -218,32 +86,30 @@ func (*StatementPriorBackupCheckRule) Name() string {
 	return "builtin.prior-backup-check"
 }
 
-// OnEnter is called when the parser enters a rule context.
-func (r *StatementPriorBackupCheckRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
-	if nodeType == "Unit_statement" {
-		r.handleUnitStatement(ctx.(*plsql.Unit_statementContext))
-	}
-	return nil
-}
-
-// OnExit is called when the parser exits a rule context.
-func (r *StatementPriorBackupCheckRule) OnExit(_ antlr.ParserRuleContext, nodeType string) error {
-	if nodeType == "Sql_script" {
-		r.handleSQLScriptExit()
-	}
-	return nil
-}
-
-func (r *StatementPriorBackupCheckRule) handleUnitStatement(ctx *plsql.Unit_statementContext) {
-	if dml := ctx.Data_manipulation_language_statements(); dml != nil {
-		if update := dml.Update_statement(); update != nil {
-			r.updateStatements = append(r.updateStatements, update)
-		} else if d := dml.Delete_statement(); d != nil {
-			r.deleteStatements = append(r.deleteStatements, d)
+// OnStatement collects top-level DML/DDL facts from omni statements.
+func (r *StatementPriorBackupCheckRule) OnStatement(node ast.Node) {
+	switch n := node.(type) {
+	case *ast.UpdateStmt:
+		r.statementInfoList = append(r.statementInfoList, statementInfo{
+			statement: r.stmtText,
+			table:     oracleTableReferenceFromObjectName(r.checkCtx.DBSchema.Name, n.Table, StatementTypeUpdate),
+		})
+	case *ast.DeleteStmt:
+		r.statementInfoList = append(r.statementInfoList, statementInfo{
+			statement: r.stmtText,
+			table:     oracleTableReferenceFromObjectName(r.checkCtx.DBSchema.Name, n.Table, StatementTypeDelete),
+		})
+	default:
+		if omniIsOracleDDL(node) {
+			r.hasDDL = true
 		}
-	} else {
-		r.hasDDL = true
 	}
+}
+
+// GetAdviceList returns final prior-backup advice after all omni statements are processed.
+func (r *StatementPriorBackupCheckRule) GetAdviceList() ([]*storepb.Advice, error) {
+	r.handleSQLScriptExit()
+	return r.BaseRule.GetAdviceList()
 }
 
 func (r *StatementPriorBackupCheckRule) handleSQLScriptExit() {
@@ -282,10 +148,11 @@ func (r *StatementPriorBackupCheckRule) handleSQLScriptExit() {
 		})
 	}
 
-	statementInfoList := prepareTransformation(r.checkCtx.DBSchema.Name, r.checkCtx.ParsedStatements)
-
 	groupByTable := make(map[string][]statementInfo)
-	for _, item := range statementInfoList {
+	for _, item := range r.statementInfoList {
+		if item.table == nil {
+			continue
+		}
 		key := fmt.Sprintf("%s.%s", item.table.Schema, item.table.Table)
 		groupByTable[key] = append(groupByTable[key], item)
 	}
@@ -311,4 +178,32 @@ func (r *StatementPriorBackupCheckRule) handleSQLScriptExit() {
 	}
 
 	r.adviceList = append(r.adviceList, adviceList...)
+}
+
+func oracleTableReferenceFromObjectName(databaseName string, name *ast.ObjectName, typ StatementType) *TableReference {
+	if name == nil {
+		return nil
+	}
+	schemaName := name.Schema
+	hasSchema := schemaName != ""
+	if schemaName == "" {
+		schemaName = databaseName
+	}
+	return &TableReference{
+		Database:      schemaName,
+		HasSchema:     hasSchema,
+		Schema:        schemaName,
+		Table:         name.Name,
+		StatementType: typ,
+	}
+}
+
+func omniIsOracleDDL(node ast.Node) bool {
+	switch node.(type) {
+	case *ast.CreateTableStmt, *ast.AlterTableStmt, *ast.DropStmt, *ast.CreateIndexStmt,
+		*ast.CreateViewStmt, *ast.TruncateStmt, *ast.CommentStmt:
+		return true
+	default:
+		return false
+	}
 }

@@ -1,30 +1,27 @@
 import { useState } from "react";
-import { useVueState } from "@/react/hooks/useVueState";
-import { useConnectionOfCurrentSQLEditorTab } from "@/react/stores/sqlEditor/tab-vue-state";
-import { useDBSchemaV1Store } from "@/store";
+import { useAppDatabaseMetadata } from "@/react/hooks/useAppDatabaseMetadata";
+import { useConnectionOfCurrentSQLEditorTab } from "@/react/hooks/useSQLEditorBridge";
 import { PanelSearchBox } from "../common/PanelSearchBox";
 import { useViewStateNav } from "../common/useViewStateNav";
 import { ViewDetail } from "./ViewDetail";
 import { ViewsTable } from "./ViewsTable";
 
 export function ViewsPanel() {
-  const dbSchemaStore = useDBSchemaV1Store();
   const { database } = useConnectionOfCurrentSQLEditorTab();
-  const databaseName = useVueState(() => database.value.name);
-  const db = useVueState(() => database.value);
-  const databaseMetadata = useVueState(
-    () => dbSchemaStore.getDatabaseMetadata(databaseName ?? ""),
-    { deep: true }
-  );
+  const databaseName = database.name;
+  const db = database;
+  const databaseMetadata = useAppDatabaseMetadata(databaseName ?? "", {
+    autoFetch: false,
+  });
 
   const { schema: schemaName, detail, setDetail } = useViewStateNav();
 
   const [keyword, setKeyword] = useState("");
 
-  const schema = databaseMetadata?.schemas.find((s) => s.name === schemaName);
+  const schema = databaseMetadata.schemas.find((s) => s.name === schemaName);
   const view = schema?.views.find((v) => v.name === detail?.view);
 
-  if (!db || !databaseMetadata || !schema) return null;
+  if (!db || !schema) return null;
 
   if (view) {
     return (

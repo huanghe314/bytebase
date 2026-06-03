@@ -1,4 +1,4 @@
-import { Download, Loader2 } from "lucide-react";
+import { Download, Loader2, SquareTerminal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -9,19 +9,16 @@ import {
   type ValueOption,
 } from "@/react/components/AdvancedSearch";
 import { HighlightLabelText } from "@/react/components/HighlightLabelText";
+import { Alert } from "@/react/components/ui/alert";
 import { Button } from "@/react/components/ui/button";
 import { Tooltip } from "@/react/components/ui/tooltip";
 import { PagedTableFooter, usePagedData } from "@/react/hooks/usePagedData";
 import { useVueState } from "@/react/hooks/useVueState";
+import { displayRoleTitleFromList } from "@/react/lib/role";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import { WORKSPACE_ROUTE_USER_PROFILE } from "@/router/dashboard/workspaceRoutes";
-import {
-  useDatabaseV1Store,
-  useInstanceV1Store,
-  useIssueV1Store,
-  useProjectV1Store,
-  useUserStore,
-} from "@/store";
+import { SQL_EDITOR_HOME_MODULE } from "@/router/sqlEditor";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import { getTimeForPbTimestampProtoEs, unknownUser } from "@/types";
 import { ApprovalStatus, RiskLevel } from "@/types/proto-es/v1/common_pb";
@@ -29,7 +26,6 @@ import type { Issue } from "@/types/proto-es/v1/issue_service_pb";
 import { Issue_Type, IssueStatus } from "@/types/proto-es/v1/issue_service_pb";
 import {
   buildIssueFilterBySearchParams,
-  displayRoleTitle,
   extractDatabaseResourceName,
   extractInstanceResourceName,
   extractIssueUID,
@@ -47,11 +43,17 @@ import { DataExportPrepSheet } from "./export-center/DataExportPrepSheet";
 
 export function ProjectDataExportPage({ projectId }: { projectId: string }) {
   const { t } = useTranslation();
-  const issueStore = useIssueV1Store();
-  const projectStore = useProjectV1Store();
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  void projectsByName;
+  const batchGetOrFetchUsers = useAppStore(
+    (state) => state.batchGetOrFetchUsers
+  );
 
   const projectName = `${projectNamePrefix}${projectId}`;
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
+  );
 
   const [showDrawer, setShowDrawer] = useState(false);
 
@@ -87,12 +89,10 @@ export function ProjectDataExportPage({ projectId }: { projectId: string }) {
     setSearchParams(defaultSearchParams());
   }, [projectId]);
 
-  const instanceStore = useInstanceV1Store();
-  const databaseStore = useDatabaseV1Store();
   const searchInstances = useCallback(
     async (keyword: string): Promise<ValueOption[]> => {
       if (!hasWorkspacePermissionV2("bb.instances.list")) return [];
-      const { instances } = await instanceStore.fetchInstanceList({
+      const { instances } = await useAppStore.getState().fetchInstanceList({
         pageSize: getDefaultPagination(),
         filter: keyword.trim() ? { query: keyword } : undefined,
       });
@@ -101,14 +101,14 @@ export function ProjectDataExportPage({ projectId }: { projectId: string }) {
         return { value: id, keywords: [id, i.title] };
       });
     },
-    [instanceStore]
+    []
   );
   const searchDatabases = useCallback(
     async (keyword: string): Promise<ValueOption[]> => {
       if (!project || !hasProjectPermissionV2(project, "bb.databases.list")) {
         return [];
       }
-      const { databases } = await databaseStore.fetchDatabases({
+      const { databases } = await useAppStore.getState().fetchDatabases({
         parent: projectName,
         pageSize: getDefaultPagination(),
         filter: keyword.trim() ? { query: keyword } : undefined,
@@ -118,7 +118,7 @@ export function ProjectDataExportPage({ projectId }: { projectId: string }) {
         return { value: db.name, keywords: [databaseName, db.name] };
       });
     },
-    [databaseStore, projectName, project]
+    [projectName, project]
   );
 
   // Scope options for the search bar
@@ -190,14 +190,16 @@ export function ProjectDataExportPage({ projectId }: { projectId: string }) {
 
   const fetchIssueList = useCallback(
     async (params: { pageSize: number; pageToken: string }) => {
-      const { nextPageToken, issues } = await issueStore.listIssues({
-        find: issueFilter,
-        pageSize: params.pageSize,
-        pageToken: params.pageToken,
-      });
+      const { nextPageToken, issues } = await useAppStore
+        .getState()
+        .listIssues({
+          find: issueFilter,
+          pageSize: params.pageSize,
+          pageToken: params.pageToken,
+        });
       return { list: issues, nextPageToken };
     },
-    [issueStore, issueFilter]
+    [issueFilter]
   );
 
   const paged = usePagedData<Issue>({
@@ -205,34 +207,54 @@ export function ProjectDataExportPage({ projectId }: { projectId: string }) {
     fetchList: fetchIssueList,
   });
 
+  useEffect(() => {
+    if (paged.dataList.length === 0) {
+      return;
+    }
+    void batchGetOrFetchUsers(paged.dataList.map((issue) => issue.creator));
+  }, [batchGetOrFetchUsers, paged.dataList]);
+
   return (
     <div className="py-4 w-full flex flex-col">
-      <div className="px-4">
-        <div className="w-full flex flex-col lg:flex-row items-start lg:items-center justify-between gap-2">
-          <div className="flex flex-1 max-w-full items-center gap-x-2">
-            <AdvancedSearch
-              params={searchParams}
-              onParamsChange={setSearchParams}
-              scopeOptions={scopeOptions}
-              placeholder={t("issue.advanced-search.filter")}
-            />
-            <Tooltip
-              content={
-                !canCreate
-                  ? t("common.missing-required-permission", {
-                      permissions:
-                        PERMISSIONS_FOR_DATABASE_EXPORT_ISSUE.join(", "),
-                    })
-                  : undefined
-              }
+      <div className="px-4 mb-3">
+        <Alert
+          variant="warning"
+          title={t("export-center.deprecated.title")}
+          description={t("export-center.deprecated.description")}
+        >
+          <div className="mt-3 flex justify-end">
+            <Button
+              size="sm"
+              className="shrink-0 whitespace-nowrap"
+              onClick={() => router.push({ name: SQL_EDITOR_HOME_MODULE })}
             >
-              <Button disabled={!canCreate} onClick={() => setShowDrawer(true)}>
-                <Download className="size-4 mr-1" />
-                {t("quick-action.request-export-data")}
-              </Button>
-            </Tooltip>
+              <SquareTerminal className="size-4 mr-1" />
+              {t("export-center.deprecated.open-sql-editor")}
+            </Button>
           </div>
-        </div>
+        </Alert>
+      </div>
+      <div className="px-4 flex flex-col sm:flex-row items-start sm:items-center gap-2">
+        <AdvancedSearch
+          params={searchParams}
+          onParamsChange={setSearchParams}
+          scopeOptions={scopeOptions}
+          placeholder={t("issue.advanced-search.filter")}
+        />
+        <Tooltip
+          content={
+            !canCreate
+              ? t("common.missing-required-permission", {
+                  permissions: PERMISSIONS_FOR_DATABASE_EXPORT_ISSUE.join(", "),
+                })
+              : undefined
+          }
+        >
+          <Button disabled={!canCreate} onClick={() => setShowDrawer(true)}>
+            <Download className="size-4 mr-1" />
+            {t("quick-action.request-export-data")}
+          </Button>
+        </Tooltip>
       </div>
 
       {/* Issue list */}
@@ -364,6 +386,7 @@ function RiskLevelIcon({ riskLevel }: { riskLevel: RiskLevel }) {
 
 function IssueApprovalStatusTag({ issue }: { issue: Issue }) {
   const { t } = useTranslation();
+  const roleList = useAppStore((state) => state.roleList);
   const approvalSteps = issue.approvalTemplate?.flow?.roles ?? [];
 
   if (issue.approvalStatus === ApprovalStatus.CHECKING) {
@@ -408,7 +431,7 @@ function IssueApprovalStatusTag({ issue }: { issue: Issue }) {
     if (status === ApprovalStatus.PENDING) {
       const currentRoleIndex = issue.approvers.length;
       const role = approvalSteps[currentRoleIndex];
-      const roleName = role ? displayRoleTitle(role) : "";
+      const roleName = role ? displayRoleTitleFromList(role, roleList) : "";
       return (
         <div className="shrink-0 flex flex-row sm:flex-col items-center sm:items-end gap-x-1.5 sm:gap-x-0 mt-1">
           <span className="inline-flex items-center rounded-full bg-control-bg px-2 py-0.5 text-xs text-control-light">
@@ -444,16 +467,21 @@ function IssueListItem({
   highlightText?: string;
 }) {
   const { t } = useTranslation();
-  const userStore = useUserStore();
-  const projectStore = useProjectV1Store();
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  void projectsByName;
 
-  const creator =
-    userStore.getUserByIdentifier(issue.creator) || unknownUser(issue.creator);
+  const creatorUser = useAppStore((state) =>
+    state.getUserByIdentifier(issue.creator)
+  );
+  const creator = creatorUser || unknownUser(issue.creator);
 
   const issueProject = useVueState(() =>
-    projectStore.getProjectByName(
-      `${projectNamePrefix}${extractProjectResourceName(issue.name)}`
-    )
+    useAppStore
+      .getState()
+      .getProjectByName(
+        `${projectNamePrefix}${extractProjectResourceName(issue.name)}`
+      )
   );
 
   const createTimeTs = Math.floor(

@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { EngineIcon } from "@/react/components/EngineIcon";
-import { useVueState } from "@/react/hooks/useVueState";
-import { useDatabaseV1Store, useDBSchemaV1Store } from "@/store";
+import { useAppDatabase } from "@/react/hooks/useAppDatabase";
+import { useAppStore } from "@/react/stores/app";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import { bytesToString, getInstanceResource } from "@/utils";
 import { engineNameV1 } from "@/utils/v1/instance";
@@ -21,15 +21,11 @@ type Props = {
  */
 export function TableInfo({ database, schema, table }: Props) {
   const { t } = useTranslation();
-  const dbSchema = useDBSchemaV1Store();
-  const databaseStore = useDatabaseV1Store();
-
-  const tableMetadata = useVueState(() =>
-    dbSchema.getTableMetadata({ database, schema, table })
+  const databaseEntity = useAppDatabase(database);
+  const tableMetadata = useAppStore((s) =>
+    s.getTableMetadata({ database, schema, table })
   );
-  const instanceEngine = useVueState(
-    () => getInstanceResource(databaseStore.getDatabaseByName(database)).engine
-  );
+  const instanceEngine = getInstanceResource(databaseEntity).engine;
 
   const indexSize =
     instanceEngine === Engine.CLICKHOUSE || instanceEngine === Engine.SNOWFLAKE

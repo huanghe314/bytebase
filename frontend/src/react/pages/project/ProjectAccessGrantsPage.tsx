@@ -30,19 +30,13 @@ import {
   TableRow,
 } from "@/react/components/ui/table";
 import { Tooltip } from "@/react/components/ui/tooltip";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import { PagedTableFooter, usePagedData } from "@/react/hooks/usePagedData";
 import { useVueState } from "@/react/hooks/useVueState";
+import { useAppStore } from "@/react/stores/app";
+import type { AccessGrantFilter as AccessFilter } from "@/react/stores/app/types";
 import { router } from "@/router";
-import {
-  featureToRef,
-  pushNotification,
-  useAccessGrantStore,
-  useCurrentUserV1,
-  useDatabaseV1Store,
-  useProjectV1Store,
-  useUserStore,
-} from "@/store";
-import type { AccessFilter } from "@/store/modules/accessGrant";
+import { featureToRef, pushNotification } from "@/store";
 import { extractUserEmail, projectNamePrefix } from "@/store/modules/v1/common";
 import { getTimeForPbTimestampProtoEs } from "@/types";
 import type { AccessGrant } from "@/types/proto-es/v1/access_grant_service_pb";
@@ -112,14 +106,19 @@ function mapDatabase(db: Database) {
 
 export function ProjectAccessGrantsPage({ projectId }: { projectId: string }) {
   const { t } = useTranslation();
-  const accessGrantStore = useAccessGrantStore();
-  const projectStore = useProjectV1Store();
-  const databaseStore = useDatabaseV1Store();
-  const userStore = useUserStore();
-  const currentUser = useVueState(() => useCurrentUserV1().value);
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  void projectsByName;
+  const listUsers = useAppStore((state) => state.listUsers);
+  const listAccessGrants = useAppStore((state) => state.listAccessGrants);
+  const activateAccessGrant = useAppStore((state) => state.activateAccessGrant);
+  const revokeAccessGrant = useAppStore((state) => state.revokeAccessGrant);
+  const currentUser = useCurrentUser();
 
   const projectName = `${projectNamePrefix}${projectId}`;
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
+  );
 
   const hasJITFeature = useVueState(
     () => featureToRef(PlanFeature.FEATURE_JIT).value
@@ -163,7 +162,7 @@ export function ProjectAccessGrantsPage({ projectId }: { projectId: string }) {
       if (!project || !hasProjectPermissionV2(project, "bb.databases.list")) {
         return [];
       }
-      const result = await databaseStore.fetchDatabases({
+      const result = await useAppStore.getState().fetchDatabases({
         parent: projectName,
         pageSize: getDefaultPagination(),
         filter: keyword ? { query: keyword } : undefined,
@@ -194,13 +193,13 @@ export function ProjectAccessGrantsPage({ projectId }: { projectId: string }) {
         };
       });
     },
-    [databaseStore, projectName, project]
+    [projectName, project]
   );
 
   // Server-side search for creator filter options
   const searchUsers = useCallback(
     async (keyword: string): Promise<ValueOption[]> => {
-      const result = await userStore.fetchUserList({
+      const result = await listUsers({
         pageSize: getDefaultPagination(),
         filter: keyword ? { query: keyword } : undefined,
       });
@@ -229,7 +228,7 @@ export function ProjectAccessGrantsPage({ projectId }: { projectId: string }) {
         ),
       }));
     },
-    [userStore, currentUser, t]
+    [listUsers, currentUser, t]
   );
 
   const scopeOptions: ScopeOption[] = useMemo(
@@ -276,6 +275,44 @@ export function ProjectAccessGrantsPage({ projectId }: { projectId: string }) {
         description: t("issue.advanced-search.scope.creator.description"),
         onSearch: searchUsers,
       },
+      {
+        id: "unmask",
+        title: t("sql-editor.grant-type-unmask"),
+        description: t(
+          "issue.access-grant.advanced-search.scope.unmask.description"
+        ),
+        options: [
+          {
+            value: "true",
+            keywords: ["yes", "true"],
+            render: () => <span>{t("common.yes")}</span>,
+          },
+          {
+            value: "false",
+            keywords: ["no", "false"],
+            render: () => <span>{t("common.no")}</span>,
+          },
+        ],
+      },
+      {
+        id: "export",
+        title: t("sql-editor.grant-type-export"),
+        description: t(
+          "issue.access-grant.advanced-search.scope.export.description"
+        ),
+        options: [
+          {
+            value: "true",
+            keywords: ["yes", "true"],
+            render: () => <span>{t("common.yes")}</span>,
+          },
+          {
+            value: "false",
+            keywords: ["no", "false"],
+            render: () => <span>{t("common.no")}</span>,
+          },
+        ],
+      },
     ],
     [t, searchDatabases, searchUsers]
   );
@@ -320,6 +357,14 @@ export function ProjectAccessGrantsPage({ projectId }: { projectId: string }) {
       if (database) {
         filter.target = database;
       }
+      const unmask = getValueFromScopes(searchParams, "unmask");
+      if (unmask === "true" || unmask === "false") {
+        filter.unmask = unmask === "true";
+      }
+      const exportScope = getValueFromScopes(searchParams, "export");
+      if (exportScope === "true" || exportScope === "false") {
+        filter.export = exportScope === "true";
+      }
       const query = searchParams.query.trim();
       if (query) {
         filter.statement = query;
@@ -332,7 +377,7 @@ export function ProjectAccessGrantsPage({ projectId }: { projectId: string }) {
           filter.createdTsBefore = parseInt(parts[1], 10);
         }
       }
-      const response = await accessGrantStore.listAccessGrants({
+      const response = await listAccessGrants({
         parent: projectName,
         filter,
         pageSize: params.pageSize,
@@ -344,7 +389,7 @@ export function ProjectAccessGrantsPage({ projectId }: { projectId: string }) {
         nextPageToken: response.nextPageToken,
       };
     },
-    [projectName, accessGrantStore, searchParams, orderBy]
+    [projectName, listAccessGrants, searchParams, orderBy]
   );
 
   const paged = usePagedData<AccessGrant>({
@@ -357,14 +402,14 @@ export function ProjectAccessGrantsPage({ projectId }: { projectId: string }) {
     if (!confirmAction) return;
     const { type, grant } = confirmAction;
     if (type === "activate") {
-      await accessGrantStore.activateAccessGrant(grant.name);
+      await activateAccessGrant(grant.name);
       pushNotification({
         module: "bytebase",
         style: "SUCCESS",
         title: t("common.activated"),
       });
     } else {
-      await accessGrantStore.revokeAccessGrant(grant.name);
+      await revokeAccessGrant(grant.name);
       pushNotification({
         module: "bytebase",
         style: "SUCCESS",
@@ -373,7 +418,7 @@ export function ProjectAccessGrantsPage({ projectId }: { projectId: string }) {
     }
     setConfirmAction(null);
     paged.refresh();
-  }, [confirmAction, accessGrantStore, t, paged]);
+  }, [confirmAction, activateAccessGrant, revokeAccessGrant, t, paged]);
 
   return (
     <div className="py-4 w-full flex flex-col">
@@ -578,6 +623,11 @@ function AccessGrantRow({
           {grant.unmask && (
             <Badge variant="warning" className="shrink-0">
               {t("sql-editor.grant-type-unmask")}
+            </Badge>
+          )}
+          {grant.export && (
+            <Badge variant="default" className="shrink-0">
+              {t("sql-editor.grant-type-export")}
             </Badge>
           )}
         </div>

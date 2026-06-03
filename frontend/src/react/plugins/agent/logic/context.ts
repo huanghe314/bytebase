@@ -1,5 +1,5 @@
 import type { RouteLocationNormalizedLoaded } from "vue-router";
-import { useCurrentUserV1 } from "@/store";
+import { useAppStore } from "@/react/stores/app";
 import { Engine, State } from "@/types/proto-es/v1/common_pb";
 import { Issue_Type, IssueStatus } from "@/types/proto-es/v1/issue_service_pb";
 
@@ -18,12 +18,14 @@ export async function extractRouteContext(
 
   // Current user — always available
   try {
-    const user = useCurrentUserV1();
-    if (user.value?.name) {
+    const user =
+      useAppStore.getState().currentUser ??
+      (await useAppStore.getState().loadCurrentUser());
+    if (user?.name) {
       ctx.user = {
-        name: user.value.name,
-        email: user.value.email,
-        title: user.value.title,
+        name: user.name,
+        email: user.email,
+        title: user.title,
       };
     }
   } catch {
@@ -36,9 +38,9 @@ export async function extractRouteContext(
   // Project context
   if (projectId) {
     try {
-      const { useProjectV1Store } = await import("@/store");
-      const store = useProjectV1Store();
-      const project = store.getProjectByName(`projects/${projectId}`);
+      const project = useAppStore
+        .getState()
+        .getProjectByName(`projects/${projectId}`);
       if (project?.name) {
         ctx.project = {
           name: project.name,
@@ -54,11 +56,9 @@ export async function extractRouteContext(
   // Database context
   if (instanceId && databaseName) {
     try {
-      const { useDatabaseV1Store } = await import("@/store");
-      const store = useDatabaseV1Store();
-      const db = store.getDatabaseByName(
-        `instances/${instanceId}/databases/${databaseName}`
-      );
+      const db = useAppStore
+        .getState()
+        .getDatabaseByName(`instances/${instanceId}/databases/${databaseName}`);
       if (db?.name) {
         ctx.database = {
           name: db.name,
@@ -76,12 +76,9 @@ export async function extractRouteContext(
   // Issue context
   if (projectId && issueId) {
     try {
-      const { useIssueV1Store } = await import("@/store");
-      const store = useIssueV1Store();
-      const issue = await store.fetchIssueByName(
-        `projects/${projectId}/issues/${issueId}`,
-        true
-      );
+      const issue = await useAppStore
+        .getState()
+        .fetchIssueByName(`projects/${projectId}/issues/${issueId}`, true);
       if (issue?.name) {
         ctx.issue = {
           name: issue.name,

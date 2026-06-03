@@ -65,19 +65,12 @@ import {
 } from "@/react/hooks/useSessionPageSize";
 import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
+import { useAppStore } from "@/react/stores/app";
+import type { InstanceFilter } from "@/react/stores/app/types";
 import { router } from "@/router";
 import { INSTANCE_ROUTE_CREATE } from "@/router/dashboard/instance";
-import {
-  featureToRef,
-  pushNotification,
-  useActuatorV1Store,
-  useEnvironmentV1Store,
-  useInstanceV1Store,
-  useSubscriptionV1Store,
-  useUIStateStore,
-} from "@/store";
+import { featureToRef, pushNotification } from "@/store";
 import { environmentNamePrefix } from "@/store/modules/v1/common";
-import type { InstanceFilter } from "@/store/modules/v1/instance";
 import {
   isValidInstanceName,
   NULL_ENVIRONMENT_NAME,
@@ -180,11 +173,13 @@ function ConfirmDialog({
 
 function EnvironmentName({ environmentName }: { environmentName: string }) {
   const { t } = useTranslation();
-  const environmentStore = useEnvironmentV1Store();
-  const environment = useVueState(() =>
-    environmentStore.getEnvironmentByName(
-      environmentName || NULL_ENVIRONMENT_NAME
-    )
+  const environmentList = useAppStore((s) => s.environmentList);
+  const environment = useMemo(
+    () =>
+      useAppStore
+        .getState()
+        .getEnvironmentByName(environmentName || NULL_ENVIRONMENT_NAME),
+    [environmentList, environmentName]
   );
 
   const isUnset =
@@ -251,7 +246,6 @@ function InstanceActionDropdown({
   onAction: () => void;
 }) {
   const { t } = useTranslation();
-  const instanceStore = useInstanceV1Store();
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [forceArchive, setForceArchive] = useState(false);
@@ -261,7 +255,7 @@ function InstanceActionDropdown({
 
   const handleArchive = useCallback(async () => {
     try {
-      await instanceStore.archiveInstance(instance, forceArchive);
+      await useAppStore.getState().archiveInstance(instance, forceArchive);
       pushNotification({
         module: "bytebase",
         style: "INFO",
@@ -280,11 +274,11 @@ function InstanceActionDropdown({
         description: (error as { message?: string }).message,
       });
     }
-  }, [instance, instanceStore, forceArchive, t, onAction]);
+  }, [instance, forceArchive, t, onAction]);
 
   const handleRestore = useCallback(async () => {
     try {
-      await instanceStore.restoreInstance(instance);
+      await useAppStore.getState().restoreInstance(instance);
       pushNotification({
         module: "bytebase",
         style: "SUCCESS",
@@ -301,11 +295,11 @@ function InstanceActionDropdown({
         description: (error as { message?: string }).message,
       });
     }
-  }, [instance, instanceStore, t, onAction]);
+  }, [instance, t, onAction]);
 
   const handleDelete = useCallback(async () => {
     try {
-      await instanceStore.deleteInstance(instance.name);
+      await useAppStore.getState().deleteInstance(instance.name);
       pushNotification({
         module: "bytebase",
         style: "SUCCESS",
@@ -321,7 +315,7 @@ function InstanceActionDropdown({
         description: (error as { message?: string }).message,
       });
     }
-  }, [instance, instanceStore, t, onAction]);
+  }, [instance, t, onAction]);
 
   if (!canArchive && !canRestore) return null;
 
@@ -450,10 +444,7 @@ function EditEnvironmentSheet({
   onUpdate: (environment: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
-  const environmentStore = useEnvironmentV1Store();
-  const environments = useVueState(
-    () => environmentStore.environmentList ?? []
-  );
+  const environments = useAppStore((s) => s.environmentList ?? []);
   const [selected, setSelected] = useState("");
   useEffect(() => {
     if (open) setSelected("");
@@ -522,9 +513,6 @@ function EditEnvironmentSheet({
 
 export function InstancesPage() {
   const { t } = useTranslation();
-  const instanceStore = useInstanceV1Store();
-  const subscriptionStore = useSubscriptionV1Store();
-  const actuatorStore = useActuatorV1Store();
 
   // Search state
   const [searchParams, setSearchParams] = useState<SearchParams>(() => {
@@ -567,10 +555,7 @@ export function InstancesPage() {
 
   // Scope options
   const canUndelete = hasWorkspacePermissionV2("bb.instances.undelete");
-  const environmentStore = useEnvironmentV1Store();
-  const environments = useVueState(
-    () => environmentStore.environmentList ?? []
-  );
+  const environments = useAppStore((s) => s.environmentList ?? []);
   const scopeOptions: ScopeOption[] = useMemo(() => {
     const options: ScopeOption[] = [
       {
@@ -675,15 +660,15 @@ export function InstancesPage() {
   );
 
   // Mark instance visit on mount
-  const uiStateStore = useUIStateStore();
   useEffect(() => {
-    if (!uiStateStore.getIntroStateByKey("instance.visit")) {
-      uiStateStore.saveIntroStateByKey({
+    const store = useAppStore.getState();
+    if (!store.getIntroStateByKey("instance.visit")) {
+      store.saveIntroStateByKey({
         key: "instance.visit",
         newState: true,
       });
     }
-  }, [uiStateStore]);
+  }, []);
 
   // Sync search state to URL
   useEffect(() => {
@@ -702,14 +687,10 @@ export function InstancesPage() {
   }, [searchParams]);
 
   // Instance count warning
-  const instanceCountLimit = useVueState(
-    () => subscriptionStore.instanceCountLimit
-  );
-  const totalInstanceCount = useVueState(
-    () => actuatorStore.totalInstanceCount
-  );
-  const hasSplitInstanceLicense = useVueState(
-    () => subscriptionStore.hasSplitInstanceLicense
+  const instanceCountLimit = useAppStore((s) => s.instanceCountLimit());
+  const totalInstanceCount = useAppStore((s) => s.totalInstanceCount());
+  const hasSplitInstanceLicense = useAppStore((s) =>
+    s.hasSplitInstanceLicense()
   );
   const quotaExhausted = totalInstanceCount >= instanceCountLimit;
 
@@ -777,7 +758,7 @@ export function InstancesPage() {
 
       try {
         const token = isRefresh ? "" : nextPageTokenRef.current;
-        const result = await instanceStore.fetchInstanceList({
+        const result = await useAppStore.getState().fetchInstanceList({
           pageToken: token,
           pageSize,
           filter,
@@ -803,7 +784,7 @@ export function InstancesPage() {
         }
       }
     },
-    [pageSize, filter, orderBy, instanceStore]
+    [pageSize, filter, orderBy]
   );
 
   // Fetch on mount + re-fetch on filter/sort/pageSize changes
@@ -831,8 +812,8 @@ export function InstancesPage() {
     if (selectedNames.size === 0) return [];
     return Array.from(selectedNames)
       .filter((name) => isValidInstanceName(name))
-      .map((name) => instanceStore.getInstanceByName(name));
-  }, [selectedNames, instanceStore]);
+      .map((name) => useAppStore.getState().getInstanceByName(name));
+  }, [selectedNames]);
 
   const toggleSelection = useCallback((name: string) => {
     setSelectedNames((prev) => {
@@ -860,10 +841,9 @@ export function InstancesPage() {
     async (enableFullSync: boolean) => {
       setSyncing(true);
       try {
-        await instanceStore.batchSyncInstances(
-          Array.from(selectedNames),
-          enableFullSync
-        );
+        await useAppStore
+          .getState()
+          .batchSyncInstances(Array.from(selectedNames), enableFullSync);
         pushNotification({
           module: "bytebase",
           style: "INFO",
@@ -873,13 +853,13 @@ export function InstancesPage() {
         setSyncing(false);
       }
     },
-    [selectedNames, instanceStore, t]
+    [selectedNames, t]
   );
 
   const handleEnvironmentUpdate = useCallback(
     async (environment: string) => {
       try {
-        await instanceStore.batchUpdateInstances(
+        await useAppStore.getState().batchUpdateInstances(
           selectedInstanceList.map((instance) =>
             create(UpdateInstanceRequestSchema, {
               instance: { ...instance, environment },
@@ -903,7 +883,7 @@ export function InstancesPage() {
         });
       }
     },
-    [selectedInstanceList, instanceStore, t, fetchInstances]
+    [selectedInstanceList, t, fetchInstances]
   );
 
   const handleRowAction = useCallback(() => {
@@ -959,9 +939,7 @@ export function InstancesPage() {
     });
   }, []);
 
-  const activatedInstanceCount = useVueState(
-    () => actuatorStore.activatedInstanceCount
-  );
+  const activatedInstanceCount = useAppStore((s) => s.activatedInstanceCount());
   const navigateToCreate = useCallback(() => {
     if (instanceCountLimit <= activatedInstanceCount) {
       // Limit reached — the warning banner is already visible

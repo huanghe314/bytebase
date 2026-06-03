@@ -12,19 +12,20 @@ const mocks = vi.hoisted(() => ({
   updateTab: vi.fn(),
   setCurrentTabId: vi.fn(),
   patchWorksheet: vi.fn().mockResolvedValue(undefined),
-  useSQLEditorTabStore: vi.fn(),
-  useWorkSheetStore: vi.fn(),
+  getSQLEditorTabsState: vi.fn(),
   tabListEvents: {
     on: vi.fn<(event: string, h: (p: unknown) => void) => () => void>(),
   },
 }));
 
-vi.mock("@/store", () => ({
-  useWorkSheetStore: mocks.useWorkSheetStore,
+vi.mock("@/react/stores/app", () => ({
+  useAppStore: {
+    getState: () => ({ patchWorksheet: mocks.patchWorksheet }),
+  },
 }));
 
-vi.mock("@/react/stores/sqlEditor/tab-vue-state", () => ({
-  useSQLEditorTabStore: mocks.useSQLEditorTabStore,
+vi.mock("@/react/stores/sqlEditor/tab", () => ({
+  getSQLEditorTabsState: mocks.getSQLEditorTabsState,
 }));
 
 vi.mock("@/views/sql-editor/TabList/events", () => ({
@@ -85,13 +86,10 @@ beforeEach(async () => {
   // `currentTabId` matches the `id` makeTab returns ("t1") so the rendered
   // tab is treated as the active tab — required for the click-to-rename
   // behavior since clicks on non-current tabs only activate (no rename).
-  mocks.useSQLEditorTabStore.mockReturnValue({
+  mocks.getSQLEditorTabsState.mockReturnValue({
     currentTabId: "t1",
     updateTab: mocks.updateTab,
     setCurrentTabId: mocks.setCurrentTabId,
-  });
-  mocks.useWorkSheetStore.mockReturnValue({
-    patchWorksheet: mocks.patchWorksheet,
   });
   mocks.tabListEvents.on.mockReturnValue(() => {});
   ({ Label } = await import("./Label"));
@@ -133,7 +131,7 @@ describe("Label", () => {
   });
 
   test("clicking a non-current tab does NOT enter edit mode", () => {
-    mocks.useSQLEditorTabStore.mockReturnValue({
+    mocks.getSQLEditorTabsState.mockReturnValue({
       // Simulate a different tab being active so this Label sees itself as
       // non-current. Activation is handled by the parent TabItem's
       // onMouseDown; the Label's click handler should be a no-op here.

@@ -1,7 +1,6 @@
 import { clone, create } from "@bufbuild/protobuf";
 import {
   CheckCircle,
-  ChevronRight,
   DatabaseIcon,
   EllipsisVertical,
   ExternalLink,
@@ -35,6 +34,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/react/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/react/components/ui/popover";
 import { SearchInput } from "@/react/components/ui/search-input";
 import {
   Select,
@@ -53,28 +57,22 @@ import {
 } from "@/react/components/ui/sheet";
 import { Switch } from "@/react/components/ui/switch";
 import { Tooltip } from "@/react/components/ui/tooltip";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import { useSessionPageSize } from "@/react/hooks/useSessionPageSize";
 import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import {
   PROJECT_V1_ROUTE_DATABASE_GROUP_DETAIL,
   PROJECT_V1_ROUTE_PLAN_DETAIL_SPEC_DETAIL,
 } from "@/router/dashboard/projectV1";
-import {
-  getProjectNameAndDatabaseGroupName,
-  pushNotification,
-  useCurrentUserV1,
-  useDatabaseV1Store,
-  useDBGroupStore,
-  useEnvironmentV1Store,
-  useProjectV1Store,
-  useSheetV1Store,
-} from "@/store";
+import { getProjectNameAndDatabaseGroupName, pushNotification } from "@/store";
 import {
   isValidDatabaseGroupName,
   isValidDatabaseName,
   isValidReleaseName,
+  unknownDatabaseGroup,
 } from "@/types";
 import { Engine, State } from "@/types/proto-es/v1/common_pb";
 import type { DatabaseGroup } from "@/types/proto-es/v1/database_group_service_pb";
@@ -86,11 +84,11 @@ import {
   Plan_ChangeDatabaseConfigSchema,
   type Plan_Spec,
   Plan_SpecSchema,
-  type PlanCheckRun,
   PlanSchema,
   UpdatePlanRequestSchema,
 } from "@/types/proto-es/v1/plan_service_pb";
 import type { CheckReleaseResponse_CheckResult } from "@/types/proto-es/v1/release_service_pb";
+import { unknownDatabase } from "@/types/v1/database";
 import {
   extractDatabaseResourceName,
   getDatabaseEnvironment,
@@ -115,7 +113,12 @@ import {
   updateRoleSetter,
   updateTransactionMode,
 } from "../utils/directiveUtils";
-import { getLocalSheetByName, getNextLocalSheetUID } from "../utils/localSheet";
+import {
+  getLocalSheetByName,
+  getNextLocalSheetUID,
+  getSpecStatementContent,
+  isSameStatementContent,
+} from "../utils/localSheet";
 import {
   allowGhostForDatabase,
   getPlanOptionVisibility,
@@ -139,8 +142,10 @@ import { PlanDetailAggregateChecks } from "./PlanDetailAggregateChecks";
 import { PlanDetailDraftChecks } from "./PlanDetailDraftChecks";
 import { PlanDetailStatementSection } from "./PlanDetailStatementSection";
 import { PlanDetailTabItem, PlanDetailTabStrip } from "./PlanDetailTabStrip";
+import { PlanTargetDisplay } from "./PlanTargetDisplay";
 
 const DEFAULT_VISIBLE_TARGETS = 20;
+const DATABASE_GROUP_VISIBLE_DATABASES = 3;
 const EMPTY_SELECT_VALUE = "__empty__";
 
 const pushSpecDetailRoute = (
@@ -158,6 +163,11 @@ type IsolationLevel =
   | "READ_COMMITTED"
   | "REPEATABLE_READ"
   | "SERIALIZABLE";
+
+type DraftCheckResultState = {
+  results: CheckReleaseResponse_CheckResult[];
+  content: Uint8Array | undefined;
+};
 
 const BACKUP_AVAILABLE_ENGINES = [
   Engine.MYSQL,
@@ -178,10 +188,12 @@ export function PlanDetailChangesBranch({
   const { t } = useTranslation();
   const page = usePlanDetailContext();
   const { patchState } = page;
-  const currentUser = useCurrentUserV1().value;
-  const projectStore = useProjectV1Store();
+  const currentUser = useCurrentUser();
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  void projectsByName;
   const project = useVueState(() =>
-    projectStore.getProjectByName(`projects/${page.projectId}`)
+    useAppStore.getState().getProjectByName(`projects/${page.projectId}`)
   );
   const [showAddSpecSheet, setShowAddSpecSheet] = useState(false);
   const [showTargetSelectorSheet, setShowTargetSelectorSheet] = useState(false);
@@ -198,11 +210,11 @@ export function PlanDetailChangesBranch({
   // selectedSpecId (which mirrors the URL) so a draft can be selected even
   // when the URL still points at a real spec.
   const [isPendingSelected, setIsPendingSelected] = useState(false);
-  const [draftCheckRunsBySpecId, setDraftCheckRunsBySpecId] = useState<
-    Record<string, PlanCheckRun[]>
-  >({});
   const [draftCheckResultsBySpecId, setDraftCheckResultsBySpecId] = useState<
-    Record<string, CheckReleaseResponse_CheckResult[] | undefined>
+    Record<string, DraftCheckResultState | undefined>
+  >({});
+  const [statementVersionBySpecId, setStatementVersionBySpecId] = useState<
+    Record<string, number>
   >({});
   const specs = page.plan.specs ?? [];
   // Specs visible in the tab strip — real specs plus any pending draft.
@@ -446,22 +458,53 @@ export function PlanDetailChangesBranch({
 
   const selectedSpecIdForDraftChecks = selectedSpec?.id;
   const handleDraftCheckResultsChange = useCallback(
-    (results: CheckReleaseResponse_CheckResult[] | undefined) => {
+    (
+      content: Uint8Array | undefined,
+      results: CheckReleaseResponse_CheckResult[] | undefined
+    ) => {
       if (!selectedSpecIdForDraftChecks) return;
       setDraftCheckResultsBySpecId((prev) => {
-        if (prev[selectedSpecIdForDraftChecks] === results) return prev;
+        const nextState = results ? { results, content } : undefined;
+        const previousState = prev[selectedSpecIdForDraftChecks];
+        if (
+          previousState?.content === nextState?.content &&
+          previousState?.results === nextState?.results
+        ) {
+          return prev;
+        }
         return {
           ...prev,
-          [selectedSpecIdForDraftChecks]: results,
+          [selectedSpecIdForDraftChecks]: nextState,
         };
       });
-      setDraftCheckRunsBySpecId((prev) => ({
-        ...prev,
-        [selectedSpecIdForDraftChecks]:
-          transformReleaseCheckResultsToPlanCheckRuns(results ?? []),
-      }));
     },
     [selectedSpecIdForDraftChecks]
+  );
+  const handleStatementPersisted = useCallback((specId: string) => {
+    setStatementVersionBySpecId((prev) => ({
+      ...prev,
+      [specId]: (prev[specId] ?? 0) + 1,
+    }));
+  }, []);
+  const draftContent =
+    selectedSpec && page.isCreating
+      ? getSpecStatementContent(selectedSpec)
+      : undefined;
+  const draftCheckState = selectedSpec
+    ? draftCheckResultsBySpecId[selectedSpec.id]
+    : undefined;
+  // Memoized on the two content references so the byte fallback only runs when
+  // one of them actually changes (an edit), not on every render.
+  const draftCheckResults = useMemo(
+    () =>
+      isSameStatementContent(draftCheckState?.content, draftContent)
+        ? draftCheckState?.results
+        : undefined,
+    [draftCheckState, draftContent]
+  );
+  const draftCheckRuns = useMemo(
+    () => transformReleaseCheckResultsToPlanCheckRuns(draftCheckResults ?? []),
+    [draftCheckResults]
   );
 
   if (!selectedSpec) {
@@ -578,22 +621,30 @@ export function PlanDetailChangesBranch({
           <PlanDetailStatementSection
             planCheckRuns={
               page.isCreating
-                ? (draftCheckRunsBySpecId[selectedSpec.id] ?? [])
+                ? draftCheckRuns
                 : planCheckRunListForSpec(page.planCheckRuns, selectedSpec)
             }
             spec={selectedSpec}
+            statementVersion={statementVersionBySpecId[selectedSpec.id] ?? 0}
           />
           {!specHasRelease &&
             page.isCreating &&
             selectedSpec.config.case === "changeDatabaseConfig" && (
               <PlanDetailDraftChecks
                 key={selectedSpec.id}
-                checkResults={draftCheckResultsBySpecId[selectedSpec.id]}
+                checkResults={draftCheckResults}
                 onCheckResultsChange={handleDraftCheckResultsChange}
                 selectedSpec={selectedSpec}
               />
             )}
-          {!specHasRelease && <OptionsSection selectedSpec={selectedSpec} />}
+          {!specHasRelease && (
+            <OptionsSection
+              onStatementPersisted={() =>
+                handleStatementPersisted(selectedSpec.id)
+              }
+              selectedSpec={selectedSpec}
+            />
+          )}
         </div>
       </div>
 
@@ -649,18 +700,24 @@ export function PlanDetailChangesBranch({
   );
 }
 
-function OptionsSection({ selectedSpec }: { selectedSpec: Plan_Spec }) {
+function OptionsSection({
+  onStatementPersisted,
+  selectedSpec,
+}: {
+  onStatementPersisted: () => void;
+  selectedSpec: Plan_Spec;
+}) {
   const { t } = useTranslation();
   const page = usePlanDetailContext();
   const { patchState, refreshState } = page;
-  const currentUser = useCurrentUserV1().value;
-  const projectStore = useProjectV1Store();
+  const currentUser = useCurrentUser();
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  void projectsByName;
   const project = useVueState(() =>
-    projectStore.getProjectByName(`projects/${page.projectId}`)
+    useAppStore.getState().getProjectByName(`projects/${page.projectId}`)
   );
-  const databaseStore = useDatabaseV1Store();
-  const dbGroupStore = useDBGroupStore();
-  const sheetStore = useSheetV1Store();
+  const databasesByName = useAppStore((s) => s.databasesByName);
   const [sheetStatement, setSheetStatementValue] = useState("");
   const [isSheetOversize, setIsSheetOversize] = useState(false);
   const [instanceRoles, setInstanceRoles] = useState<string[]>([]);
@@ -675,15 +732,14 @@ function OptionsSection({ selectedSpec }: { selectedSpec: Plan_Spec }) {
     targets
       .flatMap((target) => {
         if (isValidDatabaseName(target)) {
-          return [databaseStore.getDatabaseByName(target)];
+          return [databasesByName[target] ?? unknownDatabase()];
         }
         if (isValidDatabaseGroupName(target)) {
-          const dbGroup = dbGroupStore.getDBGroupByName(
-            target,
-            DatabaseGroupView.FULL
-          );
-          return (dbGroup.matchedDatabases ?? []).map((database) =>
-            databaseStore.getDatabaseByName(database.name)
+          const dbGroup = useAppStore
+            .getState()
+            .getDBGroupByName(target, DatabaseGroupView.FULL);
+          return (dbGroup.matchedDatabases ?? []).map(
+            (database) => databasesByName[database.name] ?? unknownDatabase()
           );
         }
         return [];
@@ -763,8 +819,8 @@ function OptionsSection({ selectedSpec }: { selectedSpec: Plan_Spec }) {
     if (targets.length === 0) {
       return;
     }
-    void fetchTargets(targets, dbGroupStore, databaseStore);
-  }, [databaseStore, dbGroupStore, targets]);
+    void fetchTargets(targets);
+  }, [targets]);
 
   useEffect(() => {
     let canceled = false;
@@ -778,7 +834,7 @@ function OptionsSection({ selectedSpec }: { selectedSpec: Plan_Spec }) {
       const uid = extractSheetUID(sheetName);
       const sheet = uid.startsWith("-")
         ? getLocalSheetByName(sheetName)
-        : await sheetStore.getOrFetchSheetByName(sheetName);
+        : await useAppStore.getState().getOrFetchSheetByName(sheetName);
       if (!sheet || canceled) return;
       const statement = getSheetStatement(sheet);
       setSheetStatementValue(statement);
@@ -788,7 +844,7 @@ function OptionsSection({ selectedSpec }: { selectedSpec: Plan_Spec }) {
     return () => {
       canceled = true;
     };
-  }, [selectedSpec, sheetStore]);
+  }, [selectedSpec]);
 
   useEffect(() => {
     let canceled = false;
@@ -824,18 +880,30 @@ function OptionsSection({ selectedSpec }: { selectedSpec: Plan_Spec }) {
         const sheet = getLocalSheetByName(sheetName);
         setLocalSheetStatement(sheet, nextStatement);
         setSheetStatementState(nextStatement);
+        onStatementPersisted();
         return;
       }
 
-      await updateSpecSheetWithStatement(
+      const updatedPlan = await updateSpecSheetWithStatement(
         page.plan,
         selectedSpec,
         nextStatement
       );
+      if (updatedPlan) {
+        patchState({ plan: updatedPlan });
+      }
       setSheetStatementState(nextStatement);
+      onStatementPersisted();
       await refreshState();
     },
-    [page.isCreating, page.plan, refreshState, selectedSpec]
+    [
+      onStatementPersisted,
+      page.isCreating,
+      page.plan,
+      patchState,
+      refreshState,
+      selectedSpec,
+    ]
   );
 
   const setSheetStatementState = (statement: string) => {
@@ -928,10 +996,15 @@ function OptionsSection({ selectedSpec }: { selectedSpec: Plan_Spec }) {
                   disabled={!allowChange || isSheetOversize}
                   onValueChange={(value) => {
                     void persistStatement(
-                      updateRoleSetter(sheetStatement, value || undefined)
+                      updateRoleSetter(
+                        sheetStatement,
+                        value && value !== EMPTY_SELECT_VALUE
+                          ? value
+                          : undefined
+                      )
                     );
                   }}
-                  value={selectedRole}
+                  value={selectedRole || EMPTY_SELECT_VALUE}
                 >
                   <SelectTrigger className="w-44" size="sm">
                     <SelectValue>
@@ -941,6 +1014,9 @@ function OptionsSection({ selectedSpec }: { selectedSpec: Plan_Spec }) {
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value={EMPTY_SELECT_VALUE}>
+                      {t("instance.default-role")}
+                    </SelectItem>
                     {instanceRoleOptions.map((option) => (
                       <SelectItem key={option.value} value={option.value}>
                         {option.label}
@@ -1129,8 +1205,7 @@ function TargetsSection({
   selectedSpec: Plan_Spec;
 }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
-  const dbGroupStore = useDBGroupStore();
+  const databasesByName = useAppStore((s) => s.databasesByName);
   const [showAllTargetsDialog, setShowAllTargetsDialog] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [isLoadingTargets, setIsLoadingTargets] = useState(false);
@@ -1152,27 +1227,29 @@ function TargetsSection({
       .flatMap((target) => {
         if (!isValidDatabaseGroupName(target)) return [target];
         return (
-          dbGroupStore
+          useAppStore
+            .getState()
             .getDBGroupByName(target)
             .matchedDatabases?.map((database) => database.name) ?? []
         );
       })
       .filter(
-        (name) => !databaseStore.getDatabaseByName(name).effectiveEnvironment
+        (name) =>
+          !(databasesByName[name] ?? unknownDatabase()).effectiveEnvironment
       );
-  }, [databaseStore, dbGroupStore, isLoadingTargets, targets]);
+  }, [databasesByName, isLoadingTargets, targets]);
   const filteredTargets = useMemo(
     () =>
       filterPlanTargets({
         getDatabaseDisplayName: (target) => {
           if (!isValidDatabaseName(target)) return target;
-          const database = databaseStore.getDatabaseByName(target);
+          const database = databasesByName[target] ?? unknownDatabase();
           return extractDatabaseResourceName(database.name).databaseName;
         },
         query: searchText,
         targets,
       }),
-    [databaseStore, searchText, targets]
+    [databasesByName, searchText, targets]
   );
   const nonEnvWarning =
     nonEnvDatabaseNames.length === 1
@@ -1192,7 +1269,7 @@ function TargetsSection({
       }
       setIsLoadingTargets(true);
       try {
-        await fetchTargets(visibleTargets, dbGroupStore, databaseStore);
+        await fetchTargets(visibleTargets);
       } finally {
         if (!canceled) setIsLoadingTargets(false);
       }
@@ -1201,7 +1278,7 @@ function TargetsSection({
     return () => {
       canceled = true;
     };
-  }, [databaseStore, dbGroupStore, targets, visibleTargets]);
+  }, [targets, visibleTargets]);
 
   useEffect(() => {
     if (!showAllTargetsDialog) return;
@@ -1210,7 +1287,7 @@ function TargetsSection({
     const load = async () => {
       setIsLoadingAllTargets(true);
       try {
-        await fetchTargets(targets, dbGroupStore, databaseStore);
+        await fetchTargets(targets);
       } finally {
         if (!canceled) setIsLoadingAllTargets(false);
       }
@@ -1219,7 +1296,7 @@ function TargetsSection({
     return () => {
       canceled = true;
     };
-  }, [databaseStore, dbGroupStore, showAllTargetsDialog, targets]);
+  }, [showAllTargetsDialog, targets]);
 
   return (
     <>
@@ -1252,7 +1329,7 @@ function TargetsSection({
                   {nonEnvDatabaseNames.map((name) => (
                     <div key={name} className="flex items-center gap-2">
                       <span className="h-1 w-1 shrink-0 rounded-full bg-current" />
-                      <DatabaseTarget target={name} />
+                      <PlanTargetDisplay target={name} />
                     </div>
                   ))}
                 </div>
@@ -1272,7 +1349,7 @@ function TargetsSection({
                   key={target}
                   className="inline-flex cursor-default items-center gap-x-1 rounded-lg border px-2 py-1"
                 >
-                  <DatabaseTarget showEnvironment target={target} />
+                  <PlanTargetDisplay showEnvironment target={target} />
                 </div>
               ) : isValidDatabaseGroupName(target) ? (
                 <div key={target} className="rounded-lg border px-2 py-1">
@@ -1314,45 +1391,34 @@ function TargetsSection({
               {t("plan.targets.title")} ({targets.length})
             </SheetTitle>
           </SheetHeader>
-          <SheetBody className="gap-y-4 px-4 pb-4">
+          <SheetBody className="gap-y-4 overflow-hidden px-4 pb-4">
             <SearchInput
               placeholder={t("common.search")}
               value={searchText}
+              wrapperClassName="flex-none"
               onChange={(event) => setSearchText(event.target.value)}
             />
-            <div className="flex-1 overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-y-auto">
               {isLoadingAllTargets ? (
                 <div className="flex h-full items-center justify-center">
                   <div className="h-5 w-5 animate-spin rounded-full border-2 border-control-border border-t-accent" />
                 </div>
               ) : filteredTargets.length > 0 ? (
-                <div className="h-full overflow-y-auto">
-                  <div className="flex flex-wrap gap-2">
-                    {filteredTargets.map((target) =>
-                      isValidDatabaseName(target) ? (
-                        <div
-                          key={target}
-                          className="inline-flex cursor-default items-center gap-x-1 rounded-lg border px-2 py-1 transition-all"
-                        >
-                          <DatabaseTarget showEnvironment target={target} />
-                        </div>
+                <div className="flex flex-col gap-2">
+                  {filteredTargets.map((target) => (
+                    <div
+                      key={target}
+                      className="w-full rounded-lg border px-2 py-1.5"
+                    >
+                      {isValidDatabaseName(target) ? (
+                        <PlanTargetDisplay showEnvironment target={target} />
                       ) : isValidDatabaseGroupName(target) ? (
-                        <div
-                          key={target}
-                          className="rounded-lg border px-2 py-1 transition-all"
-                        >
-                          <DatabaseGroupTarget target={target} />
-                        </div>
+                        <DatabaseGroupTarget target={target} />
                       ) : (
-                        <div
-                          key={target}
-                          className="inline-flex cursor-default items-center gap-x-1 rounded-lg border px-2 py-1 transition-all"
-                        >
-                          <span className="text-sm">{target}</span>
-                        </div>
-                      )
-                    )}
-                  </div>
+                        <span className="block truncate text-sm">{target}</span>
+                      )}
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <div className="flex h-full items-center justify-center text-control-light">
@@ -1538,7 +1604,6 @@ function DatabaseSelector({
   onSelectedNamesChange: (names: Set<string>) => void;
 }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
   const [databases, setDatabases] = useState<Database[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(false);
@@ -1558,7 +1623,7 @@ function DatabaseSelector({
       }
       try {
         const token = isRefresh ? "" : nextPageTokenRef.current;
-        const result = await databaseStore.fetchDatabases({
+        const result = await useAppStore.getState().fetchDatabases({
           parent: projectName,
           pageSize,
           pageToken: token || undefined,
@@ -1577,7 +1642,7 @@ function DatabaseSelector({
         }
       }
     },
-    [databaseStore, pageSize, projectName, query]
+    [pageSize, projectName, query]
   );
 
   useEffect(() => {
@@ -1714,17 +1779,17 @@ function DatabaseGroupSelector({
   onSelectedGroupChange: (name: string | undefined) => void;
 }) {
   const { t } = useTranslation();
-  const dbGroupStore = useDBGroupStore();
   const [groups, setGroups] = useState<DatabaseGroup[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    dbGroupStore
+    useAppStore
+      .getState()
       .fetchDBGroupListByProjectName(projectName, DatabaseGroupView.BASIC)
       .then((result) => setGroups(result))
       .finally(() => setLoading(false));
-  }, [dbGroupStore, projectName]);
+  }, [projectName]);
 
   if (loading) {
     return (
@@ -1788,38 +1853,6 @@ function DatabaseGroupSelector({
   );
 }
 
-export function DatabaseTarget({
-  showEnvironment = false,
-  target,
-}: {
-  showEnvironment?: boolean;
-  target: string;
-}) {
-  const environmentStore = useEnvironmentV1Store();
-  const databaseStore = useDatabaseV1Store();
-  const database = databaseStore.getDatabaseByName(target);
-  const environment = database.effectiveEnvironment
-    ? environmentStore.getEnvironmentByName(database.effectiveEnvironment)
-    : undefined;
-  const instance = getInstanceResource(database);
-  const databaseName = extractDatabaseResourceName(database.name).databaseName;
-  const instanceName = instance.title;
-
-  return (
-    <div className="flex min-w-0 items-center truncate text-sm">
-      <EngineIcon engine={instance.engine} className="mr-1 h-4 w-4" />
-      {showEnvironment && environment?.title && (
-        <span className="mr-1 truncate text-control-placeholder">
-          {environment.title}
-        </span>
-      )}
-      <span className="truncate text-control-light">{instanceName}</span>
-      <ChevronRight className="h-4 w-4 shrink-0 text-control-light/80" />
-      <span className="truncate text-control">{databaseName}</span>
-    </div>
-  );
-}
-
 export function DatabaseGroupTarget({
   className,
   target,
@@ -1828,28 +1861,56 @@ export function DatabaseGroupTarget({
   target: string;
 }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
-  const dbGroupStore = useDBGroupStore();
-  const dbGroup = dbGroupStore.getDBGroupByName(target, DatabaseGroupView.FULL);
+  const [searchText, setSearchText] = useState("");
+  // Subscribe to the cached FULL entry directly (stable ref); deriving the
+  // unknown fallback inside the selector would loop on a fresh object each call.
+  const cachedGroup = useAppStore((s) =>
+    s.dbGroupViewByName[target] === DatabaseGroupView.FULL
+      ? s.dbGroupsByName[target]
+      : undefined
+  );
+  const dbGroup = useMemo(
+    () => cachedGroup ?? unknownDatabaseGroup(),
+    [cachedGroup]
+  );
   const matchedDatabases = dbGroup.matchedDatabases ?? [];
-  const { extraDatabases, inlineDatabases } =
-    splitInlineDatabases(matchedDatabases);
+  const { extraDatabases, inlineDatabases } = splitInlineDatabases(
+    matchedDatabases,
+    DATABASE_GROUP_VISIBLE_DATABASES
+  );
   const groupName = extractDatabaseGroupName(target);
+  const filteredExtraDatabases = useMemo(() => {
+    const normalized = searchText.trim().toLowerCase();
+    if (!normalized) {
+      return extraDatabases;
+    }
+    return extraDatabases.filter((database) => {
+      const databaseName = extractDatabaseResourceName(
+        database.name
+      ).databaseName.toLowerCase();
+      return (
+        databaseName.includes(normalized) ||
+        database.name.toLowerCase().includes(normalized)
+      );
+    });
+  }, [extraDatabases, searchText]);
 
   useEffect(() => {
     const load = async () => {
-      const group = await dbGroupStore.getOrFetchDBGroupByName(target, {
-        view: DatabaseGroupView.FULL,
-        silent: true,
-      });
+      const group = await useAppStore
+        .getState()
+        .getOrFetchDBGroupByName(target, {
+          view: DatabaseGroupView.FULL,
+          silent: true,
+        });
       const databaseNames =
         group.matchedDatabases?.map((database) => database.name) ?? [];
       if (databaseNames.length > 0) {
-        await databaseStore.batchGetOrFetchDatabases(databaseNames);
+        await useAppStore.getState().batchGetOrFetchDatabases(databaseNames);
       }
     };
     void load();
-  }, [databaseStore, dbGroupStore, target]);
+  }, [target]);
 
   const route = {
     name: PROJECT_V1_ROUTE_DATABASE_GROUP_DETAIL,
@@ -1888,25 +1949,65 @@ export function DatabaseGroupTarget({
               key={database.name}
               className="inline-flex cursor-default items-center gap-x-1 rounded-lg border bg-gray-50 px-2 py-1 transition-all"
             >
-              <DatabaseTarget showEnvironment target={database.name} />
+              <PlanTargetDisplay showEnvironment target={database.name} />
             </div>
           ))}
           {extraDatabases.length > 0 && (
-            <Tooltip
-              content={
-                <div className="flex max-h-64 flex-col gap-y-1 overflow-y-auto py-1">
-                  {extraDatabases.map((database) => (
-                    <div key={database.name} className="py-1">
-                      <DatabaseTarget showEnvironment target={database.name} />
-                    </div>
-                  ))}
-                </div>
-              }
-            >
-              <span className="cursor-pointer text-xs text-accent">
+            <Popover>
+              <PopoverTrigger
+                render={
+                  <Button
+                    className="h-6 px-1.5 text-xs text-accent hover:bg-accent/10 hover:text-accent"
+                    size="xs"
+                    type="button"
+                    variant="ghost"
+                  />
+                }
+              >
                 {t("common.n-more", { n: extraDatabases.length })}
-              </span>
-            </Tooltip>
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                className="w-[min(520px,calc(100vw-2rem))] p-0"
+                side="bottom"
+              >
+                <div className="border-b border-control-border px-3 py-2">
+                  <div className="text-sm font-medium text-control">
+                    {t("common.databases")} ({extraDatabases.length})
+                  </div>
+                </div>
+                {extraDatabases.length > 20 && (
+                  <div className="border-b border-control-border px-3 py-2">
+                    <SearchInput
+                      placeholder={t("common.search")}
+                      value={searchText}
+                      onChange={(event) => setSearchText(event.target.value)}
+                    />
+                  </div>
+                )}
+                <div className="max-h-80 overflow-y-auto p-2">
+                  {filteredExtraDatabases.length > 0 ? (
+                    <div className="flex flex-col gap-1">
+                      {filteredExtraDatabases.map((database) => (
+                        <div
+                          key={database.name}
+                          className="min-w-0 rounded-xs px-2 py-1.5 hover:bg-control-bg"
+                        >
+                          <PlanTargetDisplay
+                            showEnvironment
+                            target={database.name}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="px-2 py-4 text-center text-sm text-control-light">
+                      {t("common.no-data")}
+                    </div>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
           )}
         </div>
       )}
@@ -1942,26 +2043,24 @@ function parseStatement(statement: string): {
   };
 }
 
-async function fetchTargets(
-  targets: string[],
-  dbGroupStore: ReturnType<typeof useDBGroupStore>,
-  databaseStore: ReturnType<typeof useDatabaseV1Store>
-) {
+async function fetchTargets(targets: string[]) {
   await Promise.all(
     targets.map(async (target) => {
       if (isValidDatabaseName(target)) {
-        await databaseStore.getOrFetchDatabaseByName(target, true);
+        await useAppStore.getState().getOrFetchDatabaseByName(target, true);
         return;
       }
       if (isValidDatabaseGroupName(target)) {
-        const dbGroup = await dbGroupStore.getOrFetchDBGroupByName(target, {
-          silent: true,
-          view: DatabaseGroupView.FULL,
-        });
+        const dbGroup = await useAppStore
+          .getState()
+          .getOrFetchDBGroupByName(target, {
+            silent: true,
+            view: DatabaseGroupView.FULL,
+          });
         const databaseNames =
           dbGroup.matchedDatabases?.map((database) => database.name) ?? [];
         if (databaseNames.length > 0) {
-          await databaseStore.batchGetOrFetchDatabases(databaseNames);
+          await useAppStore.getState().batchGetOrFetchDatabases(databaseNames);
         }
       }
     })

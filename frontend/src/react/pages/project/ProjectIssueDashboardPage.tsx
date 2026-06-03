@@ -11,15 +11,11 @@ import {
   useIssueSearchScopeOptions,
 } from "@/react/components/IssueTable";
 import { Alert } from "@/react/components/ui/alert";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import { PagedTableFooter, usePagedData } from "@/react/hooks/usePagedData";
-import { useVueState } from "@/react/hooks/useVueState";
+import { refreshIssueList } from "@/react/lib/issue/issueListRefresh";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
-import {
-  refreshIssueList,
-  useCurrentUserV1,
-  useIssueV1Store,
-  useUIStateStore,
-} from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import { ApprovalStatus } from "@/types/proto-es/v1/common_pb";
 import type { Issue } from "@/types/proto-es/v1/issue_service_pb";
@@ -39,19 +35,21 @@ export function ProjectIssueDashboardPage({
   projectId: string;
 }) {
   const { t } = useTranslation();
-  const issueStore = useIssueV1Store();
-  const uiStateStore = useUIStateStore();
-  const currentUser = useCurrentUserV1();
-  const me = useVueState(() => currentUser.value);
+  const batchGetOrFetchUsers = useAppStore(
+    (state) => state.batchGetOrFetchUsers
+  );
+  const me = useCurrentUser();
 
   const projectName = `${projectNamePrefix}${projectId}`;
 
   // Hint
   const HINT_KEY = "issue.hint-dismissed";
-  const hideHint = useVueState(() => uiStateStore.getIntroStateByKey(HINT_KEY));
+  const hideHint = useAppStore((s) => s.getIntroStateByKey(HINT_KEY));
   const dismissHint = useCallback(() => {
-    uiStateStore.saveIntroStateByKey({ key: HINT_KEY, newState: true });
-  }, [uiStateStore]);
+    useAppStore
+      .getState()
+      .saveIntroStateByKey({ key: HINT_KEY, newState: true });
+  }, []);
 
   // Read-only scopes
   const readonlyScopes: VueSearchScope[] = useMemo(
@@ -160,20 +158,29 @@ export function ProjectIssueDashboardPage({
 
   const fetchIssueList = useCallback(
     async (params: { pageSize: number; pageToken: string }) => {
-      const { nextPageToken, issues } = await issueStore.listIssues({
-        find: issueFilter,
-        pageSize: params.pageSize,
-        pageToken: params.pageToken,
-      });
+      const { nextPageToken, issues } = await useAppStore
+        .getState()
+        .listIssues({
+          find: issueFilter,
+          pageSize: params.pageSize,
+          pageToken: params.pageToken,
+        });
       return { list: issues, nextPageToken };
     },
-    [issueStore, issueFilter]
+    [issueFilter]
   );
 
   const paged = usePagedData<Issue>({
     sessionKey: "bb.issue-table.project-issues",
     fetchList: fetchIssueList,
   });
+
+  useEffect(() => {
+    if (paged.dataList.length === 0) {
+      return;
+    }
+    void batchGetOrFetchUsers(paged.dataList.map((issue) => issue.creator));
+  }, [batchGetOrFetchUsers, paged.dataList]);
 
   // Scope options
   const scopeOptions = useIssueSearchScopeOptions(projectName);

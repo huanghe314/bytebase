@@ -5,14 +5,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/parser/plsql"
+	"github.com/bytebase/omni/oracle/ast"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
 	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
-	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -35,22 +33,8 @@ func (*TableNoForeignKeyAdvisor) Check(_ context.Context, checkCtx advisor.Conte
 	}
 
 	rule := NewTableNoForeignKeyRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase)
-	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range checkCtx.ParsedStatements {
-		if stmt.AST == nil {
-			continue
-		}
-		antlrAST, ok := base.GetANTLRAST(stmt.AST)
-		if !ok {
-			continue
-		}
-		rule.SetBaseLine(stmt.BaseLine())
-		checker.SetBaseLine(stmt.BaseLine())
-		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
-	}
-
-	return checker.GetAdviceList()
+	return RunOmniRules(checkCtx.ParsedStatements, []OmniRule{rule})
 }
 
 // TableNoForeignKeyRule is the rule implementation for table disallow foreign key.
@@ -58,7 +42,6 @@ type TableNoForeignKeyRule struct {
 	BaseRule
 
 	currentDatabase string
-	tableName       string
 	tableWithFK     map[string]bool
 	tableLine       map[string]int
 }
@@ -78,31 +61,44 @@ func (*TableNoForeignKeyRule) Name() string {
 	return "table.no-foreign-key"
 }
 
-// OnEnter is called when the parser enters a rule context.
-func (r *TableNoForeignKeyRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
-	switch nodeType {
-	case "Create_table":
-		r.handleCreateTable(ctx.(*parser.Create_tableContext))
-	case "References_clause":
-		r.handleReferencesClause(ctx.(*parser.References_clauseContext))
-	case "Alter_table":
-		r.handleAlterTable(ctx.(*parser.Alter_tableContext))
+// OnStatement checks foreign keys from omni CREATE/ALTER TABLE nodes.
+func (r *TableNoForeignKeyRule) OnStatement(node ast.Node) {
+	switch n := node.(type) {
+	case *ast.CreateTableStmt:
+		tableName := omniObjectName(n.Name, r.currentDatabase)
+		if r.createTableHasFK(n) {
+			r.tableWithFK[tableName] = true
+			r.tableLine[tableName] = r.locLine(n.Loc)
+		}
+	case *ast.AlterTableStmt:
+		tableName := omniObjectName(n.Name, r.currentDatabase)
+		for _, cmd := range omniAlterTableCmds(n) {
+			if cmd.Constraint != nil && cmd.Constraint.Type == ast.CONSTRAINT_FOREIGN {
+				r.tableWithFK[tableName] = true
+				r.tableLine[tableName] = r.locLine(cmd.Constraint.Loc)
+			}
+		}
 	default:
 	}
-	return nil
 }
 
-// OnExit is called when the parser exits a rule context.
-func (r *TableNoForeignKeyRule) OnExit(_ antlr.ParserRuleContext, nodeType string) error {
-	switch nodeType {
-	case "Create_table":
-		r.tableName = ""
-	case "Alter_table":
-		r.tableName = ""
-	default:
+func (*TableNoForeignKeyRule) createTableHasFK(stmt *ast.CreateTableStmt) bool {
+	for _, col := range omniColumnDefs(stmt.Columns) {
+		if omniColumnHasConstraint(col, ast.CONSTRAINT_FOREIGN) {
+			return true
+		}
 	}
-	return nil
+	for _, c := range omniTableConstraints(stmt.Constraints) {
+		if c.Type == ast.CONSTRAINT_FOREIGN {
+			return true
+		}
+	}
+	return false
 }
+
+// OnEnter is called when the parser enters a rule context.
+
+// OnExit is called when the parser exits a rule context.
 
 // GetAdviceList returns the advice list.
 func (r *TableNoForeignKeyRule) GetAdviceList() ([]*storepb.Advice, error) {
@@ -117,22 +113,4 @@ func (r *TableNoForeignKeyRule) GetAdviceList() ([]*storepb.Advice, error) {
 		}
 	}
 	return r.BaseRule.GetAdviceList()
-}
-
-func (r *TableNoForeignKeyRule) handleCreateTable(ctx *parser.Create_tableContext) {
-	schemaName := r.currentDatabase
-	if ctx.Schema_name() != nil {
-		schemaName = normalizeIdentifier(ctx.Schema_name(), r.currentDatabase)
-	}
-
-	r.tableName = fmt.Sprintf("%s.%s", schemaName, normalizeIdentifier(ctx.Table_name(), r.currentDatabase))
-}
-
-func (r *TableNoForeignKeyRule) handleReferencesClause(ctx *parser.References_clauseContext) {
-	r.tableWithFK[r.tableName] = true
-	r.tableLine[r.tableName] = r.baseLine + ctx.GetStop().GetLine()
-}
-
-func (r *TableNoForeignKeyRule) handleAlterTable(ctx *parser.Alter_tableContext) {
-	r.tableName = normalizeIdentifier(ctx.Tableview_name(), r.currentDatabase)
 }

@@ -1,9 +1,9 @@
 package plsql
 
 import (
+	"strings"
 	"testing"
 
-	parser "github.com/bytebase/parser/plsql"
 	"github.com/stretchr/testify/require"
 
 	"github.com/bytebase/omni/oracle/ast"
@@ -25,6 +25,109 @@ func TestParsePLSQLOmni(t *testing.T) {
 	second, ok := list.Items[1].(*ast.RawStmt)
 	require.True(t, ok)
 	require.IsType(t, &ast.InsertStmt{}, second.Stmt)
+}
+
+func TestParsePLSQLOmniSplitsSlashTerminatedPLSQLScript(t *testing.T) {
+	list, err := ParsePLSQLOmni(`
+CREATE TABLE AUDIT_LOG (
+  LOG_ID NUMBER PRIMARY KEY
+);
+
+CREATE OR REPLACE TRIGGER audit_log_trigger
+BEFORE INSERT ON AUDIT_LOG
+FOR EACH ROW
+BEGIN
+  NULL;
+END;
+/
+`)
+	require.NoError(t, err)
+	require.NotNil(t, list)
+	require.Len(t, list.Items, 2)
+
+	first, ok := list.Items[0].(*ast.RawStmt)
+	require.True(t, ok)
+	require.IsType(t, &ast.CreateTableStmt{}, first.Stmt)
+
+	second, ok := list.Items[1].(*ast.RawStmt)
+	require.True(t, ok)
+	require.IsType(t, &ast.CreateTriggerStmt{}, second.Stmt)
+}
+
+func TestParsePLSQLOmniSkipsSQLPlusCommands(t *testing.T) {
+	list, err := ParsePLSQLOmni(`
+SET DEFINE OFF
+PROMPT setup
+
+CREATE TABLE AUDIT_LOG (
+  LOG_ID NUMBER PRIMARY KEY
+);
+
+SPOOL out.log
+CREATE OR REPLACE TRIGGER audit_log_trigger
+BEFORE INSERT ON AUDIT_LOG
+FOR EACH ROW
+BEGIN
+  NULL;
+END;
+/
+SPOOL OFF
+`)
+	require.NoError(t, err)
+	require.NotNil(t, list)
+	require.Len(t, list.Items, 2)
+
+	first, ok := list.Items[0].(*ast.RawStmt)
+	require.True(t, ok)
+	require.IsType(t, &ast.CreateTableStmt{}, first.Stmt)
+
+	second, ok := list.Items[1].(*ast.RawStmt)
+	require.True(t, ok)
+	require.IsType(t, &ast.CreateTriggerStmt{}, second.Stmt)
+}
+
+func TestParsePLSQLOmniMatchRecognize(t *testing.T) {
+	statement := `SELECT * FROM TRADES MATCH_RECOGNIZE (
+  PARTITION BY ACCOUNT_ID
+  ORDER BY TRADE_TIME
+  MEASURES FIRST(PRICE) AS FIRST_PRICE, LAST(PRICE) AS LAST_PRICE
+  ONE ROW PER MATCH
+  PATTERN (A B+)
+  DEFINE B AS B.PRICE > A.PRICE
+) MR`
+	stmts, err := SplitSQL(statement)
+	require.NoError(t, err)
+	require.Len(t, stmts, 1)
+	require.Equal(t, statement, stmts[0].Text)
+
+	list, err := ParsePLSQLOmni(statement)
+	require.NoError(t, err)
+	require.Len(t, list.Items, 1)
+	raw, ok := list.Items[0].(*ast.RawStmt)
+	require.True(t, ok)
+	require.IsType(t, &ast.SelectStmt{}, raw.Stmt)
+}
+
+func TestParsePLSQLOmniPreservesScriptOffsets(t *testing.T) {
+	sql := `PROMPT setup
+SELECT 1 FROM DUAL;
+
+SELECT name FROM users;
+`
+	list, err := ParsePLSQLOmni(sql)
+	require.NoError(t, err)
+	require.NotNil(t, list)
+	require.Len(t, list.Items, 2)
+
+	first, ok := list.Items[0].(*ast.RawStmt)
+	require.True(t, ok)
+	require.Equal(t, strings.Index(sql, "SELECT 1"), first.Loc.Start)
+	require.Equal(t, strings.Index(sql, ";"), first.Loc.End)
+
+	second, ok := list.Items[1].(*ast.RawStmt)
+	require.True(t, ok)
+	require.Equal(t, strings.Index(sql, "SELECT name"), second.Loc.Start)
+	require.Equal(t, strings.LastIndex(sql, ";"), second.Loc.End)
 }
 
 func TestParsePLSQLOmniReturnsParseError(t *testing.T) {
@@ -53,7 +156,7 @@ func TestOracleOmniASTWrapper(t *testing.T) {
 	require.Nil(t, got)
 }
 
-func TestOracleOmniASTAsANTLRAST(t *testing.T) {
+func TestOracleOmniASTDoesNotProvideANTLRFallback(t *testing.T) {
 	start := &storepb.Position{Line: 4, Column: 1}
 	omniAST := &OmniAST{
 		Node:          &ast.SelectStmt{},
@@ -62,14 +165,8 @@ func TestOracleOmniASTAsANTLRAST(t *testing.T) {
 	}
 
 	antlrAST, ok := base.GetANTLRAST(omniAST)
-	require.True(t, ok)
-	require.Equal(t, start, antlrAST.StartPosition)
-	require.IsType(t, &parser.Sql_scriptContext{}, antlrAST.Tree)
-	require.NotNil(t, antlrAST.Tokens)
-
-	antlrASTAgain, ok := base.GetANTLRAST(omniAST)
-	require.True(t, ok)
-	require.Same(t, antlrAST, antlrASTAgain)
+	require.False(t, ok)
+	require.Nil(t, antlrAST)
 }
 
 func TestOracleByteOffsetToRunePosition(t *testing.T) {

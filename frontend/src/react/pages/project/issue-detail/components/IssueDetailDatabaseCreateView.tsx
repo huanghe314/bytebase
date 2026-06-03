@@ -5,14 +5,9 @@ import { EngineIcon } from "@/react/components/EngineIcon";
 import { Tooltip } from "@/react/components/ui/tooltip";
 import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import { INSTANCE_ROUTE_DETAIL } from "@/router/dashboard/instance";
-import {
-  useEnvironmentV1Store,
-  useInstanceV1Store,
-  useProjectV1Store,
-  useSheetV1Store,
-} from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import {
   formatEnvironmentName,
@@ -21,6 +16,7 @@ import {
 } from "@/types";
 import type { Plan_CreateDatabaseConfig } from "@/types/proto-es/v1/plan_service_pb";
 import { Task_Status } from "@/types/proto-es/v1/rollout_service_pb";
+import { unknownInstance } from "@/types/v1/instance";
 import {
   databaseV1Url,
   extractCoreDatabaseInfoFromDatabaseCreateTask,
@@ -36,12 +32,14 @@ import { IssueDetailTaskRunTable } from "./IssueDetailTaskRunTable";
 export function IssueDetailDatabaseCreateView() {
   const { t } = useTranslation();
   const page = useIssueDetailContext();
-  const projectStore = useProjectV1Store();
-  const environmentStore = useEnvironmentV1Store();
-  const instanceStore = useInstanceV1Store();
-  const sheetStore = useSheetV1Store();
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  const environmentList = useAppStore((s) => s.environmentList);
   const projectName = `${projectNamePrefix}${page.projectId}`;
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
+  );
+  void projectsByName;
 
   const createDatabaseSpec = useMemo(() => {
     return page.plan?.specs.find(
@@ -56,11 +54,16 @@ export function IssueDetailDatabaseCreateView() {
 
   const environmentName = createDatabaseConfig?.environment ?? "";
   const targetInstanceName = createDatabaseConfig?.target ?? "";
-  const environment = useVueState(() =>
-    environmentStore.getEnvironmentByName(environmentName)
+  const environment = useMemo(
+    () => useAppStore.getState().getEnvironmentByName(environmentName),
+    [environmentList, environmentName]
   );
-  const instance = useVueState(() =>
-    instanceStore.getInstanceByName(targetInstanceName)
+  const cachedInstance = useAppStore(
+    (s) => s.instancesByName[targetInstanceName]
+  );
+  const instance = useMemo(
+    () => cachedInstance ?? unknownInstance(),
+    [cachedInstance, targetInstanceName]
   );
 
   const createDatabaseTask = useMemo(() => {
@@ -94,15 +97,15 @@ export function IssueDetailDatabaseCreateView() {
 
   useEffect(() => {
     if (sheetName) {
-      void sheetStore.getOrFetchSheetByName(sheetName);
+      void useAppStore.getState().getOrFetchSheetByName(sheetName);
     }
-  }, [sheetName, sheetStore]);
+  }, [sheetName]);
 
   useEffect(() => {
     if (targetInstanceName) {
-      void instanceStore.getOrFetchInstanceByName(targetInstanceName);
+      void useAppStore.getState().getOrFetchInstanceByName(targetInstanceName);
     }
-  }, [instanceStore, targetInstanceName]);
+  }, [targetInstanceName]);
 
   const isTaskDone = createDatabaseTask?.status === Task_Status.DONE;
   const createdDatabase =
@@ -233,9 +236,10 @@ function IssueDetailDatabaseCreateInstance({
         params: { instanceId },
       }).href
     : "";
-  const instanceStore = useInstanceV1Store();
-  const instance = useVueState(() =>
-    instanceStore.getInstanceByName(instanceName)
+  const cachedInstance = useAppStore((s) => s.instancesByName[instanceName]);
+  const instance = useMemo(
+    () => cachedInstance ?? unknownInstance(),
+    [cachedInstance, instanceName]
   );
 
   if (!instanceHref) {

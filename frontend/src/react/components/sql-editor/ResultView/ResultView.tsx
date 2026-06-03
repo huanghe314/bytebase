@@ -2,12 +2,13 @@ import { create } from "@bufbuild/protobuf";
 import { ConnectError } from "@connectrpc/connect";
 import dayjs from "dayjs";
 import { InfoIcon, LoaderCircle } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   DataExportButton,
   type DataExportRequest,
 } from "@/react/components/DataExportButton";
+import { RequestExportButton } from "@/react/components/sql-editor/RequestExportButton";
 import { RequestQueryButton } from "@/react/components/sql-editor/RequestQueryButton";
 import { Button } from "@/react/components/ui/button";
 import {
@@ -18,17 +19,11 @@ import {
 } from "@/react/components/ui/tabs";
 import { Tooltip } from "@/react/components/ui/tooltip";
 import { isDisallowChangeDatabaseError } from "@/react/hooks/useExecuteSQL";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useSQLEditorQueryDataPolicy } from "@/react/hooks/useSQLEditorBridge";
 import { cn } from "@/react/lib/utils";
-import { useSQLEditorVueState } from "@/react/stores/sqlEditor/editor-vue-state";
-import { useSQLEditorTabStore } from "@/react/stores/sqlEditor/tab-vue-state";
-import {
-  pushNotification,
-  useDatabaseV1Store,
-  useDBSchemaV1Store,
-  useSQLStore,
-} from "@/store";
-import { usePolicyV1Store } from "@/store/modules/v1/policy";
+import { useAppStore } from "@/react/stores/app";
+import { useSQLEditorEditorState } from "@/react/stores/sqlEditor/editor";
+import { getSQLEditorTabsState } from "@/react/stores/sqlEditor/tab";
 import type { SQLEditorQueryParams, SQLResultSetV1 } from "@/types";
 import { isValidDatabaseName } from "@/types";
 import {
@@ -36,6 +31,7 @@ import {
   type PermissionDeniedDetail,
 } from "@/types/proto-es/v1/common_pb";
 import type { Database } from "@/types/proto-es/v1/database_service_pb";
+import { PolicyType } from "@/types/proto-es/v1/org_policy_service_pb";
 import { ExportRequestSchema } from "@/types/proto-es/v1/sql_service_pb";
 import { hasProjectPermissionV2 } from "@/utils/iam/permission";
 import {
@@ -71,11 +67,30 @@ export function ResultView({
   dark = false,
 }: ResultViewProps) {
   const { t } = useTranslation();
-  const policyStore = usePolicyV1Store();
-  const queryDataPolicy = useVueState(
-    () => useSQLEditorVueState().queryDataPolicy
+  const project = useSQLEditorEditorState((s) => s.project);
+  const queryDataPolicy = useSQLEditorQueryDataPolicy(project);
+  // Env-level data-query policy via the app store. Subscribe to the
+  // derived `QueryDataPolicy` directly — the slice returns a stable empty
+  // singleton when nothing is cached, so this is safe for
+  // `useSyncExternalStore` snapshot comparisons.
+  const environment = database.effectiveEnvironment;
+  const envQueryDataPolicy = useAppStore((s) =>
+    environment ? s.getQueryDataPolicyByParent(environment) : undefined
   );
-  const tabStore = useSQLEditorTabStore();
+  const getOrFetchPolicyByParentAndType = useAppStore(
+    (s) => s.getOrFetchPolicyByParentAndType
+  );
+  // Settings pages populate the env policy in Pinia, but the SQL editor
+  // route doesn't fetch it on its own — self-fetch so the read above
+  // resolves to a real policy (not the empty fallback) and copy-disable
+  // gates fire even on a fresh editor visit.
+  useEffect(() => {
+    if (!environment) return;
+    void getOrFetchPolicyByParentAndType({
+      parentPath: environment,
+      policyType: PolicyType.DATA_QUERY,
+    });
+  }, [environment, getOrFetchPolicyByParentAndType]);
 
   const permissionDeniedError = useMemo<
     PermissionDeniedDetail | undefined
@@ -109,15 +124,124 @@ export function ResultView({
 
   const disallowCopyingData = useMemo(() => {
     if (queryDataPolicy?.disableCopyData) return true;
-    const environment = database.effectiveEnvironment;
-    if (
-      environment &&
-      policyStore.getQueryDataPolicyByParent(environment).disableCopyData
-    ) {
-      return true;
-    }
+    if (envQueryDataPolicy?.disableCopyData) return true;
     return false;
-  }, [queryDataPolicy, database, policyStore]);
+  }, [queryDataPolicy, envQueryDataPolicy]);
+
+  // Show the real export button when the policy allows export, OR when the
+  // user holds any active export-capable grant for this statement — even if
+  // it's not the grant the Query path applied (Query prefers Unmask, so the
+  // applied grant may be unmask-only while a separate export grant exists).
+  // Without this independent search the UI would hide the Export button and
+  // direct the user to "Request export" despite already having a grant — see
+  // PR #20491 bot review (#3349086832).
+  const searchMyAccessGrants = useAppStore((s) => s.searchMyAccessGrants);
+  const databaseProjectName = database.project;
+  const [exportGrantName, setExportGrantName] = useState<string>("");
+
+  useEffect(() => {
+    if (
+      !queryDataPolicy?.disableExport ||
+      !executeParams?.statement ||
+      !databaseProjectName
+    ) {
+      setExportGrantName("");
+      return;
+    }
+    let canceled = false;
+    void (async () => {
+      const result = await searchMyAccessGrants({
+        parent: databaseProjectName,
+        filter: {
+          target: database.name,
+          // Exact match — the backend's JIT authorization path uses
+          // `query == ...` (preCheckAccess in sql_service.go). A
+          // substring match (`statement: ...`) would expose Export for
+          // queries that don't actually match any grant. PR #20491 bot
+          // review #3349385091.
+          statementExact: executeParams.statement,
+          status: ["ACTIVE"],
+          export: true,
+        },
+      });
+      if (!canceled) {
+        setExportGrantName(result.accessGrants[0]?.name ?? "");
+      }
+    })();
+    return () => {
+      canceled = true;
+    };
+  }, [
+    queryDataPolicy?.disableExport,
+    executeParams?.statement,
+    databaseProjectName,
+    database.name,
+    searchMyAccessGrants,
+  ]);
+
+  // Pull display fields from the cache populated by the search above.
+  const exportGrantIssue = useAppStore((s) =>
+    exportGrantName ? (s.accessGrantsByName[exportGrantName]?.issue ?? "") : ""
+  );
+  const exportGrantReason = useAppStore((s) =>
+    exportGrantName ? (s.accessGrantsByName[exportGrantName]?.reason ?? "") : ""
+  );
+
+  const showExport = !queryDataPolicy?.disableExport || !!exportGrantName;
+
+  // Surface a tooltip explaining the grant-based bypass only when the policy
+  // itself would normally block export — in the everyday "policy allows
+  // export" case, no tooltip is needed. Attributes to the export-capable
+  // grant (which may differ from the Query-applied grant when the user has
+  // separate unmask + export grants for the same statement).
+  const exportTooltip = useMemo<ReactNode>(() => {
+    if (!queryDataPolicy?.disableExport || !exportGrantName) {
+      return undefined;
+    }
+    const issueHref = exportGrantIssue
+      ? exportGrantIssue.startsWith("/")
+        ? exportGrantIssue
+        : `/${exportGrantIssue}`
+      : undefined;
+    return (
+      <div className="flex flex-col gap-y-1">
+        <span>{t("sql-editor.export-enabled-by-grant")}</span>
+        {issueHref ? (
+          <a
+            href={issueHref}
+            target="_blank"
+            rel="noreferrer"
+            className="break-all underline"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {exportGrantName}
+          </a>
+        ) : (
+          <span className="break-all">{exportGrantName}</span>
+        )}
+        {exportGrantReason && (
+          <span className="text-xs opacity-80">{exportGrantReason}</span>
+        )}
+      </div>
+    );
+  }, [
+    t,
+    queryDataPolicy?.disableExport,
+    exportGrantName,
+    exportGrantIssue,
+    exportGrantReason,
+  ]);
+
+  // When direct export is unavailable, offer a "Request export" affordance that
+  // opens the access-grant drawer (pre-filled with this database, statement,
+  // and unmask + export checked). The button self-hides when the project
+  // doesn't allow just-in-time access.
+  const requestExportButton = executeParams ? (
+    <RequestExportButton
+      statement={executeParams.statement}
+      targets={[database.name]}
+    />
+  ) : null;
 
   const filteredResults = useMemo(() => {
     if (!resultSet) return [];
@@ -128,13 +252,27 @@ export function ResultView({
 
   const tabName = (index: number) => `${t("common.query")} #${index + 1}`;
 
+  const supportFormats = useMemo(
+    () => [
+      ExportFormat.CSV,
+      ExportFormat.JSON,
+      ExportFormat.SQL,
+      ExportFormat.XLSX,
+    ],
+    []
+  );
+
   const handleExport = async (
     req: DataExportRequest & { statement: string }
   ) => {
     const { options, resolve, reject, statement } = req;
-    const admin = tabStore.currentTab?.mode === "ADMIN";
+
+    // === Prod path: backend Export RPC ===
+    const tabsState = getSQLEditorTabsState();
+    const admin =
+      tabsState.tabsById.get(tabsState.currentTabId)?.mode === "ADMIN";
     try {
-      const content = await useSQLStore().exportData(
+      const content = await useAppStore.getState().exportData(
         create(ExportRequestSchema, {
           name: database.name,
           ...(executeParams.connection.dataSourceId
@@ -203,9 +341,13 @@ export function ResultView({
                 params={executeParams}
                 database={database}
                 result={resultSet.results[0]}
-                showExport={!queryDataPolicy?.disableExport}
+                showExport={showExport}
+                exportTooltip={exportTooltip}
                 maximumExportCount={queryDataPolicy?.maximumResultRows}
                 onExport={handleExport}
+                requestExportSlot={
+                  !showExport ? requestExportButton : undefined
+                }
               />
             ))}
 
@@ -229,19 +371,15 @@ export function ResultView({
                     </Tooltip>
                   ))}
                 </TabsList>
-                {!queryDataPolicy?.disableExport && (
+                {showExport ? (
                   <div className="mb-1">
                     <DataExportButton
                       size="sm"
                       disabled={false}
-                      supportFormats={[
-                        ExportFormat.CSV,
-                        ExportFormat.JSON,
-                        ExportFormat.SQL,
-                        ExportFormat.XLSX,
-                      ]}
+                      supportFormats={supportFormats}
                       viewMode="DRAWER"
                       supportPassword
+                      tooltip={exportTooltip}
                       maximumExportCount={queryDataPolicy?.maximumResultRows}
                       onExport={(req) =>
                         handleExport({
@@ -251,6 +389,8 @@ export function ResultView({
                       }
                     />
                   </div>
+                ) : (
+                  <div className="mb-1">{requestExportButton}</div>
                 )}
               </div>
               {filteredResults.map((result, i) => (
@@ -326,8 +466,6 @@ export function ResultView({
 
 function SyncDatabaseButton({ database }: { database: Database }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
-  const dbSchemaStore = useDBSchemaV1Store();
   const [syncing, setSyncing] = useState(false);
 
   if (!isValidDatabaseName(database.name)) return null;
@@ -340,12 +478,13 @@ function SyncDatabaseButton({ database }: { database: Database }) {
     setSyncing(true);
     const { databaseName } = extractDatabaseResourceName(database.name);
     try {
-      await databaseStore.syncDatabase(database.name);
-      await dbSchemaStore.getOrFetchDatabaseMetadata({
+      const appStore = useAppStore.getState();
+      await appStore.syncDatabase(database.name);
+      await appStore.getOrFetchDatabaseMetadata({
         database: database.name,
         skipCache: true,
       });
-      pushNotification({
+      useAppStore.getState().notify({
         module: "bytebase",
         style: "SUCCESS",
         title: t(
@@ -354,7 +493,7 @@ function SyncDatabaseButton({ database }: { database: Database }) {
         ),
       });
     } catch (error) {
-      pushNotification({
+      useAppStore.getState().notify({
         module: "bytebase",
         style: "CRITICAL",
         title: t("db.failed-to-sync-schema-for-database-database-value-name", {

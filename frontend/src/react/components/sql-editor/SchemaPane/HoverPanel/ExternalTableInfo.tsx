@@ -1,6 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useVueState } from "@/react/hooks/useVueState";
-import { useDBSchemaV1Store } from "@/store";
+import { useAppStore } from "@/react/stores/app";
 import { InfoItem } from "./InfoItem";
 
 type Props = {
@@ -12,9 +11,8 @@ type Props = {
 /** Replaces `HoverPanel/ExternalTableInfo.vue`. */
 export function ExternalTableInfo({ database, schema, externalTable }: Props) {
   const { t } = useTranslation();
-  const dbSchema = useDBSchemaV1Store();
-  const externalTableMetadata = useVueState(() =>
-    dbSchema.getExternalTableMetadata({ database, schema, externalTable })
+  const externalTableMetadata = useAppStore((s) =>
+    s.getExternalTableMetadata({ database, schema, externalTable })
   );
 
   return (

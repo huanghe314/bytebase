@@ -24,14 +24,9 @@ import { useVueState } from "@/react/hooks/useVueState";
 import { getClassificationLevelOptions } from "@/react/lib/sensitive-data/components-utils";
 import { rewriteResourceDatabase } from "@/react/lib/sensitive-data/exemptionDataUtils";
 import { getExpressionsForDatabaseResource } from "@/react/lib/sensitive-data/utils";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
-import {
-  hasFeature,
-  pushNotification,
-  usePolicyV1Store,
-  useProjectV1Store,
-  useSettingV1Store,
-} from "@/store";
+import { hasFeature, pushNotification } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import type { DatabaseResource } from "@/types";
 import { ExprSchema } from "@/types/proto-es/google/type/expr_pb";
@@ -64,20 +59,21 @@ export function ProjectMaskingExemptionCreatePage({
   projectId: string;
 }) {
   const { t } = useTranslation();
-  const projectStore = useProjectV1Store();
-  const policyStore = usePolicyV1Store();
-  const settingStore = useSettingV1Store();
+  const projectsByName = useAppStore((s) => s.projectsByName);
 
   const projectName = `${projectNamePrefix}${projectId}`;
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  // subscribe to re-render on project cache change
+  void projectsByName;
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
+  );
 
   // Ensure classification config is loaded
   useEffect(() => {
-    settingStore.getOrFetchSettingByName(
-      Setting_SettingName.DATA_CLASSIFICATION,
-      true
-    );
-  }, [settingStore]);
+    useAppStore
+      .getState()
+      .getOrFetchSettingByName(Setting_SettingName.DATA_CLASSIFICATION, true);
+  }, []);
 
   const hasRequiredFeature = useVueState(() =>
     hasFeature(PlanFeature.FEATURE_DATA_MASKING)
@@ -142,6 +138,9 @@ export function ProjectMaskingExemptionCreatePage({
     []
   );
 
+  // Subscribe so the classification options recompute when DATA_CLASSIFICATION
+  // loads (getClassificationLevelOptions reads the app store imperatively).
+  const settingsByName = useAppStore((s) => s.settingsByName);
   const factorOptionConfigMap = useMemo((): Map<Factor, OptionConfig> => {
     return factorList.reduce((map, factor) => {
       if (factor === CEL_ATTRIBUTE_RESOURCE_DATABASE) {
@@ -155,7 +154,7 @@ export function ProjectMaskingExemptionCreatePage({
       }
       return map;
     }, new Map<Factor, OptionConfig>());
-  }, [factorList, projectName]);
+  }, [factorList, projectName, settingsByName]);
 
   const onRadioChange = useCallback(
     (value: RadioValue) => {
@@ -234,17 +233,19 @@ export function ProjectMaskingExemptionCreatePage({
         );
       }
 
-      const policy = await policyStore.getOrFetchPolicyByParentAndType({
-        parentPath: projectName,
-        policyType: PolicyType.MASKING_EXEMPTION,
-        refresh: true,
-      });
+      const policy = await useAppStore
+        .getState()
+        .getOrFetchPolicyByParentAndType({
+          parentPath: projectName,
+          policyType: PolicyType.MASKING_EXEMPTION,
+          refresh: true,
+        });
       const existed =
         policy?.policy?.case === "maskingExemptionPolicy"
           ? policy.policy.value.exemptions
           : [];
 
-      await policyStore.upsertPolicy({
+      await useAppStore.getState().upsertPolicy({
         parentPath: projectName,
         policy: {
           name: policy?.name,
@@ -283,7 +284,6 @@ export function ProjectMaskingExemptionCreatePage({
     memberList,
     description,
     projectName,
-    policyStore,
     t,
     onDismiss,
   ]);

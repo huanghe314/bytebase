@@ -3,12 +3,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LAYER_SURFACE_CLASS } from "@/react/components/ui/layer";
 import { SearchInput } from "@/react/components/ui/search-input";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import { useClickOutside } from "@/react/hooks/useClickOutside";
-import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
-import { useCurrentUserV1, useGroupStore, useUserStore } from "@/store";
-import { extractUserEmail, groupNamePrefix } from "@/store/modules/v1/common";
-import { ALL_USERS_USER_EMAIL, userBindingPrefix } from "@/types";
+import { useAppStore } from "@/react/stores/app";
+import {
+  extractUserEmail,
+  groupNamePrefix,
+  serviceAccountNamePrefix,
+  workloadIdentityNamePrefix,
+} from "@/store/modules/v1/common";
+import {
+  AccountType,
+  ALL_USERS_USER_EMAIL,
+  getAccountTypeByEmail,
+  serviceAccountBindingPrefix,
+  userBindingPrefix,
+  workloadIdentityBindingPrefix,
+} from "@/types";
 import type { Group } from "@/types/proto-es/v1/group_service_pb";
 import type { User } from "@/types/proto-es/v1/user_service_pb";
 import { getDefaultPagination, isValidEmail } from "@/utils";
@@ -16,33 +28,58 @@ import { getDefaultPagination, isValidEmail } from "@/utils";
 import { getAvatarColor, getInitials } from "./UserAvatar";
 
 // ---- Account type detection ----
+//
+// Routes typed input to the right account type. Uses the canonical helpers
+// from @/types/v1/user so project-scoped emails like
+// "foo@<project>.workload.bytebase.com" are recognized — a hardcoded
+// "@workload.bytebase.com" suffix would miss them and fall through to a
+// `user:` binding.
 
-const SERVICE_ACCOUNT_SUFFIX = "@service.bytebase.com";
-const WORKLOAD_IDENTITY_SUFFIX = "@workload.bytebase.com";
+type SpecialAccountType = "serviceAccount" | "workloadIdentity";
 
-type SpecialAccountType = "serviceAccount" | "workloadIdentity" | null;
+function detectSpecialAccount(input: string): {
+  type: SpecialAccountType;
+  email: string;
+} | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
 
-function detectSpecialAccount(input: string): SpecialAccountType {
-  const lower = input.toLowerCase();
-  if (
-    lower.endsWith(SERVICE_ACCOUNT_SUFFIX) ||
-    lower.startsWith("serviceaccounts/") ||
-    lower.startsWith("serviceaccount:")
-  )
-    return "serviceAccount";
-  if (
-    lower.endsWith(WORKLOAD_IDENTITY_SUFFIX) ||
-    lower.startsWith("workloadidentities/") ||
-    lower.startsWith("workloadidentity:")
-  )
-    return "workloadIdentity";
-  return null;
-}
-
-function extractSpecialEmail(input: string): string {
-  if (input.includes("/")) return input.split("/").slice(1).join("/");
-  if (input.includes(":")) return input.split(":").slice(1).join(":");
-  return input;
+  // Canonical resource-name prefix (case-sensitive, matches backend AIP names).
+  if (trimmed.startsWith(serviceAccountNamePrefix)) {
+    return {
+      type: "serviceAccount",
+      email: trimmed.slice(serviceAccountNamePrefix.length),
+    };
+  }
+  if (trimmed.startsWith(workloadIdentityNamePrefix)) {
+    return {
+      type: "workloadIdentity",
+      email: trimmed.slice(workloadIdentityNamePrefix.length),
+    };
+  }
+  // IAM binding prefix (`serviceAccount:` / `workloadIdentity:`).
+  if (trimmed.startsWith(serviceAccountBindingPrefix)) {
+    return {
+      type: "serviceAccount",
+      email: trimmed.slice(serviceAccountBindingPrefix.length),
+    };
+  }
+  if (trimmed.startsWith(workloadIdentityBindingPrefix)) {
+    return {
+      type: "workloadIdentity",
+      email: trimmed.slice(workloadIdentityBindingPrefix.length),
+    };
+  }
+  // Fallback: classify by email suffix using the canonical detector, which
+  // matches both the root and project-scoped variants.
+  switch (getAccountTypeByEmail(trimmed)) {
+    case AccountType.SERVICE_ACCOUNT:
+      return { type: "serviceAccount", email: trimmed };
+    case AccountType.WORKLOAD_IDENTITY:
+      return { type: "workloadIdentity", email: trimmed };
+    default:
+      return null;
+  }
 }
 
 // ---- Conversion helpers ----
@@ -154,9 +191,9 @@ export function AccountMultiSelect({
   includeAllUsers?: boolean;
 }) {
   const { t } = useTranslation();
-  const userStore = useUserStore();
-  const groupStore = useGroupStore();
-  const currentUser = useVueState(() => useCurrentUserV1().value);
+  const listUsers = useAppStore((state) => state.listUsers);
+  const listGroups = useAppStore((state) => state.listGroups);
+  const currentUser = useCurrentUser();
 
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -174,17 +211,17 @@ export function AccountMultiSelect({
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       const query = search.trim();
-      userStore
-        .fetchUserList({ pageSize: getDefaultPagination(), filter: { query } })
-        .then(({ users: fetched }) => setUsers(fetched));
-      groupStore
-        .fetchGroupList({ pageSize: getDefaultPagination(), filter: { query } })
-        .then(({ groups: fetched }) => setGroups(fetched));
+      listUsers({ pageSize: getDefaultPagination(), filter: { query } }).then(
+        ({ users: fetched }) => setUsers(fetched)
+      );
+      listGroups({ pageSize: getDefaultPagination(), filter: { query } }).then(
+        ({ groups: fetched }) => setGroups(fetched)
+      );
     }, 300);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [search, userStore, groupStore]);
+  }, [search, listUsers, listGroups]);
 
   const handleClickOutside = useCallback(() => {
     setOpen(false);
@@ -239,15 +276,13 @@ export function AccountMultiSelect({
     email: string;
     fullname: string;
   } | null => {
-    const trimmed = search.trim();
-    if (!trimmed) return null;
-    const type = detectSpecialAccount(trimmed);
-    if (!type) return null;
-    const email = extractSpecialEmail(trimmed);
-    if (!email) return null;
+    const match = detectSpecialAccount(search);
+    if (!match || !match.email) return null;
     const prefix =
-      type === "serviceAccount" ? "serviceAccounts/" : "workloadIdentities/";
-    return { type, email, fullname: `${prefix}${email}` };
+      match.type === "serviceAccount"
+        ? serviceAccountNamePrefix
+        : workloadIdentityNamePrefix;
+    return { ...match, fullname: `${prefix}${match.email}` };
   }, [search]);
 
   // Allow selecting arbitrary user emails typed in the search box

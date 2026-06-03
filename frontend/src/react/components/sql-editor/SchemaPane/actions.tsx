@@ -18,14 +18,10 @@ import { useTranslation } from "react-i18next";
 import { formatSQL } from "@/react/components/monaco/sqlFormatter";
 import { useExecuteSQL } from "@/react/hooks/useExecuteSQL";
 import { keyWithPosition } from "@/react/lib/keyWithPosition";
-import { useSQLEditorTabStore } from "@/react/stores/sqlEditor/tab-vue-state";
+import { useAppStore } from "@/react/stores/app";
+import { getSQLEditorTabsState } from "@/react/stores/sqlEditor/tab";
 import { router } from "@/router";
 import { SQL_EDITOR_DATABASE_MODULE } from "@/router/sqlEditor";
-import {
-  pushNotification,
-  useDatabaseV1Store,
-  useDBSchemaV1Store,
-} from "@/store";
 import {
   DEFAULT_SQL_EDITOR_TAB_MODE,
   dialectOfEngineV1,
@@ -98,7 +94,7 @@ export type AvailableAction = {
  * Vue reactive computed.
  */
 const engineForDatabase = (database: string): Engine => {
-  const db = useDatabaseV1Store().getDatabaseByName(database);
+  const db = useAppStore.getState().getDatabaseByName(database);
   return getInstanceResource(db).engine;
 };
 
@@ -127,7 +123,8 @@ const applyContentToCurrentTabOrCopyToClipboard = async (
   content: string,
   notify: (key: string) => void
 ) => {
-  const tab = useSQLEditorTabStore().currentTab;
+  const tabsState = getSQLEditorTabsState();
+  const tab = tabsState.tabsById.get(tabsState.currentTabId);
   if (!tab) {
     await copyToClipboard(content, notify);
     return;
@@ -152,10 +149,10 @@ const copyToClipboard = async (
 };
 
 const updateCurrentTabViewState = (patch: Partial<EditorPanelViewState>) => {
-  const tabStore = useSQLEditorTabStore();
-  const tab = tabStore.currentTab;
+  const tabsState = getSQLEditorTabsState();
+  const tab = tabsState.tabsById.get(tabsState.currentTabId);
   if (!tab) return;
-  tabStore.updateTab(tab.id, {
+  tabsState.updateTab(tab.id, {
     viewState: {
       ...defaultViewState(),
       ...tab.viewState,
@@ -165,18 +162,18 @@ const updateCurrentTabViewState = (patch: Partial<EditorPanelViewState>) => {
 };
 
 const runQuery = async (
+  execute: ReturnType<typeof useExecuteSQL>["execute"],
   database: Database,
   schema: string | undefined,
   tableOrViewName: string,
   statement: string
 ) => {
-  const tabStore = useSQLEditorTabStore();
-  const tab = tabStore.currentTab;
+  const tabsState = getSQLEditorTabsState();
+  const tab = tabsState.tabsById.get(tabsState.currentTabId);
   if (!tab) return;
   if (tab.mode === "ADMIN") {
-    tabStore.updateCurrentTab({ mode: DEFAULT_SQL_EDITOR_TAB_MODE });
+    tabsState.updateCurrentTab({ mode: DEFAULT_SQL_EDITOR_TAB_MODE });
   }
-  const { execute } = useExecuteSQL();
   const connection: SQLEditorConnection = {
     instance: extractDatabaseResourceName(database.name).instance,
     database: database.name,
@@ -196,8 +193,8 @@ const runQuery = async (
 };
 
 export function useSchemaPaneActions() {
-  const databaseStore = useDatabaseV1Store();
-  const tabStore = useSQLEditorTabStore();
+  const getDatabaseByName = useAppStore((s) => s.getDatabaseByName);
+  const { execute } = useExecuteSQL();
 
   const openNewTab = useCallback(
     (params: {
@@ -206,11 +203,12 @@ export function useSchemaPaneActions() {
       table?: string;
       view: EditorPanelView;
     }) => {
-      const currentViewState = tabStore.currentTab?.viewState;
+      const tabsState = getSQLEditorTabsState();
+      const fromTab = tabsState.tabsById.get(tabsState.currentTabId);
+      const currentViewState = fromTab?.viewState;
       const schema = params.schema ?? currentViewState?.schema;
       const table = params.table ?? currentViewState?.table;
 
-      const fromTab = tabStore.currentTab;
       const clonedTab: SQLEditorTab = {
         ...defaultSQLEditorTab(),
         status: "CLEAN",
@@ -221,7 +219,11 @@ export function useSchemaPaneActions() {
         clonedTab.treeState = cloneDeep(fromTab.treeState);
       }
 
-      const findExistedTab = tabStore.openTabList.find((tab) => {
+      const openTabs = tabsState.openTmpTabList
+        .map((p) => tabsState.tabsById.get(p.id))
+        .filter((t): t is SQLEditorTab => !!t);
+
+      const findExistedTab = openTabs.find((tab) => {
         if (tab.status !== "CLEAN" || tab.id === fromTab?.id) return false;
         if (!isSameSQLEditorConnection(tab.connection, clonedTab.connection))
           return false;
@@ -236,13 +238,13 @@ export function useSchemaPaneActions() {
       });
 
       if (findExistedTab) {
-        tabStore.setCurrentTabId(findExistedTab.id);
+        tabsState.setCurrentTabId(findExistedTab.id);
       } else {
-        tabStore.addTab(clonedTab);
+        tabsState.addTab(clonedTab);
         updateCurrentTabViewState({ view: params.view, schema, table });
       }
     },
-    [tabStore]
+    []
   );
 
   const selectAllFromTableOrView = useCallback(
@@ -254,7 +256,7 @@ export function useSchemaPaneActions() {
       if (!tableOrViewName) return;
 
       const { database, schema } = target;
-      const db = databaseStore.getDatabaseByName(database);
+      const db = getDatabaseByName(database);
       const engine = getInstanceResource(db).engine;
 
       const query = await formatCode(
@@ -267,9 +269,9 @@ export function useSchemaPaneActions() {
         engine
       );
       updateCurrentTabViewState({ view: "CODE" });
-      await runQuery(db, schema, tableOrViewName, query);
+      await runQuery(execute, db, schema, tableOrViewName, query);
     },
-    [databaseStore]
+    [getDatabaseByName, execute]
   );
 
   const viewDetail = useCallback(
@@ -328,10 +330,12 @@ export function useSchemaPaneActions() {
       }
       updateCurrentTabViewState({ detail });
       if (name) {
-        tabStore.updateCurrentTab({ title: `Detail for ${type} ${name}` });
+        getSQLEditorTabsState().updateCurrentTab({
+          title: `Detail for ${type} ${name}`,
+        });
       }
     },
-    [openNewTab, tabStore]
+    [openNewTab]
   );
 
   return { selectAllFromTableOrView, viewDetail, openNewTab };
@@ -384,14 +388,17 @@ export function useSchemaPaneContextMenu(
   deps: SchemaMenuDeps
 ): SchemaMenuItem[] {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
-  const dbSchema = useDBSchemaV1Store();
+  const getDatabaseByName = useAppStore((s) => s.getDatabaseByName);
+  // Imperative reads happen inside `onSelect` callbacks below; resolve
+  // metadata at call time via `useAppStore.getState()` so we don't
+  // subscribe (and re-derive the menu) on every metadata cache update.
+  const getTableMetadata = useAppStore((s) => s.getTableMetadata);
   const { selectAllFromTableOrView, viewDetail, openNewTab } =
     useSchemaPaneActions();
 
   const notify = useCallback(
     (key: string) => {
-      pushNotification({
+      useAppStore.getState().notify({
         module: "bytebase",
         style: "SUCCESS",
         title: t(key),
@@ -406,7 +413,7 @@ export function useSchemaPaneContextMenu(
     const { database, schema } = target as NodeTarget<"schema">;
     if (!database) return [];
 
-    const db = databaseStore.getDatabaseByName(database);
+    const db = getDatabaseByName(database);
     const items: SchemaMenuItem[] = [];
 
     if (type === "schema") {
@@ -470,7 +477,7 @@ export function useSchemaPaneContextMenu(
           label: t("sql-editor.copy-all-column-names"),
           icon: <Copy className="size-4" />,
           onSelect: () => {
-            const tableMetadata = dbSchema.getTableMetadata({
+            const tableMetadata = getTableMetadata({
               database,
               schema,
               table,
@@ -568,7 +575,7 @@ export function useSchemaPaneContextMenu(
         });
         if (type === "table") {
           const { table } = target as NodeTarget<"table">;
-          const tableMetadata = dbSchema.getTableMetadata({
+          const tableMetadata = getTableMetadata({
             database,
             schema,
             table,
@@ -654,8 +661,8 @@ export function useSchemaPaneContextMenu(
   }, [
     node,
     deps,
-    databaseStore,
-    dbSchema,
+    getDatabaseByName,
+    getTableMetadata,
     notify,
     openNewTab,
     selectAllFromTableOrView,

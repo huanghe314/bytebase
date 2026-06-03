@@ -17,7 +17,8 @@ const mocks = vi.hoisted(() => ({
   pushNotification: vi.fn(),
   openWindowForSSO: vi.fn(),
   actuatorStore: null as unknown,
-  identityProviderStore: null as unknown,
+  identityProviderList: [] as unknown[],
+  listIdentityProviders: vi.fn(),
   authStore: null as unknown,
 }));
 
@@ -38,10 +39,23 @@ vi.mock("@/router/auth", () => ({
 
 vi.mock("@/store", () => ({
   pushNotification: mocks.pushNotification,
-  useActuatorV1Store: () => mocks.actuatorStore,
   useAuthStore: () => mocks.authStore,
-  useIdentityProviderStore: () => mocks.identityProviderStore,
 }));
+
+vi.mock("@/react/stores/app", () => {
+  const getState = () => ({
+    ...(mocks.actuatorStore as Record<string, unknown>),
+    identityProviderList: () => mocks.identityProviderList,
+    listIdentityProviders: mocks.listIdentityProviders,
+  });
+  return {
+    useAppStore: Object.assign(
+      (selector?: (state: ReturnType<typeof getState>) => unknown) =>
+        selector ? selector(getState()) : getState(),
+      { getState }
+    ),
+  };
+});
 
 vi.mock("@/utils", () => ({
   openWindowForSSO: mocks.openWindowForSSO,
@@ -99,26 +113,24 @@ beforeEach(async () => {
         disallowSignup: false,
       },
     },
-    isSaaSMode: false,
-    activeUserCount: 1,
+    isSaaSMode: () => false,
+    activeUserCount: () => 1,
     fetchServerInfo: vi.fn(async () => ({})),
   };
-  mocks.identityProviderStore = {
-    identityProviderList: [
-      {
-        name: "idps/corp-ldap",
-        title: "Corp LDAP",
-        type: IdentityProviderType.LDAP,
-      },
-    ],
-    fetchIdentityProviderList: vi.fn(async () => [
-      {
-        name: "idps/corp-ldap",
-        title: "Corp LDAP",
-        type: IdentityProviderType.LDAP,
-      },
-    ]),
-  };
+  mocks.identityProviderList = [
+    {
+      name: "idps/corp-ldap",
+      title: "Corp LDAP",
+      type: IdentityProviderType.LDAP,
+    },
+  ];
+  mocks.listIdentityProviders.mockResolvedValue([
+    {
+      name: "idps/corp-ldap",
+      title: "Corp LDAP",
+      type: IdentityProviderType.LDAP,
+    },
+  ]);
   mocks.authStore = {
     login: vi.fn(async () => {}),
   };

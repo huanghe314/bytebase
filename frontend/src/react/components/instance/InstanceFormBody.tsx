@@ -20,15 +20,9 @@ import { Alert } from "@/react/components/ui/alert";
 import { Button } from "@/react/components/ui/button";
 import { Checkbox } from "@/react/components/ui/checkbox";
 import { Input } from "@/react/components/ui/input";
-import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
-import {
-  pushNotification,
-  useActuatorV1Store,
-  useDatabaseV1Store,
-  useInstanceV1Store,
-  useSubscriptionV1Store,
-} from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { pushNotification } from "@/store";
 import {
   environmentNamePrefix,
   instanceNamePrefix,
@@ -408,7 +402,6 @@ function SyncDatabases({
   const { t } = useTranslation();
   const ctx = useInstanceFormContext();
   const { hideAdvancedFeatures, instance, pendingCreateInstance } = ctx;
-  const instanceStore = useInstanceV1Store();
 
   const [syncAll, setSyncAll] = useState(syncDatabases.length === 0);
   const [selectedSet, setSelectedSet] = useState<Set<string>>(
@@ -439,10 +432,9 @@ function SyncDatabases({
       if (!inst) return;
       setLoading(true);
       try {
-        const resp = await instanceStore.listInstanceDatabases(
-          inst.name,
-          isCreatingProp ? inst : undefined
-        );
+        const resp = await useAppStore
+          .getState()
+          .listInstanceDatabases(inst.name, isCreatingProp ? inst : undefined);
         if (!cancelled) {
           setDatabaseList(new Set([...resp.databases, ...selectedSet]));
         }
@@ -598,12 +590,13 @@ export function InstanceFormBody({ onOpenInfoPanel }: InstanceFormBodyProps) {
   } = ctx;
   const { isEngineBeta, defaultPort, instanceLink, allowEditPort } = specs;
 
-  const instanceV1Store = useInstanceV1Store();
-  const actuatorStore = useActuatorV1Store();
-  const subscriptionStore = useSubscriptionV1Store();
-  const hasUnifiedInstanceLicense = useVueState(
-    () => subscriptionStore.hasUnifiedInstanceLicense
+  const hasUnifiedInstanceLicense = useAppStore((s) =>
+    s.hasUnifiedInstanceLicense()
   );
+  const instanceLicenseCount = useAppStore((s) => s.instanceLicenseCount());
+  const activatedInstanceCount = useAppStore((s) => s.activatedInstanceCount());
+  const currentPlan = useAppStore((s) => s.currentPlan());
+  const isSaaSMode = useAppStore((s) => s.isSaaSMode());
 
   const [isEngineSelectorCollapsed, setIsEngineSelectorCollapsed] =
     useState(false);
@@ -671,24 +664,16 @@ export function InstanceFormBody({ onOpenInfoPanel }: InstanceFormBodyProps) {
   // --- Computed values ---
 
   const availableLicenseCount = useMemo(
-    () =>
-      Math.max(
-        0,
-        subscriptionStore.instanceLicenseCount -
-          actuatorStore.activatedInstanceCount
-      ),
-    [
-      subscriptionStore.instanceLicenseCount,
-      actuatorStore.activatedInstanceCount,
-    ]
+    () => Math.max(0, instanceLicenseCount - activatedInstanceCount),
+    [instanceLicenseCount, activatedInstanceCount]
   );
 
   const availableLicenseCountText = useMemo((): string => {
-    if (subscriptionStore.instanceLicenseCount === Number.MAX_VALUE) {
+    if (instanceLicenseCount === Number.MAX_VALUE) {
       return t("common.unlimited");
     }
     return `${availableLicenseCount}`;
-  }, [subscriptionStore.instanceLicenseCount, availableLicenseCount, t]);
+  }, [instanceLicenseCount, availableLicenseCount, t]);
 
   const resourceId = useMemo(() => {
     const id = extractInstanceResourceName(basicInfo.name);
@@ -710,10 +695,12 @@ export function InstanceFormBody({ onOpenInfoPanel }: InstanceFormBodyProps) {
     async (id: string): Promise<ValidatedMessage[]> => {
       if (!isCreating || !id) return [];
       try {
-        const existing = await instanceV1Store.getOrFetchInstanceByName(
-          `${instanceNamePrefix}${id}`,
-          true /* silent */
-        );
+        const existing = await useAppStore
+          .getState()
+          .getOrFetchInstanceByName(
+            `${instanceNamePrefix}${id}`,
+            true /* silent */
+          );
         if (existing) {
           return [
             {
@@ -729,7 +716,7 @@ export function InstanceFormBody({ onOpenInfoPanel }: InstanceFormBodyProps) {
       }
       return [];
     },
-    [instanceV1Store, isCreating, t]
+    [isCreating, t]
   );
 
   const currentMongoDBConnectionSchema = useMemo(() => {
@@ -967,13 +954,13 @@ export function InstanceFormBody({ onOpenInfoPanel }: InstanceFormBodyProps) {
       updateBasicInfo({ activation: on });
       if (instance) {
         const instancePatch = { ...instance, activation: on };
-        const updated = await instanceV1Store.updateInstance(instancePatch, [
-          "activation",
-        ]);
-        useDatabaseV1Store().updateDatabaseInstance(updated);
-        await actuatorStore.fetchServerInfo(
-          actuatorStore.workspaceResourceName
-        );
+        const updated = await useAppStore
+          .getState()
+          .updateInstance(instancePatch, ["activation"]);
+        useAppStore.getState().updateDatabaseInstance(updated);
+        await useAppStore
+          .getState()
+          .fetchServerInfo(useAppStore.getState().workspaceResourceName());
         pushNotification({
           module: "bytebase",
           style: "SUCCESS",
@@ -981,7 +968,7 @@ export function InstanceFormBody({ onOpenInfoPanel }: InstanceFormBodyProps) {
         });
       }
     },
-    [instance, instanceV1Store, actuatorStore, updateBasicInfo, t]
+    [instance, updateBasicInfo, t]
   );
 
   const testConnectionForCurrentEditingDS = useCallback(async () => {
@@ -1153,7 +1140,7 @@ export function InstanceFormBody({ onOpenInfoPanel }: InstanceFormBodyProps) {
             </div>
 
             {/* Activation toggle */}
-            {subscriptionStore.currentPlan !== PlanType.FREE &&
+            {currentPlan !== PlanType.FREE &&
               !hasUnifiedInstanceLicense &&
               allowEdit && (
                 <div className="sm:col-span-2 ml-0 sm:ml-3">
@@ -1616,7 +1603,7 @@ export function InstanceFormBody({ onOpenInfoPanel }: InstanceFormBodyProps) {
                 onOpenInfoPanel={onOpenInfoPanel}
               />
 
-              {actuatorStore.isSaaSMode && (
+              {isSaaSMode && (
                 <Alert variant="info" className="mt-4">
                   <a
                     href="https://docs.bytebase.com/get-started/cloud#prerequisites"

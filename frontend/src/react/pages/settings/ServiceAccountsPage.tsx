@@ -30,19 +30,13 @@ import { Tooltip } from "@/react/components/ui/tooltip";
 import { PagedTableFooter, usePagedData } from "@/react/hooks/usePagedData";
 import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
+import { useAppStore } from "@/react/stores/app";
 import {
   ensureServiceAccountFullName,
-  pushNotification,
-  useActuatorV1Store,
-  useProjectV1Store,
-  useWorkspaceV1Store,
-} from "@/store";
-import {
   serviceAccountToUser,
-  useServiceAccountStore,
-} from "@/store/modules/serviceAccount";
+} from "@/react/stores/app/serviceAccount";
+import { pushNotification } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
-import { useProjectIamPolicyStore } from "@/store/modules/v1/projectIamPolicy";
 import {
   getServiceAccountNameInBinding,
   getServiceAccountSuffix,
@@ -51,7 +45,7 @@ import { State } from "@/types/proto-es/v1/common_pb";
 import { BindingSchema } from "@/types/proto-es/v1/iam_policy_pb";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import type { ServiceAccount } from "@/types/proto-es/v1/service_account_service_pb";
-import type { User } from "@/types/proto-es/v1/user_service_pb";
+import { type User, UserSchema } from "@/types/proto-es/v1/user_service_pb";
 import { hasProjectPermissionV2, hasWorkspacePermissionV2 } from "@/utils";
 
 function execCommandCopy(text: string): boolean {
@@ -98,7 +92,15 @@ function ServiceAccountTable({
   onUserSelected?: (user: User) => void;
 }) {
   const { t } = useTranslation();
-  const serviceAccountStore = useServiceAccountStore();
+  const deleteServiceAccount = useAppStore(
+    (state) => state.deleteServiceAccount
+  );
+  const undeleteServiceAccount = useAppStore(
+    (state) => state.undeleteServiceAccount
+  );
+  const updateServiceAccount = useAppStore(
+    (state) => state.updateServiceAccount
+  );
 
   const handleDeactivate = async (user: User) => {
     const confirmed = window.confirm(
@@ -107,13 +109,8 @@ function ServiceAccountTable({
     if (!confirmed) return;
 
     try {
-      await serviceAccountStore.deleteServiceAccount(
-        ensureServiceAccountFullName(user.email)
-      );
-      const updated = create(
-        (await import("@/types/proto-es/v1/user_service_pb")).UserSchema,
-        { ...user, state: State.DELETED }
-      );
+      await deleteServiceAccount(ensureServiceAccountFullName(user.email));
+      const updated = create(UserSchema, { ...user, state: State.DELETED });
       onUserUpdated(updated);
       pushNotification({
         module: "bytebase",
@@ -127,13 +124,8 @@ function ServiceAccountTable({
 
   const handleRestore = async (user: User) => {
     try {
-      await serviceAccountStore.undeleteServiceAccount(
-        ensureServiceAccountFullName(user.email)
-      );
-      const updated = create(
-        (await import("@/types/proto-es/v1/user_service_pb")).UserSchema,
-        { ...user, state: State.ACTIVE }
-      );
+      await undeleteServiceAccount(ensureServiceAccountFullName(user.email));
+      const updated = create(UserSchema, { ...user, state: State.ACTIVE });
       onUserUpdated(updated);
       pushNotification({
         module: "bytebase",
@@ -151,7 +143,7 @@ function ServiceAccountTable({
   const handleResetKey = async (user: User) => {
     setResetConfirmUser(undefined);
     try {
-      const sa = await serviceAccountStore.updateServiceAccount(
+      const sa = await updateServiceAccount(
         { name: ensureServiceAccountFullName(user.email) },
         create(FieldMaskSchema, { paths: ["service_key"] })
       );
@@ -428,19 +420,29 @@ function ServiceAccountForm({
   onUpdated,
 }: Omit<CreateServiceAccountSheetProps, "open">) {
   const { t } = useTranslation();
-  const serviceAccountStore = useServiceAccountStore();
-  const workspaceStore = useWorkspaceV1Store();
-  const actuatorStore = useActuatorV1Store();
-  const projectStore = useProjectV1Store();
-  const projectIamPolicyStore = useProjectIamPolicyStore();
+  const createServiceAccount = useAppStore(
+    (state) => state.createServiceAccount
+  );
+  const updateServiceAccount = useAppStore(
+    (state) => state.updateServiceAccount
+  );
+  const patchWorkspaceIamPolicy = useAppStore(
+    (state) => state.patchWorkspaceIamPolicy
+  );
+  const workspaceResourceName = useAppStore((s) => s.workspaceResourceName());
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  const getProjectIamPolicy = useAppStore((state) => state.getProjectIamPolicy);
+  const updateProjectIamPolicy = useAppStore(
+    (state) => state.updateProjectIamPolicy
+  );
 
+  // subscribe to re-render on project cache change
+  void projectsByName;
   const projectEntity = useVueState(() =>
-    project ? projectStore.getProjectByName(project) : undefined
+    project ? useAppStore.getState().getProjectByName(project) : undefined
   );
 
-  const parent = useVueState(
-    () => project ?? actuatorStore.workspaceResourceName
-  );
+  const parent = useVueState(() => project ?? workspaceResourceName);
 
   const isEditMode = !!serviceAccount && !!serviceAccount.email;
   const emailSuffix = useMemo(() => {
@@ -500,9 +502,7 @@ function ServiceAccountForm({
     member: string,
     newRoles: string[]
   ) => {
-    const policy = structuredClone(
-      projectIamPolicyStore.getProjectIamPolicy(projectName)
-    );
+    const policy = structuredClone(getProjectIamPolicy(projectName));
     for (const binding of policy.bindings) {
       binding.members = binding.members.filter((m) => m !== member);
     }
@@ -521,11 +521,11 @@ function ServiceAccountForm({
         );
       }
     }
-    await projectIamPolicyStore.updateProjectIamPolicy(projectName, policy);
+    await updateProjectIamPolicy(projectName, policy);
   };
 
   const handleCreate = async () => {
-    const sa = await serviceAccountStore.createServiceAccount(
+    const sa = await createServiceAccount(
       emailPrefix.trim(),
       { title: title.trim() || emailPrefix.trim() },
       parent
@@ -540,7 +540,7 @@ function ServiceAccountForm({
           roles
         );
       } else {
-        await workspaceStore.patchIamPolicy([{ member, roles }]);
+        await patchWorkspaceIamPolicy([{ member, roles }]);
       }
     }
 
@@ -563,7 +563,7 @@ function ServiceAccountForm({
 
     let updatedSa: ServiceAccount = serviceAccount;
     if (updateMask.length > 0) {
-      updatedSa = await serviceAccountStore.updateServiceAccount(
+      updatedSa = await updateServiceAccount(
         {
           name: ensureServiceAccountFullName(serviceAccount.email),
           title,
@@ -671,20 +671,23 @@ function ServiceAccountForm({
 
 export function ServiceAccountsPage({ projectId }: { projectId?: string }) {
   const { t } = useTranslation();
-  const actuatorStore = useActuatorV1Store();
-  const serviceAccountStore = useServiceAccountStore();
-  const projectStore = useProjectV1Store();
+  const workspaceResourceName = useAppStore((s) => s.workspaceResourceName());
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  const listServiceAccounts = useAppStore((state) => state.listServiceAccounts);
+  const getServiceAccount = useAppStore((state) => state.getServiceAccount);
 
   const projectName = projectId
     ? `${projectNamePrefix}${projectId}`
     : undefined;
+  // subscribe to re-render on project cache change
+  void projectsByName;
   const project = useVueState(() =>
-    projectName ? projectStore.getProjectByName(projectName) : undefined
+    projectName
+      ? useAppStore.getState().getProjectByName(projectName)
+      : undefined
   );
 
-  const parent = useVueState(
-    () => projectName ?? actuatorStore.workspaceResourceName
-  );
+  const parent = useVueState(() => projectName ?? workspaceResourceName);
 
   const [showInactive, setShowInactive] = useState(false);
   const [showDrawer, setShowDrawer] = useState(false);
@@ -695,7 +698,7 @@ export function ServiceAccountsPage({ projectId }: { projectId?: string }) {
   // Active service accounts
   const fetchActive = useCallback(
     async (params: { pageSize: number; pageToken: string }) => {
-      const response = await serviceAccountStore.listServiceAccounts({
+      const response = await listServiceAccounts({
         parent,
         pageSize: params.pageSize,
         pageToken: params.pageToken,
@@ -704,7 +707,7 @@ export function ServiceAccountsPage({ projectId }: { projectId?: string }) {
       const list: User[] = response.serviceAccounts.map(serviceAccountToUser);
       return { list, nextPageToken: response.nextPageToken };
     },
-    [serviceAccountStore, parent]
+    [listServiceAccounts, parent]
   );
 
   const activeData = usePagedData<User>({
@@ -715,7 +718,7 @@ export function ServiceAccountsPage({ projectId }: { projectId?: string }) {
   // Inactive service accounts
   const fetchInactive = useCallback(
     async (params: { pageSize: number; pageToken: string }) => {
-      const response = await serviceAccountStore.listServiceAccounts({
+      const response = await listServiceAccounts({
         parent,
         pageSize: params.pageSize,
         pageToken: params.pageToken,
@@ -725,7 +728,7 @@ export function ServiceAccountsPage({ projectId }: { projectId?: string }) {
       const list: User[] = response.serviceAccounts.map(serviceAccountToUser);
       return { list, nextPageToken: response.nextPageToken };
     },
-    [serviceAccountStore, parent]
+    [listServiceAccounts, parent]
   );
 
   const inactiveData = usePagedData<User>({
@@ -753,7 +756,7 @@ export function ServiceAccountsPage({ projectId }: { projectId?: string }) {
   };
 
   const handleOpenEdit = (user: User) => {
-    const sa = serviceAccountStore.getServiceAccount(user.email);
+    const sa = getServiceAccount(user.email);
     setEditingSa(sa);
     setShowDrawer(true);
   };

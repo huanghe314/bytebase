@@ -45,18 +45,13 @@ import {
 import { useClickOutside } from "@/react/hooks/useClickOutside";
 import { useEscapeKey } from "@/react/hooks/useEscapeKey";
 import { useVueState } from "@/react/hooks/useVueState";
+import { keyValueStorage } from "@/react/lib/keyValueStorage";
 import { applyPlanTitleToQuery } from "@/react/lib/plan/title";
 import { cn } from "@/react/lib/utils";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import { PROJECT_V1_ROUTE_PLAN_DETAIL_SPEC_DETAIL } from "@/router/dashboard/projectV1";
-import {
-  pushNotification,
-  useChangelogStore,
-  useDatabaseV1Store,
-  useEnvironmentV1Store,
-  useProjectV1Store,
-  useStorageStore,
-} from "@/store";
+import { pushNotification } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import {
   getDateForPbTimestampProtoEs,
@@ -137,12 +132,20 @@ enum Step {
 
 export function ProjectSyncSchemaPage({ projectId }: { projectId: string }) {
   const { t } = useTranslation();
-  const changelogStore = useChangelogStore();
-  const databaseStore = useDatabaseV1Store();
-  const projectStore = useProjectV1Store();
+  const getOrFetchChangelogByName = useAppStore(
+    (state) => state.getOrFetchChangelogByName
+  );
+  const fetchPreviousChangelog = useAppStore(
+    (state) => state.fetchPreviousChangelog
+  );
+  const projectsByName = useAppStore((s) => s.projectsByName);
 
   const projectName = `${projectNamePrefix}${projectId}`;
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  // subscribe to re-render on project cache change
+  void projectsByName;
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
+  );
 
   const [isLoading, setIsLoading] = useState(true);
   const [currentStep, setCurrentStep] = useState<Step>(
@@ -225,7 +228,7 @@ export function ProjectSyncSchemaPage({ projectId }: { projectId: string }) {
       try {
         if (sourceSchemaType === SourceSchemaType.SCHEMA_HISTORY_VERSION) {
           if (isValidChangelogName(changelogSource.changelogName)) {
-            const changelog = await changelogStore.getOrFetchChangelogByName(
+            const changelog = await getOrFetchChangelogByName(
               changelogSource.changelogName || "",
               ChangelogView.FULL
             );
@@ -233,9 +236,9 @@ export function ProjectSyncSchemaPage({ projectId }: { projectId: string }) {
             setSourceSchemaString(changelog?.schema ?? "");
             return;
           } else if (isValidDatabaseName(changelogSource.databaseName)) {
-            const databaseSchema = await databaseStore.fetchDatabaseSchema(
-              changelogSource.databaseName
-            );
+            const databaseSchema = await useAppStore
+              .getState()
+              .fetchDatabaseSchema(changelogSource.databaseName);
             if (!cancelled) setSourceSchemaString(databaseSchema.schema);
             return;
           }
@@ -255,14 +258,15 @@ export function ProjectSyncSchemaPage({ projectId }: { projectId: string }) {
     changelogSource.changelogName,
     changelogSource.databaseName,
     rawSQLState.statement,
+    getOrFetchChangelogByName,
   ]);
 
   const sourceEngine = useMemo(() => {
     if (sourceSchemaType === SourceSchemaType.SCHEMA_HISTORY_VERSION) {
       if (!changelogSource.databaseName) return Engine.ENGINE_UNSPECIFIED;
-      const database = databaseStore.getDatabaseByName(
-        changelogSource.databaseName
-      );
+      const database = useAppStore
+        .getState()
+        .getDatabaseByName(changelogSource.databaseName);
       return getInstanceResource(database).engine;
     }
     return rawSQLState.engine;
@@ -279,7 +283,7 @@ export function ProjectSyncSchemaPage({ projectId }: { projectId: string }) {
 
       if (isValidChangelogName(changelogName)) {
         // Validate the changelog exists before proceeding.
-        const existing = await changelogStore.getOrFetchChangelogByName(
+        const existing = await getOrFetchChangelogByName(
           changelogName,
           ChangelogView.BASIC
         );
@@ -289,8 +293,7 @@ export function ProjectSyncSchemaPage({ projectId }: { projectId: string }) {
         let targetChangelogName: string | undefined = undefined;
 
         if (isRollback) {
-          const previousChangelog =
-            await changelogStore.fetchPreviousChangelog(changelogName);
+          const previousChangelog = await fetchPreviousChangelog(changelogName);
           if (cancelled) return;
           if (previousChangelog) {
             targetChangelogName = previousChangelog.name;
@@ -299,9 +302,9 @@ export function ProjectSyncSchemaPage({ projectId }: { projectId: string }) {
 
         const { databaseName } =
           extractDatabaseNameAndChangelogUID(changelogName);
-        await databaseStore.getOrFetchDatabaseByName(databaseName);
+        await useAppStore.getState().getOrFetchDatabaseByName(databaseName);
         if (cancelled) return;
-        const database = databaseStore.getDatabaseByName(databaseName);
+        const database = useAppStore.getState().getDatabaseByName(databaseName);
         setChangelogSource({
           environmentName: database.effectiveEnvironment,
           databaseName: databaseName,
@@ -318,7 +321,7 @@ export function ProjectSyncSchemaPage({ projectId }: { projectId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [fetchPreviousChangelog, getOrFetchChangelogByName, projectId]);
 
   const stepList = useMemo(
     () => [
@@ -387,7 +390,7 @@ export function ProjectSyncSchemaPage({ projectId }: { projectId: string }) {
 
   const handleFinish = useCallback(async () => {
     const targetDatabases = selectedDatabaseNameList.map((name) =>
-      databaseStore.getDatabaseByName(name)
+      useAppStore.getState().getDatabaseByName(name)
     );
     const query: Record<string, string> = {
       template: "bb.plan.change-database",
@@ -402,7 +405,7 @@ export function ProjectSyncSchemaPage({ projectId }: { projectId: string }) {
     });
     query.databaseList = Object.keys(sqlMap).join(",");
     const sqlMapStorageKey = `bb.issues.sql-map.${uuidv4()}`;
-    useStorageStore().put(sqlMapStorageKey, sqlMap);
+    void keyValueStorage.put(sqlMapStorageKey, sqlMap);
     query.sqlMapStorageKey = sqlMapStorageKey;
     if (!project) return; // defensive: should not happen if the page rendered
     applyPlanTitleToQuery(query, project, () =>
@@ -747,8 +750,7 @@ function ChangelogSelector({
   onChange: (value: string) => void;
 }) {
   const { t } = useTranslation();
-  const changelogStore = useChangelogStore();
-  const databaseStore = useDatabaseV1Store();
+  const listChangelogs = useAppStore((state) => state.listChangelogs);
   const [entries, setEntries] = useState<ChangelogEntry[]>([]);
   const [nextPageToken, setNextPageToken] = useState("");
   const [loadingMore, setLoadingMore] = useState(false);
@@ -790,7 +792,7 @@ function ChangelogSelector({
 
     (async () => {
       const { changelogs: fetchedChangelogs, nextPageToken: token } =
-        await changelogStore.fetchChangelogList({
+        await listChangelogs({
           parent: database,
           pageSize: getDefaultPagination(),
           filter: `status == "${Changelog_Status[Changelog_Status.DONE]}"`,
@@ -801,7 +803,7 @@ function ChangelogSelector({
       let items = fetchedChangelogs.map(toEntry);
 
       if (items.length === 0) {
-        const db = databaseStore.getDatabaseByName(database);
+        const db = useAppStore.getState().getDatabaseByName(database);
         const changelog = mockLatestChangelog(db);
         items = [{ name: changelog.name, date: undefined, planTitle: "" }];
       }
@@ -818,22 +820,21 @@ function ChangelogSelector({
     return () => {
       cancelled = true;
     };
-  }, [database]);
+  }, [database, listChangelogs, toEntry]);
 
   const loadMore = useCallback(async () => {
     if (!nextPageToken || !isValidDatabaseName(database) || loadingMore) return;
     setLoadingMore(true);
-    const { changelogs: more, nextPageToken: token } =
-      await changelogStore.fetchChangelogList({
-        parent: database,
-        pageToken: nextPageToken,
-        pageSize: getDefaultPagination(),
-        filter: `status == "${Changelog_Status[Changelog_Status.DONE]}"`,
-      });
+    const { changelogs: more, nextPageToken: token } = await listChangelogs({
+      parent: database,
+      pageToken: nextPageToken,
+      pageSize: getDefaultPagination(),
+      filter: `status == "${Changelog_Status[Changelog_Status.DONE]}"`,
+    });
     setEntries((prev) => [...prev, ...more.map(toEntry)]);
     setNextPageToken(token);
     setLoadingMore(false);
-  }, [nextPageToken, database, loadingMore, toEntry]);
+  }, [database, listChangelogs, loadingMore, nextPageToken, toEntry]);
 
   const selectedEntry = entries.find((e) => e.name === value);
 
@@ -1068,12 +1069,11 @@ function SourceSchemaInfo({
   changelogSourceSchema?: ChangelogSourceSchema;
 }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
 
   const databaseFromChangelog = useMemo(() => {
-    return databaseStore.getDatabaseByName(
-      changelogSourceSchema?.databaseName || ""
-    );
+    return useAppStore
+      .getState()
+      .getDatabaseByName(changelogSourceSchema?.databaseName || "");
   }, [changelogSourceSchema?.databaseName]);
 
   const changelogUID = useMemo(() => {
@@ -1168,9 +1168,10 @@ function SelectTargetDatabasesView({
   onSelectedDatabaseNameChange: (name: string | undefined) => void;
 }) {
   const { t } = useTranslation();
-  const changelogStore = useChangelogStore();
-  const environmentStore = useEnvironmentV1Store();
-  const databaseStore = useDatabaseV1Store();
+  const getOrFetchChangelogByName = useAppStore(
+    (state) => state.getOrFetchChangelogByName
+  );
+  const environmentList = useAppStore((s) => s.environmentList);
   const [isLoadingDiff, setIsLoadingDiff] = useState(false);
 
   // Refs for values read inside the diff-fetching effect without triggering re-runs
@@ -1187,7 +1188,7 @@ function SelectTargetDatabasesView({
   const targetDatabaseList = useMemo(
     () =>
       selectedDatabaseNameList.map((name) =>
-        databaseStore.getDatabaseByName(name)
+        useAppStore.getState().getDatabaseByName(name)
       ),
     [selectedDatabaseNameList]
   );
@@ -1236,13 +1237,13 @@ function SelectTargetDatabasesView({
       (db) => db.name === selectedDatabaseName
     );
     if (!database) return "";
-    const environment = environmentStore.getEnvironmentByName(
-      database.effectiveEnvironment ?? ""
-    );
+    const environment = useAppStore
+      .getState()
+      .getEnvironmentByName(database.effectiveEnvironment ?? "");
     return t("database.sync-schema.schema-change-preview", {
       database: `${extractDatabaseResourceName(database.name).databaseName} (${environment?.title} - ${getInstanceResource(database).title})`,
     });
-  }, [selectedDatabaseName, targetDatabaseList, t]);
+  }, [selectedDatabaseName, targetDatabaseList, environmentList, t]);
 
   const databaseListWithDiff = useMemo(
     () =>
@@ -1277,25 +1278,26 @@ function SelectTargetDatabasesView({
           if (cancelled) break;
 
           if (!newSchemaCache[name]) {
-            const db = databaseStore.getDatabaseByName(name);
+            const db = useAppStore.getState().getDatabaseByName(name);
             const isRollback = isValidChangelogName(
               clsRef?.targetChangelogName
             );
             if (isRollback) {
-              const previousChangelog =
-                await changelogStore.getOrFetchChangelogByName(
-                  clsRef?.targetChangelogName ?? "",
-                  ChangelogView.FULL
-                );
+              const previousChangelog = await getOrFetchChangelogByName(
+                clsRef?.targetChangelogName ?? "",
+                ChangelogView.FULL
+              );
               newSchemaCache[name] = previousChangelog?.schema ?? "";
             } else {
-              const schema = await databaseStore.fetchDatabaseSchema(db.name);
+              const schema = await useAppStore
+                .getState()
+                .fetchDatabaseSchema(db.name);
               newSchemaCache[name] = schema.schema;
             }
           }
 
           if (!newDiffCache[name]) {
-            const db = databaseStore.getDatabaseByName(name);
+            const db = useAppStore.getState().getDatabaseByName(name);
             const isRollback = isValidChangelogName(
               clsRef?.targetChangelogName
             );
@@ -1323,7 +1325,9 @@ function SelectTargetDatabasesView({
                     },
                   });
 
-            const diffResp = await databaseStore.diffSchema(diffRequest);
+            const diffResp = await useAppStore
+              .getState()
+              .diffSchema(diffRequest);
             const schemaDiff = diffResp.diff ?? "";
             newDiffCache[name] = { raw: schemaDiff, edited: schemaDiff };
           }
@@ -1372,8 +1376,9 @@ function SelectTargetDatabasesView({
       const currentRoute = router.currentRoute.value;
       const targetDatabaseName = currentRoute.query.target as string;
       if (isValidDatabaseName(targetDatabaseName)) {
-        const database =
-          await databaseStore.getOrFetchDatabaseByName(targetDatabaseName);
+        const database = await useAppStore
+          .getState()
+          .getOrFetchDatabaseByName(targetDatabaseName);
         if (database && getInstanceResource(database).engine === sourceEngine) {
           onSelectedDatabaseNameListChange([targetDatabaseName]);
           onSelectedDatabaseNameChange(targetDatabaseName);
@@ -1432,8 +1437,8 @@ function SelectTargetDatabasesView({
         {/* Left panel: target database list */}
         <div className="w-1/4 min-w-[256px] max-w-xs h-full border-r">
           <div className="w-full h-full relative flex flex-col justify-start items-start overflow-y-auto pb-2">
-            <div className="w-full h-auto flex flex-col justify-start items-start sticky top-0 z-[1]">
-              <div className="w-full bg-background border-b p-2 px-3 flex flex-row justify-between items-center sticky top-0 z-[1]">
+            <div className="w-full h-auto flex flex-col justify-start items-start sticky top-0 z-1">
+              <div className="w-full bg-background border-b p-2 px-3 flex flex-row justify-between items-center sticky top-0 z-1">
                 <span className="text-sm">
                   {t("database.sync-schema.target-databases")}
                 </span>
@@ -1986,7 +1991,6 @@ function TargetDatabasesSelectPanel({
   onUpdate: (databaseNameList: string[]) => void;
 }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
   const [selected, setSelected] = useState<Set<string>>(
     new Set(initialSelected || [])
   );
@@ -2002,8 +2006,9 @@ function TargetDatabasesSelectPanel({
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const { databases: fetched, nextPageToken: token } =
-        await databaseStore.fetchDatabases({
+      const { databases: fetched, nextPageToken: token } = await useAppStore
+        .getState()
+        .fetchDatabases({
           parent: project,
           pageSize: getDefaultPagination(),
         });
@@ -2016,8 +2021,9 @@ function TargetDatabasesSelectPanel({
   const loadMoreDatabases = useCallback(async () => {
     if (!dbNextPageToken || loadingMoreDbs) return;
     setLoadingMoreDbs(true);
-    const { databases: more, nextPageToken: token } =
-      await databaseStore.fetchDatabases({
+    const { databases: more, nextPageToken: token } = await useAppStore
+      .getState()
+      .fetchDatabases({
         parent: project,
         pageSize: getDefaultPagination(),
         pageToken: dbNextPageToken,

@@ -1,4 +1,5 @@
 import { create } from "@bufbuild/protobuf";
+import dayjs from "dayjs";
 import {
   Building2,
   ChevronDown,
@@ -18,9 +19,18 @@ import React, {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { v4 as uuidv4 } from "uuid";
+import type { ConditionGroupExpr, Factor, Operator } from "@/plugins/cel";
+import {
+  buildCELExpr,
+  emptySimpleExpr,
+  validateSimpleExpr,
+  wrapAsGroup,
+} from "@/plugins/cel";
 import { AccountMultiSelect } from "@/react/components/AccountMultiSelect";
 import { DatabaseResourceSelector as DatabaseResourceSelectorComponent } from "@/react/components/DatabaseResourceSelector";
-import { EnvironmentMultiSelect } from "@/react/components/EnvironmentMultiSelect";
+import { EnvironmentSelect } from "@/react/components/EnvironmentSelect";
+import { ExprEditor, type OptionConfig } from "@/react/components/ExprEditor";
 import { FeatureBadge } from "@/react/components/FeatureBadge";
 import { LearnMoreLink } from "@/react/components/LearnMoreLink";
 import { PermissionGuard } from "@/react/components/PermissionGuard";
@@ -31,6 +41,7 @@ import { Alert } from "@/react/components/ui/alert";
 import { Badge } from "@/react/components/ui/badge";
 import { Button } from "@/react/components/ui/button";
 import { Checkbox } from "@/react/components/ui/checkbox";
+import { ExpirationPicker } from "@/react/components/ui/expiration-picker";
 import { Input } from "@/react/components/ui/input";
 import { SearchInput } from "@/react/components/ui/search-input";
 import {
@@ -56,35 +67,32 @@ import {
   TabsTrigger,
 } from "@/react/components/ui/tabs";
 import { Tooltip } from "@/react/components/ui/tooltip";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import { useEscapeKey } from "@/react/hooks/useEscapeKey";
 import { useVueState } from "@/react/hooks/useVueState";
+import {
+  getMemberBindings,
+  groupProjectRoleBindings,
+} from "@/react/lib/memberBindings";
 import {
   getRoleEnvironmentLimitationKind,
   roleHasDatabaseLimitation,
 } from "@/react/lib/project-member/utils";
+import { displayRoleTitleFromList } from "@/react/lib/role";
 import { cn } from "@/react/lib/utils";
 import {
   useNavigate,
   WORKSPACE_ROUTE_GROUPS,
   WORKSPACE_ROUTE_USER_PROFILE,
 } from "@/react/router";
-import {
-  pushNotification,
-  useActuatorV1Store,
-  useCurrentUserV1,
-  useProjectIamPolicyStore,
-  useProjectV1Store,
-  useRoleStore,
-  useSettingV1Store,
-  useSubscriptionV1Store,
-  useUserStore,
-  useWorkspaceV1Store,
-} from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { pushNotification } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import {
   ALL_USERS_USER_EMAIL,
   type DatabaseResource,
   isDefaultProject,
+  PresetRoleType,
   userBindingPrefix,
 } from "@/types";
 import { ExprSchema as ConditionExprSchema } from "@/types/proto-es/google/type/expr_pb";
@@ -96,19 +104,24 @@ import type { User } from "@/types/proto-es/v1/user_service_pb";
 import type { GroupBinding, MemberBinding } from "@/types/v1/member";
 import { AccountType, getAccountTypeByEmail } from "@/types/v1/user";
 import {
-  displayRoleTitle,
+  batchConvertParsedExprToCELString,
   formatAbsoluteDateTime,
+  getDatabaseNameOptionConfig,
   hasProjectPermissionV2,
   hasWorkspacePermissionV2,
   isBindingPolicyExpired,
   sortRoles,
 } from "@/utils";
 import {
+  CEL_ATTRIBUTE_RESOURCE_DATABASE,
+  CEL_ATTRIBUTE_RESOURCE_SCHEMA_NAME,
+  CEL_ATTRIBUTE_RESOURCE_TABLE_NAME,
+} from "@/utils/cel-attributes";
+import {
   buildConditionExpr,
   convertFromExpr,
   stringifyConditionExpression,
 } from "@/utils/issue/cel";
-import { getMemberBindings, groupProjectRoleBindings } from "@/utils/v1/member";
 import { MemberBindingEnvironmentBanner } from "./MemberBindingEnvironmentBanner";
 import { MemberDatabaseResourceName } from "./MemberDatabaseResourceName";
 import { getSetIamPolicyPermissionGuardConfig } from "./membersPageActions";
@@ -148,10 +161,12 @@ function MemberTable({
   scope: "workspace" | "project";
 }) {
   const { t } = useTranslation();
-  const currentUser = useVueState(() => useCurrentUserV1().value);
-  const actuatorStore = useActuatorV1Store();
-  const isSaaSMode = useVueState(() => actuatorStore.isSaaSMode);
-  const userStore = useUserStore();
+  const currentUser = useCurrentUser();
+  const isSaaSMode = useVueState(() => useAppStore.getState().isSaaSMode());
+  const batchGetOrFetchUsers = useAppStore(
+    (state) => state.batchGetOrFetchUsers
+  );
+  const roleList = useAppStore((state) => state.roleList);
   const navigate = useNavigate();
   const canGetGroups = hasWorkspacePermissionV2("bb.groups.get");
   const canGetUsers = hasWorkspacePermissionV2("bb.users.get");
@@ -178,8 +193,7 @@ function MemberTable({
       if (loadingRef.current.has(group.name)) return;
       loadingRef.current.add(group.name);
       const memberNames = group.members.map((m) => m.member);
-      userStore
-        .batchGetOrFetchUsers(memberNames)
+      batchGetOrFetchUsers(memberNames)
         .then((users: (User | undefined)[]) => {
           setMemberCache((prev) => {
             const next = new Map(prev);
@@ -195,7 +209,7 @@ function MemberTable({
         })
         .finally(() => loadingRef.current.delete(group.name));
     },
-    [userStore]
+    [batchGetOrFetchUsers]
   );
 
   // Signature of just the group bindings — that's all the cache cares
@@ -315,7 +329,7 @@ function MemberTable({
     return [
       ...groupProjectRoleBindings(active).map((group) => (
         <Badge key={`active-${group.role}`} className="text-xs gap-x-1">
-          {displayRoleTitle(group.role)}
+          {displayRoleTitleFromList(group.role, roleList)}
           {group.bindings.length > 1 && (
             <span className="text-control-light">
               ({group.bindings.length})
@@ -328,7 +342,7 @@ function MemberTable({
           key={`expired-${group.role}`}
           className="text-xs gap-x-1 line-through opacity-60"
         >
-          {displayRoleTitle(group.role)}
+          {displayRoleTitleFromList(group.role, roleList)}
           {group.bindings.length > 1 && (
             <span className="text-control-light">
               ({group.bindings.length})
@@ -480,7 +494,7 @@ function MemberTable({
                         : sortRoles([...mb.workspaceLevelRoles]).map((role) => (
                             <Badge key={role} className="text-xs gap-x-1">
                               <Building2 className="h-3 w-3" />
-                              {displayRoleTitle(role)}
+                              {displayRoleTitleFromList(role, roleList)}
                             </Badge>
                           ))}
                     </div>
@@ -605,9 +619,9 @@ function MemberTableByRole({
   scope: "workspace" | "project";
 }) {
   const { t } = useTranslation();
-  const currentUser = useVueState(() => useCurrentUserV1().value);
-  const actuatorStore = useActuatorV1Store();
-  const isSaaSMode = useVueState(() => actuatorStore.isSaaSMode);
+  const currentUser = useCurrentUser();
+  const isSaaSMode = useVueState(() => useAppStore.getState().isSaaSMode());
+  const roleList = useAppStore((state) => state.roleList);
   const [expandedRoles, setExpandedRoles] = useState<Set<string>>(new Set());
   const initializedRef = useRef(false);
 
@@ -697,7 +711,7 @@ function MemberTableByRole({
                         <Building2 className="h-4 w-4 text-control-light" />
                       )}
                       <span className="font-medium">
-                        {displayRoleTitle(role)}
+                        {displayRoleTitleFromList(role, roleList)}
                       </span>
                       <span className="text-control-light text-xs">
                         ({members.length})
@@ -844,22 +858,18 @@ function MemberTableByRole({
 // ============================================================
 
 interface ExpirationPreset {
-  label: string;
-  days?: number;
+  labelKey: string;
+  days: number;
 }
 
-function getExpirationPresets(t: (key: string) => string): ExpirationPreset[] {
-  return [
-    { label: t("project.members.never-expires") },
-    { label: "1 day", days: 1 },
-    { label: "3 days", days: 3 },
-    { label: "1 week", days: 7 },
-    { label: "1 month", days: 30 },
-    { label: "3 months", days: 90 },
-    { label: "6 months", days: 180 },
-    { label: "1 year", days: 365 },
-  ];
-}
+// A small set of common presets. Users needing any other duration pick the
+// "Custom" option, which reveals a datetime picker.
+const EXPIRATION_PRESETS: ExpirationPreset[] = [
+  { labelKey: "project.members.expiration-presets.one-week", days: 7 },
+  { labelKey: "project.members.expiration-presets.one-month", days: 30 },
+  { labelKey: "project.members.expiration-presets.three-months", days: 90 },
+  { labelKey: "project.members.expiration-presets.one-year", days: 365 },
+];
 
 function computeExpirationTimestamp(days?: number): number | undefined {
   if (days === undefined) return undefined;
@@ -877,6 +887,52 @@ function formatExpirationDate(timestampMs?: number): string {
   });
 }
 
+// Validates the form's expiration against the workspace cap. "Never" (no
+// timestamp) is only allowed when no cap is configured; a chosen timestamp
+// must be in the future and within the cap.
+function isExpirationValid(
+  form: RoleBindingFormState,
+  maximumRoleExpirationDays: number | undefined
+): boolean {
+  if (form.expirationTimestampInMS === undefined) {
+    return maximumRoleExpirationDays === undefined;
+  }
+  const now = Date.now();
+  if (form.expirationTimestampInMS <= now) return false;
+  if (
+    maximumRoleExpirationDays !== undefined &&
+    form.expirationTimestampInMS > now + maximumRoleExpirationDays * 86400000
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function ExpirationChip({
+  label,
+  selected,
+  onClick,
+}: {
+  label: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "px-2.5 py-1 text-xs rounded-sm border transition-colors",
+        selected
+          ? "bg-accent text-accent-text border-accent"
+          : "bg-background text-control border-control-border hover:bg-control-bg"
+      )}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
+}
+
 // ============================================================
 // ProjectRoleBindingForm — one role binding form in create mode
 // ============================================================
@@ -887,9 +943,11 @@ interface RoleBindingFormState {
   reason: string;
   expirationDays: number | undefined;
   expirationTimestampInMS: number | undefined;
+  // When true, the user picked a custom datetime instead of a preset.
+  expirationCustom: boolean;
   databaseMode: DatabaseMode;
   databaseResources: DatabaseResource[];
-  celExpression: string;
+  exprGroup: ConditionGroupExpr;
   environments: string[];
 }
 
@@ -903,8 +961,11 @@ function DatabaseResourceSection({
   onModeChange,
   databaseResources,
   onDatabaseResourcesChange,
-  celExpression,
-  onCelExpressionChange,
+  exprGroup,
+  onExprGroupChange,
+  factorList,
+  factorOptionConfigMap,
+  factorOperatorOverrideMap,
   formId,
 }: {
   projectName: string;
@@ -912,8 +973,11 @@ function DatabaseResourceSection({
   onModeChange: (mode: DatabaseMode) => void;
   databaseResources: DatabaseResource[];
   onDatabaseResourcesChange: (resources: DatabaseResource[]) => void;
-  celExpression: string;
-  onCelExpressionChange: (expr: string) => void;
+  exprGroup: ConditionGroupExpr;
+  onExprGroupChange: (expr: ConditionGroupExpr) => void;
+  factorList: Factor[];
+  factorOptionConfigMap: Map<Factor, OptionConfig>;
+  factorOperatorOverrideMap: Map<Factor, Operator[]>;
   formId: string;
 }) {
   const { t } = useTranslation();
@@ -948,12 +1012,12 @@ function DatabaseResourceSection({
       </div>
 
       {mode === "EXPRESSION" && (
-        <textarea
-          className="w-full rounded-xs border border-control-border bg-transparent px-3 py-2 text-sm font-mono resize-none"
-          rows={3}
-          placeholder='e.g. resource.database_name.startsWith("employee_")'
-          value={celExpression}
-          onChange={(e) => onCelExpressionChange(e.target.value)}
+        <ExprEditor
+          expr={exprGroup}
+          factorList={factorList}
+          optionConfigMap={factorOptionConfigMap}
+          factorOperatorOverrideMap={factorOperatorOverrideMap}
+          onUpdate={onExprGroupChange}
         />
       )}
 
@@ -974,18 +1038,76 @@ function ProjectRoleBindingForm({
   onRemove,
   canRemove,
   projectName,
+  maximumRoleExpirationDays,
 }: {
   form: RoleBindingFormState;
   onChange: (updated: RoleBindingFormState) => void;
   onRemove: () => void;
   canRemove: boolean;
   projectName: string;
+  maximumRoleExpirationDays: number | undefined;
 }) {
   const { t } = useTranslation();
-  const roleStore = useRoleStore();
-  const roleList = useVueState(() => [...roleStore.roleList]);
 
-  const expirationPresets = useMemo(() => getExpirationPresets(t), [t]);
+  const roleList = useAppStore((state) => state.roleList);
+
+  const visibleExpirationPresets = useMemo(
+    () =>
+      EXPIRATION_PRESETS.filter(
+        (preset) =>
+          maximumRoleExpirationDays === undefined ||
+          preset.days <= maximumRoleExpirationDays
+      ),
+    [maximumRoleExpirationDays]
+  );
+  const minDatetime = dayjs().format("YYYY-MM-DDTHH:mm");
+  const maxDatetime =
+    maximumRoleExpirationDays !== undefined
+      ? dayjs()
+          .add(maximumRoleExpirationDays, "days")
+          .format("YYYY-MM-DDTHH:mm")
+      : undefined;
+  const now = Date.now();
+  const expirationIsInPast =
+    form.expirationCustom &&
+    form.expirationTimestampInMS !== undefined &&
+    form.expirationTimestampInMS <= now;
+  const expirationExceedsMax =
+    form.expirationTimestampInMS !== undefined &&
+    maximumRoleExpirationDays !== undefined &&
+    form.expirationTimestampInMS > now + maximumRoleExpirationDays * 86400000;
+  const factorList = useMemo<Factor[]>(
+    () => [
+      CEL_ATTRIBUTE_RESOURCE_DATABASE,
+      CEL_ATTRIBUTE_RESOURCE_TABLE_NAME,
+      CEL_ATTRIBUTE_RESOURCE_SCHEMA_NAME,
+    ],
+    []
+  );
+  const factorOperatorOverrideMap = useMemo(
+    () =>
+      new Map<Factor, Operator[]>([
+        [CEL_ATTRIBUTE_RESOURCE_DATABASE, ["_==_", "@in"]],
+        [CEL_ATTRIBUTE_RESOURCE_SCHEMA_NAME, ["_==_"]],
+        [CEL_ATTRIBUTE_RESOURCE_TABLE_NAME, ["_==_", "@in"]],
+      ]),
+    []
+  );
+  const factorOptionConfigMap = useMemo(
+    () =>
+      factorList.reduce((map, factor) => {
+        if (factor === CEL_ATTRIBUTE_RESOURCE_DATABASE) {
+          map.set(factor, {
+            ...getDatabaseNameOptionConfig(projectName),
+            supportMultiple: false,
+          });
+        } else {
+          map.set(factor, { options: [] });
+        }
+        return map;
+      }, new Map<Factor, OptionConfig>()),
+    [factorList, projectName]
+  );
 
   const permissions = useMemo(() => {
     if (!form.role) return [];
@@ -1008,7 +1130,7 @@ function ProjectRoleBindingForm({
       role,
       databaseMode: "ALL",
       databaseResources: [],
-      celExpression: "",
+      exprGroup: wrapAsGroup(emptySimpleExpr()),
       environments: [],
     });
   };
@@ -1017,11 +1139,37 @@ function ProjectRoleBindingForm({
     onChange({ ...form, reason });
   };
 
-  const handleExpirationChange = (days: number | undefined) => {
+  const handlePresetChange = (days: number | undefined) => {
     onChange({
       ...form,
+      expirationCustom: false,
       expirationDays: days,
       expirationTimestampInMS: computeExpirationTimestamp(days),
+    });
+  };
+
+  const handleCustomClick = () => {
+    // Seed the picker with the current timestamp, or a default 1 week
+    // (clamped to the cap) when switching from "Never".
+    const seedDays =
+      maximumRoleExpirationDays !== undefined
+        ? Math.min(7, maximumRoleExpirationDays)
+        : 7;
+    onChange({
+      ...form,
+      expirationCustom: true,
+      expirationDays: undefined,
+      expirationTimestampInMS:
+        form.expirationTimestampInMS ?? computeExpirationTimestamp(seedDays),
+    });
+  };
+
+  const handleCustomDateChange = (value: string | undefined) => {
+    onChange({
+      ...form,
+      expirationCustom: true,
+      expirationDays: undefined,
+      expirationTimestampInMS: value ? dayjs(value).valueOf() : undefined,
     });
   };
 
@@ -1097,17 +1245,20 @@ function ProjectRoleBindingForm({
               ...form,
               databaseMode: mode,
               databaseResources: [],
-              celExpression: "",
+              exprGroup: wrapAsGroup(emptySimpleExpr()),
             })
           }
           databaseResources={form.databaseResources}
           onDatabaseResourcesChange={(resources: DatabaseResource[]) =>
             onChange({ ...form, databaseResources: resources })
           }
-          celExpression={form.celExpression}
-          onCelExpressionChange={(expr: string) =>
-            onChange({ ...form, celExpression: expr })
+          exprGroup={form.exprGroup}
+          onExprGroupChange={(expr: ConditionGroupExpr) =>
+            onChange({ ...form, exprGroup: expr })
           }
+          factorList={factorList}
+          factorOptionConfigMap={factorOptionConfigMap}
+          factorOperatorOverrideMap={factorOperatorOverrideMap}
           formId={form.id}
         />
       )}
@@ -1119,7 +1270,9 @@ function ProjectRoleBindingForm({
             {t("common.environments")}
           </label>
           <DDLWarningCallout type="drawer" kind={envKind} />
-          <EnvironmentMultiSelect
+          <EnvironmentSelect
+            multiple
+            portal
             value={form.environments}
             onChange={(envs) => onChange({ ...form, environments: envs })}
           />
@@ -1133,28 +1286,68 @@ function ProjectRoleBindingForm({
           <span className="ml-0.5 text-error">*</span>
         </label>
         <div className="flex flex-wrap gap-1.5">
-          {expirationPresets.map((preset) => {
-            const isSelected = form.expirationDays === preset.days;
-            return (
-              <button
-                key={preset.label}
-                type="button"
-                className={cn(
-                  "px-2.5 py-1 text-xs rounded-sm border transition-colors",
-                  isSelected
-                    ? "bg-accent text-accent-text border-accent"
-                    : "bg-background text-control border-control-border hover:bg-control-bg"
-                )}
-                onClick={() => handleExpirationChange(preset.days)}
-              >
-                {preset.label}
-              </button>
-            );
-          })}
+          {/* "Never" is only offered when the workspace sets no cap. */}
+          {maximumRoleExpirationDays === undefined && (
+            <ExpirationChip
+              label={t("project.members.never-expires")}
+              selected={
+                !form.expirationCustom && form.expirationDays === undefined
+              }
+              onClick={() => handlePresetChange(undefined)}
+            />
+          )}
+          {visibleExpirationPresets.map((preset) => (
+            <ExpirationChip
+              key={preset.days}
+              label={t(preset.labelKey)}
+              selected={
+                !form.expirationCustom && form.expirationDays === preset.days
+              }
+              onClick={() => handlePresetChange(preset.days)}
+            />
+          ))}
+          <ExpirationChip
+            label={t("common.custom")}
+            selected={form.expirationCustom}
+            onClick={handleCustomClick}
+          />
         </div>
-        {form.expirationTimestampInMS && (
+        {form.expirationCustom && (
+          <ExpirationPicker
+            value={
+              form.expirationTimestampInMS
+                ? dayjs(form.expirationTimestampInMS).format("YYYY-MM-DDTHH:mm")
+                : undefined
+            }
+            onChange={handleCustomDateChange}
+            minDate={minDatetime}
+            maxDate={maxDatetime}
+          />
+        )}
+        {maximumRoleExpirationDays !== undefined && (
+          <p className="text-xs text-control-light">
+            {t("project.members.request-role.max-expiration-hint", {
+              days: maximumRoleExpirationDays,
+            })}
+          </p>
+        )}
+        {expirationIsInPast && (
+          <p className="text-xs text-error">
+            {t("project.members.request-role.expiration-must-be-future")}
+          </p>
+        )}
+        {expirationExceedsMax && (
+          <p className="text-xs text-error">
+            {t("project.members.request-role.expiration-exceeds-max", {
+              days: maximumRoleExpirationDays,
+            })}
+          </p>
+        )}
+        {!form.expirationCustom && form.expirationTimestampInMS && (
           <span className="text-xs text-control-light">
-            Expires: {formatExpirationDate(form.expirationTimestampInMS)}
+            {t("project.members.expires-at", {
+              date: formatExpirationDate(form.expirationTimestampInMS),
+            })}
           </span>
         )}
       </div>
@@ -1178,16 +1371,28 @@ function EditMemberRoleDrawer({
   initialBindings?: string[];
 }) {
   const { t } = useTranslation();
-  const workspaceStore = useWorkspaceV1Store();
-  const projectIamPolicyStore = useProjectIamPolicyStore();
-  const isSaaSMode = useVueState(() => useActuatorV1Store().isSaaSMode);
-  const settingV1Store = useSettingV1Store();
-  const hasEmailSetting = useVueState(
-    () => !!settingV1Store.getSettingByName(Setting_SettingName.EMAIL)
+  const patchWorkspaceIamPolicy = useAppStore(
+    (state) => state.patchWorkspaceIamPolicy
+  );
+  const findWorkspaceRolesByMember = useAppStore(
+    (state) => state.findWorkspaceRolesByMember
+  );
+  const getProjectIamPolicy = useAppStore((state) => state.getProjectIamPolicy);
+  const updateProjectIamPolicy = useAppStore(
+    (state) => state.updateProjectIamPolicy
+  );
+  const isSaaSMode = useVueState(() => useAppStore.getState().isSaaSMode());
+  const roleList = useAppStore((state) => state.roleList);
+  const settingsByName = useAppStore((s) => s.settingsByName);
+  const hasEmailSetting = useMemo(
+    () => !!useAppStore.getState().getSettingByName(Setting_SettingName.EMAIL),
+    [settingsByName]
   );
   useEffect(() => {
-    settingV1Store.getOrFetchSettingByName(Setting_SettingName.EMAIL, true);
-  }, [settingV1Store]);
+    useAppStore
+      .getState()
+      .getOrFetchSettingByName(Setting_SettingName.EMAIL, true);
+  }, []);
 
   const isEditMode = !!member;
   const isProjectCreateMode = !!projectName && !isEditMode;
@@ -1197,7 +1402,7 @@ function EditMemberRoleDrawer({
   // Active bindings come first, expired ones last; original order is preserved within each group.
   const liveProjectRoleBindings = useVueState(() => {
     if (!isProjectEditMode || !member || !projectName) return [];
-    const policy = projectIamPolicyStore.getProjectIamPolicy(projectName);
+    const policy = getProjectIamPolicy(projectName);
     const matching = policy.bindings.filter((b) =>
       b.members.includes(member.binding)
     );
@@ -1220,18 +1425,30 @@ function EditMemberRoleDrawer({
   const [showNestedGrant, setShowNestedGrant] = useState(false);
 
   const [form, setForm] = useState<RoleBindingFormState>(() => ({
-    id: crypto.randomUUID(),
+    id: uuidv4(),
     role: "",
     reason: "",
     expirationDays: 7,
     expirationTimestampInMS: computeExpirationTimestamp(7),
+    expirationCustom: false,
     databaseMode: "ALL",
     databaseResources: [],
-    celExpression: "",
+    exprGroup: wrapAsGroup(emptySimpleExpr()),
     environments: [],
   }));
 
   useEscapeKey(true, onClose);
+
+  // Workspace-configured maximum role expiration, in days. PROJECT_OWNER
+  // grants are exempt; returns undefined when no cap is set. Mirrors
+  // RequestRoleSheet so direct grants and role requests behave the same.
+  const workspaceProfile = useAppStore((s) => s.getWorkspaceProfile());
+  const maximumRoleExpirationDays = useMemo(() => {
+    if (form.role === PresetRoleType.PROJECT_OWNER) return undefined;
+    const seconds = workspaceProfile.maximumRoleExpiration?.seconds;
+    if (!seconds) return undefined;
+    return Math.floor(Number(seconds) / (60 * 60 * 24));
+  }, [workspaceProfile, form.role]);
 
   // Helpers for project edit mode
   const getSingleBindingRows = useCallback(
@@ -1262,7 +1479,7 @@ function EditMemberRoleDrawer({
 
   const handleDeleteRole = async (roleBinding: Binding) => {
     if (!member || !projectName) return;
-    const roleName = displayRoleTitle(roleBinding.role);
+    const roleName = displayRoleTitleFromList(roleBinding.role, roleList);
     if (
       !window.confirm(
         t("project.members.revoke-role-from-member", {
@@ -1274,9 +1491,7 @@ function EditMemberRoleDrawer({
       return;
     setIsRequesting(true);
     try {
-      const policy = structuredClone(
-        projectIamPolicyStore.getProjectIamPolicy(projectName)
-      );
+      const policy = structuredClone(getProjectIamPolicy(projectName));
       const match = policy.bindings.find(
         (b) =>
           b.role === roleBinding.role &&
@@ -1287,7 +1502,7 @@ function EditMemberRoleDrawer({
         match.members = match.members.filter((m) => m !== member.binding);
       }
       policy.bindings = policy.bindings.filter((b) => b.members.length > 0);
-      await projectIamPolicyStore.updateProjectIamPolicy(projectName, policy);
+      await updateProjectIamPolicy(projectName, policy);
       pushNotification({
         module: "bytebase",
         style: "SUCCESS",
@@ -1311,9 +1526,7 @@ function EditMemberRoleDrawer({
     setIsRequesting(true);
     try {
       if (projectName) {
-        const policy = structuredClone(
-          projectIamPolicyStore.getProjectIamPolicy(projectName)
-        );
+        const policy = structuredClone(getProjectIamPolicy(projectName));
         if (isEditMode) {
           // Remove member from unconditional bindings only;
           // preserve conditional bindings (expiration, database scope)
@@ -1362,15 +1575,48 @@ function EditMemberRoleDrawer({
               form.reason !== "" ||
               databaseResources !== undefined ||
               environments !== undefined ||
-              (form.databaseMode === "EXPRESSION" && form.celExpression !== "");
-            if (form.databaseMode === "EXPRESSION" && form.celExpression) {
+              (form.databaseMode === "EXPRESSION" &&
+                validateSimpleExpr(form.exprGroup));
+            if (
+              form.databaseMode === "EXPRESSION" &&
+              validateSimpleExpr(form.exprGroup)
+            ) {
+              let parsedExpr;
+              try {
+                parsedExpr = await buildCELExpr(form.exprGroup);
+              } catch {
+                parsedExpr = undefined;
+              }
+              if (!parsedExpr) {
+                pushNotification({
+                  module: "bytebase",
+                  style: "CRITICAL",
+                  title: t(
+                    "project.members.request-role.failed-to-build-expression"
+                  ),
+                });
+                return;
+              }
+              const [exprString] = await batchConvertParsedExprToCELString([
+                parsedExpr,
+              ]);
+              if (!exprString?.trim()) {
+                pushNotification({
+                  module: "bytebase",
+                  style: "CRITICAL",
+                  title: t(
+                    "project.members.request-role.failed-to-build-expression"
+                  ),
+                });
+                return;
+              }
               const extraParts = stringifyConditionExpression({
                 expirationTimestampInMS: form.expirationTimestampInMS,
                 environments,
               });
               const fullExpression = extraParts
-                ? `(${form.celExpression}) && ${extraParts}`
-                : form.celExpression;
+                ? `(${exprString}) && ${extraParts}`
+                : exprString;
               const condition = create(ConditionExprSchema, {
                 expression: fullExpression,
                 description: form.reason,
@@ -1445,21 +1691,21 @@ function EditMemberRoleDrawer({
             }
           }
         }
-        await projectIamPolicyStore.updateProjectIamPolicy(projectName, policy);
+        await updateProjectIamPolicy(projectName, policy);
       } else {
         if (isEditMode) {
-          await workspaceStore.patchIamPolicy([
+          await patchWorkspaceIamPolicy([
             { member: member.binding, roles: selectedRoles },
           ]);
         } else {
           const batchPatch = selectedBindings.map((binding) => {
-            const existedRoles = workspaceStore.findRolesByMember(binding);
+            const existedRoles = findWorkspaceRolesByMember(binding);
             return {
               member: binding,
               roles: [...new Set([...selectedRoles, ...existedRoles])],
             };
           });
-          await workspaceStore.patchIamPolicy(batchPatch);
+          await patchWorkspaceIamPolicy(batchPatch);
         }
       }
       pushNotification({
@@ -1488,18 +1734,14 @@ function EditMemberRoleDrawer({
     setIsRequesting(true);
     try {
       if (projectName) {
-        const policy = structuredClone(
-          projectIamPolicyStore.getProjectIamPolicy(projectName)
-        );
+        const policy = structuredClone(getProjectIamPolicy(projectName));
         for (const binding of policy.bindings) {
           binding.members = binding.members.filter((m) => m !== member.binding);
         }
         policy.bindings = policy.bindings.filter((b) => b.members.length > 0);
-        await projectIamPolicyStore.updateProjectIamPolicy(projectName, policy);
+        await updateProjectIamPolicy(projectName, policy);
       } else {
-        await workspaceStore.patchIamPolicy([
-          { member: member.binding, roles: [] },
-        ]);
+        await patchWorkspaceIamPolicy([{ member: member.binding, roles: [] }]);
       }
       pushNotification({
         module: "bytebase",
@@ -1517,10 +1759,16 @@ function EditMemberRoleDrawer({
   const allowConfirm = isProjectCreateMode
     ? selectedBindings.length > 0 &&
       !!form.role &&
+      isExpirationValid(form, maximumRoleExpirationDays) &&
       !(
         roleHasDatabaseLimitation(form.role) &&
         form.databaseMode === "SELECT" &&
         form.databaseResources.length === 0
+      ) &&
+      !(
+        roleHasDatabaseLimitation(form.role) &&
+        form.databaseMode === "EXPRESSION" &&
+        !validateSimpleExpr(form.exprGroup)
       )
     : isEditMode
       ? selectedRoles.length > 0
@@ -1583,7 +1831,7 @@ function EditMemberRoleDrawer({
                               isExpired && "line-through"
                             )}
                           >
-                            {displayRoleTitle(binding.role)}
+                            {displayRoleTitleFromList(binding.role, roleList)}
                           </span>
                           {isExpired && (
                             <Badge variant="destructive" className="text-xs">
@@ -1739,6 +1987,7 @@ function EditMemberRoleDrawer({
                   onRemove={() => {}}
                   canRemove={false}
                   projectName={projectName}
+                  maximumRoleExpirationDays={maximumRoleExpirationDays}
                 />
               </div>
             ) : (
@@ -1791,15 +2040,20 @@ function EditMemberRoleDrawer({
 
 export function MembersPage({ projectId }: { projectId?: string }) {
   const { t } = useTranslation();
-  const workspaceStore = useWorkspaceV1Store();
-  const actuatorStore = useActuatorV1Store();
-  const subscriptionStore = useSubscriptionV1Store();
-  const currentUser = useVueState(() => useCurrentUserV1().value);
-  const projectStore = useProjectV1Store();
-  const projectIamPolicyStore = useProjectIamPolicyStore();
+  const workspacePolicy = useAppStore((state) => state.workspacePolicy);
+  const patchWorkspaceIamPolicy = useAppStore(
+    (state) => state.patchWorkspaceIamPolicy
+  );
+  const currentUser = useCurrentUser();
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  const updateProjectIamPolicy = useAppStore(
+    (state) => state.updateProjectIamPolicy
+  );
+  // subscribe to re-render on project cache change
+  void projectsByName;
 
-  const userCountInIam = useVueState(() => actuatorStore.userCountInIam);
-  const userCountLimit = useVueState(() => subscriptionStore.userCountLimit);
+  const userCountInIam = useAppStore((s) => s.userCountInIam());
+  const userCountLimit = useAppStore((s) => s.userCountLimit());
   const remainingUserCount = useMemo(
     () => Math.max(0, userCountLimit - userCountInIam),
     [userCountLimit, userCountInIam]
@@ -1809,7 +2063,9 @@ export function MembersPage({ projectId }: { projectId?: string }) {
     ? `${projectNamePrefix}${projectId}`
     : undefined;
   const project = useVueState(() =>
-    projectName ? projectStore.getProjectByName(projectName) : undefined
+    projectName
+      ? useAppStore.getState().getProjectByName(projectName)
+      : undefined
   );
 
   const [memberSearchText, setMemberSearchText] = useState("");
@@ -1824,20 +2080,20 @@ export function MembersPage({ projectId }: { projectId?: string }) {
   const [showRequestRoleDialog, setShowRequestRoleDialog] = useState(false);
 
   const hasRequestRoleFeature = useVueState(() =>
-    subscriptionStore.hasFeature(PlanFeature.FEATURE_REQUEST_ROLE_WORKFLOW)
+    useAppStore.getState().hasFeature(PlanFeature.FEATURE_REQUEST_ROLE_WORKFLOW)
   );
 
-  // Fetch project IAM policy on mount
-  useEffect(() => {
-    if (projectName) {
-      projectIamPolicyStore.getOrFetchProjectIamPolicy(projectName);
-    }
-  }, [projectName, projectIamPolicyStore]);
-
-  const projectIamPolicy = useVueState(() =>
-    projectName
-      ? projectIamPolicyStore.getProjectIamPolicy(projectName)
-      : undefined
+  // IAM policy loads are owned by the parent shells: ProjectRouteShell
+  // loads project IAM on /projects/:projectId/members, and
+  // DashboardFrameShell's useEnsureWorkspaceCommonData loads workspace IAM
+  // (+ referenced groups) on /settings/members. This page just reads them.
+  // Subscribe directly to the Zustand projectPoliciesByName slice so the
+  // member table re-renders when loadProjectIamPolicy / updateProjectIamPolicy
+  // writes to the app store. Wrapping `getProjectIamPolicy()` in
+  // `useVueState` would only re-render on Vue reactivity changes and miss
+  // these Zustand writes.
+  const projectIamPolicy = useAppStore((state) =>
+    projectName ? state.projectPoliciesByName[projectName] : undefined
   );
 
   // `useVueState` ensures we re-render whenever any reactive dep
@@ -1847,17 +2103,20 @@ export function MembersPage({ projectId }: { projectId?: string }) {
   // render; the table component handles that with content-based change
   // detection (a group-bindings signature) so its expand-cache only
   // resets on real membership changes.
+  // Keep this in useVueState so it re-runs when the Pinia user/group/
+  // service-account/workload-identity stores that getMemberBindings reads
+  // for member metadata change. The workspace IAM policy itself now comes
+  // from the app store: subscribing to `workspacePolicy` above re-renders
+  // this component on policy changes, and useVueState reads the latest getter
+  // each render, so both reactivity sources are covered.
   const memberBindings = useVueState(() =>
     getMemberBindings({
       policies:
         projectName && projectIamPolicy
           ? [{ level: "PROJECT" as const, policy: projectIamPolicy }]
-          : [
-              {
-                level: "WORKSPACE" as const,
-                policy: workspaceStore.workspaceIamPolicy,
-              },
-            ],
+          : workspacePolicy
+            ? [{ level: "WORKSPACE" as const, policy: workspacePolicy }]
+            : [],
       searchText: memberSearchText,
       ignoreRoles: EMPTY_ROLE_SET,
     })
@@ -1892,12 +2151,9 @@ export function MembersPage({ projectId }: { projectId?: string }) {
             );
           }
           policy.bindings = policy.bindings.filter((b) => b.members.length > 0);
-          await projectIamPolicyStore.updateProjectIamPolicy(
-            projectName,
-            policy
-          );
+          await updateProjectIamPolicy(projectName, policy);
         } else {
-          await workspaceStore.patchIamPolicy(
+          await patchWorkspaceIamPolicy(
             selectedMembers.map((m) => ({ member: m, roles: [] }))
           );
         }
@@ -1926,11 +2182,9 @@ export function MembersPage({ projectId }: { projectId?: string }) {
           b.members = b.members.filter((member) => member !== binding.binding);
         }
         policy.bindings = policy.bindings.filter((b) => b.members.length > 0);
-        await projectIamPolicyStore.updateProjectIamPolicy(projectName, policy);
+        await updateProjectIamPolicy(projectName, policy);
       } else {
-        await workspaceStore.patchIamPolicy([
-          { member: binding.binding, roles: [] },
-        ]);
+        await patchWorkspaceIamPolicy([{ member: binding.binding, roles: [] }]);
       }
       pushNotification({
         module: "bytebase",

@@ -30,8 +30,12 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/react/components/ui/sheet";
-import { useCurrentUser, useServerState } from "@/react/hooks/useAppState";
+import {
+  useOptionalCurrentUser,
+  useServerState,
+} from "@/react/hooks/useAppState";
 import { useVueState } from "@/react/hooks/useVueState";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import {
   DATABASE_ROUTE_DASHBOARD,
@@ -60,7 +64,6 @@ import {
   SETTING_ROUTE_WORKSPACE_SUBSCRIPTION,
 } from "@/router/dashboard/workspaceSetting";
 import { useRecentVisit } from "@/router/useRecentVisit";
-import { useProjectV1Store } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import { UNKNOWN_PROJECT_NAME } from "@/types";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
@@ -297,12 +300,14 @@ function useLastVisitedProject() {
     }
 
     const projectName = `${projectNamePrefix}${extractProjectResourceName(lastVisitProjectPath)}`;
-    const projectStore = useProjectV1Store();
     let cancelled = false;
-    projectStore.getOrFetchProjectByName(projectName).then((p) => {
-      if (cancelled) return;
-      setProject(p.name === UNKNOWN_PROJECT_NAME ? undefined : p);
-    });
+    useAppStore
+      .getState()
+      .getOrFetchProjectByName(projectName)
+      .then((p) => {
+        if (cancelled) return;
+        setProject(p.name === UNKNOWN_PROJECT_NAME ? undefined : p);
+      });
     return () => {
       cancelled = true;
     };
@@ -432,7 +437,7 @@ export function LandingPage(_: Record<string, never> = {}) {
   const [showConfigDrawer, setShowConfigDrawer] = useState(false);
   const [showProjectSwitchDialog, setShowProjectSwitchDialog] = useState(false);
 
-  const email = useCurrentUser()?.email ?? "";
+  const email = useOptionalCurrentUser()?.email ?? "";
   const { version, changelogURL } = useServerState();
 
   const fullList = useFullQuickLinkList();

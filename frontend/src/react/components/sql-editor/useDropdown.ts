@@ -9,8 +9,8 @@
 
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useVueState } from "@/react/hooks/useVueState";
-import { useCurrentUserV1, useWorkSheetStore } from "@/store";
+import { useCurrentUser } from "@/react/hooks/useAppState";
+import { useAppStore } from "@/react/stores/app";
 import { isWorksheetWritableV1 } from "@/utils";
 import type {
   SheetViewMode,
@@ -51,9 +51,7 @@ export function useDropdown(
 ) {
   const { t } = useTranslation();
 
-  // Call Pinia store factories at hook top level (React Hooks rule).
-  const sheetStore = useWorkSheetStore();
-  const meRef = useCurrentUserV1();
+  const me = useCurrentUser();
 
   // ------------------------------------------------------------------
   // Context state — current right-click target
@@ -66,14 +64,11 @@ export function useDropdown(
   // ------------------------------------------------------------------
   // Reactive reads from Pinia / Vue stores
   // ------------------------------------------------------------------
-  const me = useVueState(() => meRef.value);
-
-  const worksheetEntity = useVueState(() => {
-    if (viewMode === "draft" || !currentNode?.worksheet) {
-      return undefined;
-    }
-    return sheetStore.getWorksheetByName(currentNode.worksheet.name);
-  });
+  const worksheetEntity = useAppStore((s) =>
+    viewMode === "draft" || !currentNode?.worksheet
+      ? undefined
+      : s.getWorksheetByName(currentNode.worksheet.name)
+  );
 
   // ------------------------------------------------------------------
   // Derived: allowed-to-create-new

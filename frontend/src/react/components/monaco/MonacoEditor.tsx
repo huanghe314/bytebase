@@ -2,7 +2,6 @@ import { create } from "@bufbuild/protobuf";
 import { debounce, orderBy } from "lodash-es";
 import { Loader2 } from "lucide-react";
 import {
-  type MutableRefObject,
   type ReactNode,
   useEffect,
   useMemo,
@@ -11,6 +10,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { v4 as uuidv4 } from "uuid";
 import { Tooltip } from "@/react/components/ui/tooltip";
 import { cn } from "@/react/lib/utils";
 import type { Language, SQLDialect } from "@/types";
@@ -35,9 +35,14 @@ import {
   initializeLSPClient,
   subscribeConnectionState,
 } from "./lsp-client";
+import {
+  getStatementRanges,
+  setStatementRanges,
+} from "./statement-range-store";
 import { ensureSuggestOverrideStyle } from "./suggest-icons";
 import {
   getOrCreateTextModel,
+  getUriByFilename,
   restoreViewState,
   storeViewState,
 } from "./text-model";
@@ -108,6 +113,11 @@ export interface MonacoEditorProps {
   formatContentOptions?: FormatContentOptions;
 }
 
+// Marker class for the active-statement highlight. Used both to render the
+// decoration and to identify (and clear) all such decorations on the shared
+// model, regardless of which editor lifecycle created them.
+const ACTIVE_STATEMENT_DECORATION_CLASS = "bg-gray-200";
+
 export function MonacoEditor({
   advices = [],
   autoCompleteContext,
@@ -140,7 +150,18 @@ export function MonacoEditor({
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<IStandaloneCodeEditor | null>(null);
   const modelRef = useRef<ITextModel | null>(null);
-  const activeDecorationRef = useRef<{ clear(): void } | null>(null);
+  // Track decoration IDs (not a collection object). `editor.deltaDecorations`
+  // is atomic — swapping IDs replaces or removes decorations in a single
+  // model edit. The previous `createDecorationsCollection().clear()`
+  // approach silently no-op'd in some cases (observed after the model
+  // mutated between ticks), leaving stale highlights on screen.
+  const activeDecorationIdsRef = useRef<string[]>([]);
+  // Guards against re-entering emitSelectionSideEffects. Applying the
+  // active-statement decoration via deltaDecorations can synchronously emit a
+  // cursor/selection-change event (tracked ranges recompute when decorations
+  // change), which would re-enter this handler mid-deltaDecorations — Monaco
+  // forbids nested deltaDecorations ("could lead to leaking decorations").
+  const emittingSideEffectsRef = useRef(false);
   const contentRef = useRef(safeContent);
   const languageRef = useRef(safeLanguage);
   const readOnlyRef = useRef(readOnly);
@@ -151,16 +172,12 @@ export function MonacoEditor({
   const onActiveContentChangeRef = useRef(onActiveContentChange);
   const onReadyRef = useRef(onReady);
   const isApplyingExternalChangeRef = useRef(false);
-  const activeRangeByUriRef = useRef<Map<string, MonacoTypeRange[]>>(new Map());
   const selectionRef = useRef<Selection | null>(null);
   const generatedFilename = useMemo(() => {
     if (filename) {
       return filename;
     }
-    const id =
-      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : Math.random().toString(36).slice(2);
+    const id = uuidv4();
     return `${id}.${extensionNameOfLanguage(safeLanguage)}`;
   }, [filename, safeLanguage]);
   const [contentHeight, setContentHeight] = useState(min);
@@ -204,7 +221,19 @@ export function MonacoEditor({
     const editor = editorRef.current;
     const model = modelRef.current ?? editor?.getModel();
     if (!editor || !model) return;
+    if (emittingSideEffectsRef.current) return;
+    emittingSideEffectsRef.current = true;
+    try {
+      emitSelectionSideEffectsImpl(editor, model);
+    } finally {
+      emittingSideEffectsRef.current = false;
+    }
+  };
 
+  const emitSelectionSideEffectsImpl = (
+    editor: IStandaloneCodeEditor,
+    model: ITextModel
+  ) => {
     const selection = editor.getSelection();
     selectionRef.current = selection;
     onSelectionChangeRef.current?.(selection);
@@ -214,31 +243,49 @@ export function MonacoEditor({
     onSelectContentRef.current?.(selectedContent);
 
     const cursorPosition = editor.getPosition();
-    const ranges = activeRangeByUriRef.current.get(model.uri.toString()) ?? [];
+    const ranges = getStatementRanges(model.uri.toString());
     const activeRange =
       selection && !selection.isEmpty()
         ? selection
         : resolveActiveRangeByCursor(ranges, cursorPosition);
 
-    activeDecorationRef.current?.clear();
-    activeDecorationRef.current = null;
-    if (
+    const willDraw = !!(
       enableDecorations &&
       activeRange &&
       (!selection || selection.isEmpty())
-    ) {
-      activeDecorationRef.current = editor.createDecorationsCollection([
-        {
-          range: activeRange,
-          options: {
-            isWholeLine: false,
-            shouldFillLineOnLineBreak: true,
-            className: "bg-gray-200",
-          },
-        },
-      ]);
-    }
-
+    );
+    const nextDecorations =
+      willDraw && activeRange
+        ? [
+            {
+              range: activeRange,
+              options: {
+                isWholeLine: false,
+                shouldFillLineOnLineBreak: true,
+                className: ACTIVE_STATEMENT_DECORATION_CLASS,
+              },
+            },
+          ]
+        : [];
+    // The text model is cached and shared across editor re-creations
+    // (see getOrCreateTextModel) and outlives every editor instance.
+    // Active-statement decorations live on the model, so a decoration
+    // created by a prior editor lifecycle (effect re-run, StrictMode
+    // double-mount, etc.) isn't tracked by this instance's id ref and
+    // would leak as a stacked highlight. Clear ALL active-statement
+    // decorations on the model, not just the one id this instance owns,
+    // so exactly one highlight survives.
+    const staleIds = model
+      .getAllDecorations()
+      .filter((d) => d.options.className === ACTIVE_STATEMENT_DECORATION_CLASS)
+      .map((d) => d.id);
+    const oldIds = Array.from(
+      new Set([...activeDecorationIdsRef.current, ...staleIds])
+    );
+    activeDecorationIdsRef.current = editor.deltaDecorations(
+      oldIds,
+      nextDecorations
+    );
     onActiveContentChangeRef.current?.(
       activeRange ? model.getValueInRange(activeRange) : ""
     );
@@ -364,7 +411,7 @@ export function MonacoEditor({
           wsPromise?.then((ws) => {
             if (!ws || disposed) return;
             messageHandler = (message: MessageEvent) => {
-              processStatementRangeMessage(message, activeRangeByUriRef);
+              processStatementRangeMessage(message);
               emitSelectionSideEffects();
             };
             ws.addEventListener("message", messageHandler);
@@ -399,8 +446,25 @@ export function MonacoEditor({
           ws.removeEventListener("message", messageHandler!)
         );
       }
-      activeDecorationRef.current?.clear();
-      activeDecorationRef.current = null;
+      // Clear ALL active-statement decorations on the (shared, persistent)
+      // model, not just this instance's tracked id, so teardown can't leave
+      // an orphan highlight behind for the next editor lifecycle.
+      const model = modelRef.current ?? editorRef.current?.getModel();
+      if (editorRef.current && model) {
+        const grayIds = model
+          .getAllDecorations()
+          .filter(
+            (d) => d.options.className === ACTIVE_STATEMENT_DECORATION_CLASS
+          )
+          .map((d) => d.id);
+        const oldIds = Array.from(
+          new Set([...activeDecorationIdsRef.current, ...grayIds])
+        );
+        if (oldIds.length > 0) {
+          editorRef.current.deltaDecorations(oldIds, []);
+        }
+      }
+      activeDecorationIdsRef.current = [];
       if (editorRef.current) {
         storeViewState(editorRef.current, modelRef.current);
       }
@@ -531,6 +595,7 @@ export function MonacoEditor({
       databaseName: string;
       scene?: string;
       schema?: string;
+      documentUri?: string;
     } = {
       instanceId: "",
       databaseName: "",
@@ -549,6 +614,13 @@ export function MonacoEditor({
     }
     const apply = debounce(async () => {
       const client = await initializeLSPClient();
+      // Tell the server which document this metadata is for, so it can
+      // reschedule diagnostics for exactly this document once the engine is
+      // known (see the backend setMetadata handler). Matches the model URI
+      // the LSP client opened the document with.
+      params.documentUri = (
+        await getUriByFilename(generatedFilename)
+      ).toString();
       await executeCommand(client, "setMetadata", [params]);
     }, 500);
     void apply();
@@ -683,15 +755,27 @@ const resolveActiveRangeByCursor = (
   if (!position) return undefined;
   for (const range of ranges) {
     if (range.endLineNumber < position.lineNumber) continue;
-    if (
-      range.startLineNumber <= position.lineNumber &&
-      range.endLineNumber >= position.lineNumber
-    ) {
-      if (range.endColumn >= position.column) {
-        return range;
-      }
-    }
     if (range.startLineNumber > position.lineNumber) break;
+    // Cursor line is inside [startLine, endLine]. Apply column gates only
+    // at the boundary lines. LSP ranges (and the Monaco conversion used
+    // here) are END-EXCLUSIVE, so `position.column >= range.endColumn` on
+    // the end line means the cursor sits past the last covered position
+    // and is NOT inside the range — e.g. cursor at the start of the
+    // blank line that follows `SELECT 1;\n` was incorrectly matching the
+    // statement range that ends at that exact position.
+    if (
+      range.startLineNumber === position.lineNumber &&
+      position.column < range.startColumn
+    ) {
+      continue;
+    }
+    if (
+      range.endLineNumber === position.lineNumber &&
+      position.column >= range.endColumn
+    ) {
+      continue;
+    }
+    return range;
   }
   return undefined;
 };
@@ -767,10 +851,7 @@ const attachFormatAction = (
   });
 };
 
-const processStatementRangeMessage = (
-  message: MessageEvent,
-  ref: MutableRefObject<Map<string, MonacoTypeRange[]>>
-) => {
+const processStatementRangeMessage = (message: MessageEvent) => {
   if (typeof message.data !== "string") return;
   if (!message.data.includes("$/textDocument/statementRanges")) return;
   try {
@@ -800,8 +881,11 @@ const processStatementRangeMessage = (
       startColumn: range.start.character + 1,
       endColumn: range.end.character + 1,
     }));
-    ref.current.set(payload.params.uri, ranges);
-  } catch {
-    // ignore
+    setStatementRanges(payload.params.uri, ranges);
+  } catch (e) {
+    console.debug("[sql-editor:statementRanges] failed to parse LSP message", {
+      data: message.data,
+      error: e,
+    });
   }
 };

@@ -22,24 +22,15 @@ import { EngineIcon } from "@/react/components/EngineIcon";
 import { EnvironmentLabel } from "@/react/components/EnvironmentLabel";
 import { PermissionGuard } from "@/react/components/PermissionGuard";
 import { Button } from "@/react/components/ui/button";
-import { useVueState } from "@/react/hooks/useVueState";
+import type { DatabaseFilter } from "@/react/lib/databaseFilter";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
-import {
-  pushNotification,
-  useActuatorV1Store,
-  useDatabaseV1Store,
-  useDBSchemaV1Store,
-  useEnvironmentV1Store,
-  useInstanceV1Store,
-  useProjectV1Store,
-  useUIStateStore,
-} from "@/store";
+import { pushNotification } from "@/store";
 import {
   environmentNamePrefix,
   instanceNamePrefix,
   projectNamePrefix,
 } from "@/store/modules/v1/common";
-import type { DatabaseFilter } from "@/store/modules/v1/database";
 import {
   isValidDatabaseName,
   UNKNOWN_ENVIRONMENT_NAME,
@@ -63,11 +54,11 @@ import {
 
 export function DatabasesPage() {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
-  const dbSchemaStore = useDBSchemaV1Store();
-  const actuatorStore = useActuatorV1Store();
-  const environmentStore = useEnvironmentV1Store();
-  const uiStateStore = useUIStateStore();
+  const databasesByName = useAppStore((s) => s.databasesByName);
+  const getDatabaseByName = useAppStore((s) => s.getDatabaseByName);
+  const removeDatabaseMetadataCache = useAppStore(
+    (s) => s.removeDatabaseMetadataCache
+  );
 
   const [syncing, setSyncing] = useState(false);
   const [showCreateDrawer, setShowCreateDrawer] = useState(false);
@@ -112,34 +103,45 @@ export function DatabasesPage() {
         {
           id: "project",
           value: extractProjectResourceName(
-            actuatorStore.serverInfo?.defaultProject ?? ""
+            useAppStore.getState().serverInfo?.defaultProject ?? ""
           ),
         },
       ],
     };
   });
 
-  const environments = useVueState(
-    () => environmentStore.environmentList ?? []
-  );
+  const environments = useAppStore((s) => s.environmentList);
 
-  const projectStore = useProjectV1Store();
-  const defaultProjectId = extractProjectResourceName(
-    actuatorStore.serverInfo?.defaultProject ?? ""
+  // `serverInfo.defaultProject` is fetched asynchronously by the actuator
+  // store; use a selector so the filter value updates the moment it arrives
+  // instead of being captured as an empty string on first render (which
+  // sends a broken `projects/` filter to the backend).
+  const defaultProjectId = useAppStore((s) =>
+    extractProjectResourceName(s.serverInfo?.defaultProject ?? "")
+  );
+  // Shared "Unassigned" option used both by the dropdown (via onSearch) and
+  // by the selected-tag display (via the scope's static `options`). `custom`
+  // hides the raw "default-<random>" id from the dropdown so users only see
+  // the friendly label.
+  const unassignedProjectOption = useMemo<ValueOption>(
+    () => ({
+      value: defaultProjectId,
+      keywords: ["unassigned", "default"],
+      custom: true,
+      render: () => (
+        <span className="italic text-control-light">
+          {t("common.unassigned")}
+        </span>
+      ),
+    }),
+    [defaultProjectId, t]
   );
   const searchProjects = useCallback(
     async (keyword: string): Promise<ValueOption[]> => {
-      const { projects } = await projectStore.fetchProjectList({
+      const { projects } = await useAppStore.getState().fetchProjectList({
         pageSize: getDefaultPagination(),
         filter: keyword.trim() ? { query: keyword } : undefined,
       });
-      const unassigned: ValueOption = {
-        value: defaultProjectId,
-        keywords: ["unassigned", "default"],
-        render: () => (
-          <span className="italic text-control-light">Unassigned</span>
-        ),
-      };
       const matchesUnassigned =
         !keyword.trim() || "unassigned".includes(keyword.trim().toLowerCase());
       const remote = projects
@@ -148,16 +150,15 @@ export function DatabasesPage() {
           const id = extractProjectResourceName(p.name);
           return { value: id, keywords: [id, p.title] };
         });
-      return matchesUnassigned ? [unassigned, ...remote] : remote;
+      return matchesUnassigned ? [unassignedProjectOption, ...remote] : remote;
     },
-    [projectStore, defaultProjectId]
+    [defaultProjectId, unassignedProjectOption]
   );
 
-  const instanceStore = useInstanceV1Store();
   const searchInstances = useCallback(
     async (keyword: string): Promise<ValueOption[]> => {
       if (!hasWorkspacePermissionV2("bb.instances.list")) return [];
-      const { instances } = await instanceStore.fetchInstanceList({
+      const { instances } = await useAppStore.getState().fetchInstanceList({
         pageSize: getDefaultPagination(),
         filter: keyword.trim() ? { query: keyword } : undefined,
       });
@@ -169,7 +170,7 @@ export function DatabasesPage() {
         };
       });
     },
-    [instanceStore]
+    []
   );
 
   const scopeOptions: ScopeOption[] = useMemo(() => {
@@ -178,6 +179,10 @@ export function DatabasesPage() {
         id: "project",
         title: t("common.project"),
         description: t("issue.advanced-search.scope.project.description"),
+        // Static option lets the selected-tag display resolve the default
+        // project id to "Unassigned" — the tag renderer only looks at
+        // `options`, not async results.
+        options: [unassignedProjectOption],
         onSearch: searchProjects,
       },
       {
@@ -226,7 +231,13 @@ export function DatabasesPage() {
         allowMultiple: true,
       },
     ];
-  }, [t, environments, searchInstances, searchProjects]);
+  }, [
+    t,
+    environments,
+    searchInstances,
+    searchProjects,
+    unassignedProjectOption,
+  ]);
 
   // Derived filter values
   const projectVal = getValueFromScopes(searchParams, "project");
@@ -281,13 +292,34 @@ export function DatabasesPage() {
 
   // Mark database visit on mount
   useEffect(() => {
-    if (!uiStateStore.getIntroStateByKey("database.visit")) {
-      uiStateStore.saveIntroStateByKey({
+    const store = useAppStore.getState();
+    if (!store.getIntroStateByKey("database.visit")) {
+      store.saveIntroStateByKey({
         key: "database.visit",
         newState: true,
       });
     }
-  }, [uiStateStore]);
+  }, []);
+
+  // Backfill the project scope once the actuator's default project ID
+  // arrives. The initial `useState` initializer reads the actuator
+  // synchronously — if it hasn't finished fetching yet, the project value
+  // is captured as "" and the API filter becomes broken (`projects/`).
+  useEffect(() => {
+    if (!defaultProjectId) return;
+    setSearchParams((prev) => {
+      const projectScope = prev.scopes.find((s) => s.id === "project");
+      if (!projectScope || projectScope.value !== "") return prev;
+      return {
+        ...prev,
+        scopes: prev.scopes.map((s) =>
+          s.id === "project" && s.value === ""
+            ? { ...s, value: defaultProjectId }
+            : s
+        ),
+      };
+    });
+  }, [defaultProjectId]);
 
   // Sync search state to URL
   useEffect(() => {
@@ -311,8 +343,8 @@ export function DatabasesPage() {
     if (selectedNames.size === 0) return [];
     return Array.from(selectedNames)
       .filter((name) => isValidDatabaseName(name))
-      .map((name) => databaseStore.getDatabaseByName(name));
-  }, [selectedNames, databaseStore]);
+      .map((name) => getDatabaseByName(name));
+  }, [selectedNames, getDatabaseByName, databasesByName]);
 
   // Mirror `selectedDatabases` into a ref so the batch-operation handlers
   // below can read the latest value without listing it as a dep. Otherwise
@@ -337,9 +369,11 @@ export function DatabasesPage() {
       title: t("db.start-to-sync-schema"),
     });
     try {
-      await databaseStore.batchSyncDatabases(Array.from(selectedNames));
+      await useAppStore
+        .getState()
+        .batchSyncDatabases(Array.from(selectedNames));
       for (const name of selectedNames) {
-        dbSchemaStore.removeCache(name);
+        removeDatabaseMetadataCache(name);
       }
       pushNotification({
         module: "bytebase",
@@ -356,12 +390,12 @@ export function DatabasesPage() {
     } finally {
       setSyncing(false);
     }
-  }, [syncing, selectedNames, databaseStore, dbSchemaStore, t]);
+  }, [syncing, selectedNames, removeDatabaseMetadataCache, t]);
 
   const handleLabelsApply = useCallback(
     async (labelsList: { [key: string]: string }[]) => {
       try {
-        await databaseStore.batchUpdateDatabases(
+        await useAppStore.getState().batchUpdateDatabases(
           create(BatchUpdateDatabasesRequestSchema, {
             parent: "-",
             requests: selectedDatabasesRef.current.map((database, i) =>
@@ -389,13 +423,13 @@ export function DatabasesPage() {
         });
       }
     },
-    [databaseStore, refresh, t]
+    [refresh, t]
   );
 
   const handleEnvironmentUpdate = useCallback(
     async (environment: string) => {
       try {
-        await databaseStore.batchUpdateDatabases(
+        await useAppStore.getState().batchUpdateDatabases(
           create(BatchUpdateDatabasesRequestSchema, {
             parent: "-",
             requests: selectedDatabasesRef.current.map((database) =>
@@ -423,13 +457,13 @@ export function DatabasesPage() {
         });
       }
     },
-    [databaseStore, refresh, t]
+    [refresh, t]
   );
 
   const handleTransferProject = useCallback(
     async (projectName: string) => {
       try {
-        await databaseStore.batchUpdateDatabases(
+        await useAppStore.getState().batchUpdateDatabases(
           create(BatchUpdateDatabasesRequestSchema, {
             parent: "-",
             requests: selectedDatabasesRef.current.map((database) =>
@@ -457,7 +491,7 @@ export function DatabasesPage() {
         });
       }
     },
-    [databaseStore, refresh, t]
+    [refresh, t]
   );
 
   return (

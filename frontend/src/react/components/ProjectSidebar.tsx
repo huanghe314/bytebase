@@ -13,7 +13,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { effectScope } from "vue";
 import logoFull from "@/assets/logo-full.svg";
+import { useWorkspace } from "@/react/hooks/useAppState";
 import { useVueState } from "@/react/hooks/useVueState";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import {
   PROJECT_V1_ROUTE_ACCESS_GRANTS,
@@ -35,11 +37,6 @@ import {
   PROJECT_V1_ROUTE_WORKLOAD_IDENTITIES,
 } from "@/router/dashboard/projectV1";
 import { useRecentVisit } from "@/router/useRecentVisit";
-import {
-  useActuatorV1Store,
-  useProjectV1Store,
-  useWorkspaceV1Store,
-} from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 
 // ---------------------------------------------------------------------------
@@ -76,13 +73,12 @@ function getItemClass(item: SidebarItem, currentRouteName: string): string[] {
 
 function useSidebarItems(): SidebarItem[] {
   const { t } = useTranslation();
+  const defaultProject = useAppStore((s) => s.serverInfo?.defaultProject ?? "");
 
   const isDefault = useVueState(() => {
     const projectId =
       (router.currentRoute.value.params.projectId as string | undefined) ?? "";
     const projectName = projectId ? `${projectNamePrefix}${projectId}` : "";
-    const defaultProject =
-      useActuatorV1Store().serverInfo?.defaultProject ?? "";
     return !!defaultProject && projectName === defaultProject;
   });
 
@@ -251,11 +247,7 @@ export function ProjectSidebar() {
       (router.currentRoute.value.params.projectId as string | undefined) ?? ""
   );
 
-  const customLogo = useVueState(
-    () => useWorkspaceV1Store().currentWorkspace?.logo ?? ""
-  );
-
-  const projectStore = useProjectV1Store();
+  const customLogo = useWorkspace()?.logo ?? "";
 
   // Create a Vue effectScope so we can call the Vue composable useRecentVisit.
   const recordVisitRef = useRef<((path: string) => void) | null>(null);
@@ -274,12 +266,11 @@ export function ProjectSidebar() {
   // ProjectRouteShell also fetches it, but this guards against race conditions.
   useEffect(() => {
     if (projectId) {
-      projectStore.getOrFetchProjectByName(
-        `${projectNamePrefix}${projectId}`,
-        true
-      );
+      useAppStore
+        .getState()
+        .getOrFetchProjectByName(`${projectNamePrefix}${projectId}`, true);
     }
-  }, [projectId, projectStore]);
+  }, [projectId]);
 
   // -- Expand / collapse state -----------------------------------------------
   const [expandedSet, setExpandedSet] = useState<Set<string>>(new Set());

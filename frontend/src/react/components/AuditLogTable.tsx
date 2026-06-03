@@ -38,7 +38,8 @@ import {
   useSessionPageSize,
 } from "@/react/hooks/useSessionPageSize";
 import { cn } from "@/react/lib/utils";
-import { pushNotification, useUserStore } from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { pushNotification } from "@/store";
 import {
   extractUserEmail,
   getProjectIdPlanUidStageUidFromRolloutName,
@@ -122,6 +123,50 @@ function buildAuditLogFilter(params: SearchParams): AuditLogFilter {
 // ============================================================
 // View link helper
 // ============================================================
+
+// AuditLogViewCell renders the "View" external-link icon for an audit log row.
+// Falls back to the JIT access grant's associated issue when the row has no
+// static link (e.g. ad-hoc Query/Export not driven by a rollout) but the
+// response was authorized by an access grant — gives users a trail to the
+// grant's approval issue.
+function AuditLogViewCell({ log }: { log: AuditLog }) {
+  const staticLink = getViewLink(log);
+
+  // Only attempt the grant fallback when no static link is available.
+  const grantName = useMemo(() => {
+    if (staticLink) return null;
+    try {
+      const response = JSON.parse(log.response || "{}") as Record<
+        string,
+        unknown
+      >;
+      const value = response["appliedAccessGrant"];
+      return typeof value === "string" && value ? value : null;
+    } catch {
+      return null;
+    }
+  }, [staticLink, log.response]);
+
+  const fetchAccessGrant = useAppStore((s) => s.fetchAccessGrant);
+  const grantIssue = useAppStore((s) =>
+    grantName ? (s.accessGrantsByName[grantName]?.issue ?? "") : ""
+  );
+
+  useEffect(() => {
+    if (grantName && !grantIssue) {
+      void fetchAccessGrant(grantName);
+    }
+  }, [grantName, grantIssue, fetchAccessGrant]);
+
+  const target = staticLink || grantIssue || null;
+  if (!target) return null;
+  const href = target.startsWith("/") ? target : `/${target}`;
+  return (
+    <a href={href} target="_blank" rel="noreferrer">
+      <ExternalLink className="size-4 text-accent" />
+    </a>
+  );
+}
 
 function getViewLink(auditLog: AuditLog): string | null {
   let parsedRequest: Record<string, unknown>;
@@ -429,16 +474,7 @@ function useColumnDefs(): ColumnDef[] {
         key: "view",
         title: t("common.view"),
         defaultWidth: 50,
-        render: (log: AuditLog) => {
-          let link = getViewLink(log);
-          if (!link) return null;
-          if (!link.startsWith("/")) link = `/${link}`;
-          return (
-            <a href={link} target="_blank" rel="noreferrer">
-              <ExternalLink className="size-4 text-accent" />
-            </a>
-          );
-        },
+        render: (log: AuditLog) => <AuditLogViewCell log={log} />,
       },
     ],
     [t]
@@ -663,11 +699,10 @@ export function AuditLogTable({
       return t("audit-log.export-tooltip");
     return "";
   }, [filter, t]);
-
-  const userStore = useUserStore();
+  const listUsers = useAppStore((state) => state.listUsers);
   const searchUsers = useCallback(
     async (keyword: string): Promise<ValueOption[]> => {
-      const { users } = await userStore.fetchUserList({
+      const { users } = await listUsers({
         pageSize: getDefaultPagination(),
         filter: keyword.trim() ? { query: keyword } : undefined,
       });
@@ -676,7 +711,7 @@ export function AuditLogTable({
         keywords: [u.email, u.title],
       }));
     },
-    [userStore]
+    [listUsers]
   );
 
   const scopeOptions = useMemo((): ScopeOption[] => {

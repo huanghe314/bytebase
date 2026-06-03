@@ -5,15 +5,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/parser/plsql"
+	"github.com/bytebase/omni/oracle/ast"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
 	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
-	"github.com/bytebase/bytebase/backend/plugin/parser/base"
-	plsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/plsql"
 )
 
 var (
@@ -36,22 +33,8 @@ func (*ColumnCommentConventionAdvisor) Check(_ context.Context, checkCtx advisor
 	commentPayload := checkCtx.Rule.GetCommentConventionPayload()
 
 	rule := NewColumnCommentConventionRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase, commentPayload)
-	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range checkCtx.ParsedStatements {
-		if stmt.AST == nil {
-			continue
-		}
-		antlrAST, ok := base.GetANTLRAST(stmt.AST)
-		if !ok {
-			continue
-		}
-		rule.SetBaseLine(stmt.BaseLine())
-		checker.SetBaseLine(stmt.BaseLine())
-		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
-	}
-
-	return checker.GetAdviceList()
+	return RunOmniRules(checkCtx.ParsedStatements, []OmniRule{rule})
 }
 
 // ColumnCommentConventionRule is the rule implementation for column comment convention.
@@ -61,7 +44,6 @@ type ColumnCommentConventionRule struct {
 	currentDatabase string
 	payload         *storepb.SQLReviewRule_CommentConventionRulePayload
 
-	tableName     string
 	columnNames   []string
 	columnComment map[string]string
 	columnLine    map[string]int
@@ -84,70 +66,39 @@ func (*ColumnCommentConventionRule) Name() string {
 	return "column.comment-convention"
 }
 
-// OnEnter is called when the parser enters a rule context.
-func (r *ColumnCommentConventionRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
-	switch nodeType {
-	case "Create_table":
-		r.handleCreateTable(ctx.(*parser.Create_tableContext))
-	case "Column_definition":
-		r.handleColumnDefinition(ctx.(*parser.Column_definitionContext))
-	case "Alter_table":
-		r.handleAlterTable(ctx.(*parser.Alter_tableContext))
-	case "Comment_on_column":
-		r.handleCommentOnColumn(ctx.(*parser.Comment_on_columnContext))
+// OnStatement records column definitions and COMMENT ON COLUMN statements from omni.
+func (r *ColumnCommentConventionRule) OnStatement(node ast.Node) {
+	switch n := node.(type) {
+	case *ast.CreateTableStmt:
+		tableName := omniObjectName(n.Name, r.currentDatabase)
+		for _, col := range omniColumnDefs(n.Columns) {
+			columnName := fmt.Sprintf("%s.%s", tableName, col.Name)
+			r.columnNames = append(r.columnNames, columnName)
+			r.columnLine[columnName] = r.locLine(col.Loc)
+		}
+	case *ast.AlterTableStmt:
+		tableName := omniObjectName(n.Name, r.currentDatabase)
+		for _, cmd := range omniAlterTableCmds(n) {
+			if cmd.Action != ast.AT_ADD_COLUMN {
+				continue
+			}
+			for _, col := range append(omniColumnDefs(cmd.ColumnDefs), cmd.ColumnDef) {
+				if col == nil {
+					continue
+				}
+				columnName := fmt.Sprintf("%s.%s", tableName, col.Name)
+				r.columnNames = append(r.columnNames, columnName)
+				r.columnLine[columnName] = r.locLine(col.Loc)
+			}
+		}
+	case *ast.CommentStmt:
+		if n.ObjectType != ast.OBJECT_TABLE || n.Column == "" {
+			return
+		}
+		columnName := fmt.Sprintf("%s.%s", omniObjectName(n.Object, r.currentDatabase), n.Column)
+		r.columnComment[columnName] = n.Comment
 	default:
 	}
-	return nil
-}
-
-// OnExit is called when the parser exits a rule context.
-func (r *ColumnCommentConventionRule) OnExit(_ antlr.ParserRuleContext, nodeType string) error {
-	switch nodeType {
-	case "Create_table":
-		r.handleCreateTableExit()
-	case "Add_column_clause":
-		r.handleAddColumnClauseExit()
-	default:
-	}
-	return nil
-}
-
-func (r *ColumnCommentConventionRule) handleCreateTable(ctx *parser.Create_tableContext) {
-	schemaName := r.currentDatabase
-	if ctx.Schema_name() != nil {
-		schemaName = normalizeIdentifier(ctx.Schema_name(), r.currentDatabase)
-	}
-	r.tableName = fmt.Sprintf("%s.%s", schemaName, normalizeIdentifier(ctx.Table_name(), schemaName))
-}
-
-func (r *ColumnCommentConventionRule) handleCreateTableExit() {
-	r.tableName = ""
-}
-
-func (r *ColumnCommentConventionRule) handleColumnDefinition(ctx *parser.Column_definitionContext) {
-	if r.tableName == "" {
-		return
-	}
-	columnName := fmt.Sprintf(`%s.%s`, r.tableName, normalizeIdentifier(ctx.Column_name(), r.currentDatabase))
-	r.columnNames = append(r.columnNames, columnName)
-	r.columnLine[columnName] = r.baseLine + ctx.GetStart().GetLine()
-}
-
-func (r *ColumnCommentConventionRule) handleAlterTable(ctx *parser.Alter_tableContext) {
-	r.tableName = normalizeIdentifier(ctx.Tableview_name(), r.currentDatabase)
-}
-
-func (r *ColumnCommentConventionRule) handleAddColumnClauseExit() {
-	r.tableName = ""
-}
-
-func (r *ColumnCommentConventionRule) handleCommentOnColumn(ctx *parser.Comment_on_columnContext) {
-	if ctx.Column_name() == nil {
-		return
-	}
-
-	columnName := fmt.Sprintf(`%s.%s`, r.currentDatabase, normalizeIdentifier(ctx.Column_name(), ""))
-	r.columnComment[columnName] = plsqlparser.NormalizeQuotedString(ctx.Quoted_string())
 }
 
 // GetAdviceList returns the advice list.

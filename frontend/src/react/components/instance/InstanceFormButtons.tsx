@@ -3,13 +3,9 @@ import { cloneDeep, isEqual } from "lodash-es";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/react/lib/utils";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
-import {
-  pushNotification,
-  useDatabaseV1Store,
-  useInstanceV1Store,
-  useSubscriptionV1Store,
-} from "@/store";
+import { pushNotification } from "@/store";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import type {
   DataSource,
@@ -57,9 +53,6 @@ export function InstanceFormButtons({
   className,
 }: InstanceFormButtonsProps) {
   const { t } = useTranslation();
-  const instanceV1Store = useInstanceV1Store();
-  const databaseStore = useDatabaseV1Store();
-  const subscriptionStore = useSubscriptionV1Store();
 
   const context = useInstanceFormContext();
   const {
@@ -87,10 +80,8 @@ export function InstanceFormButtons({
     emitShowConnectionOptions,
   } = context;
 
-  const hasExternalSecretFeature = useMemo(
-    () =>
-      subscriptionStore.hasFeature(PlanFeature.FEATURE_EXTERNAL_SECRET_MANAGER),
-    [subscriptionStore]
+  const hasExternalSecretFeature = useAppStore((s) =>
+    s.hasFeature(PlanFeature.FEATURE_EXTERNAL_SECRET_MANAGER)
   );
   const [connectionFailureDialogState, setConnectionFailureDialogState] =
     useState<ConnectionFailureDialogState>({
@@ -232,7 +223,9 @@ export function InstanceFormButtons({
 
     setState((prev) => ({ ...prev, isRequesting: true }));
     try {
-      const createdInstance = await instanceV1Store.createInstance(payload);
+      const createdInstance = await useAppStore
+        .getState()
+        .createInstance(payload);
       if (onCreated) {
         onCreated(createdInstance);
       } else {
@@ -339,17 +332,20 @@ export function InstanceFormButtons({
       if (updateMask.length === 0) return;
 
       pendingRequestRunners.push(() =>
-        instanceV1Store.updateInstance(instancePatch, updateMask).then(() => {
-          if (updateMask.includes("sync_databases")) {
-            return refreshInstanceDatabases(instancePatch.name);
-          }
-        })
+        useAppStore
+          .getState()
+          .updateInstance(instancePatch, updateMask)
+          .then(() => {
+            if (updateMask.includes("sync_databases")) {
+              return refreshInstanceDatabases(instancePatch.name);
+            }
+          })
       );
     };
 
     const refreshInstanceDatabases = async (instanceName: string) => {
-      await instanceV1Store.syncInstance(instanceName, true);
-      databaseStore.removeCacheByInstance(instanceName);
+      await useAppStore.getState().syncInstance(instanceName, true);
+      useAppStore.getState().removeCacheByInstance(instanceName);
     };
 
     const maybeQueueUpdateDataSource = async (
@@ -371,7 +367,7 @@ export function InstanceFormButtons({
       }
 
       pendingRequestRunners.push(() =>
-        instanceV1Store.updateDataSource({
+        useAppStore.getState().updateDataSource({
           instance: inst.name,
           dataSource: editing,
           updateMask,
@@ -410,7 +406,7 @@ export function InstanceFormButtons({
             if (!continueAnyway) return true;
           }
           pendingRequestRunners.push(() =>
-            instanceV1Store.createDataSource({
+            useAppStore.getState().createDataSource({
               instance: inst.name,
               dataSource: patch,
             })
@@ -442,7 +438,9 @@ export function InstanceFormButtons({
         await pendingRequestRunners[i]();
       }
 
-      const updatedInstance = instanceV1Store.getInstanceByName(inst.name);
+      const updatedInstance = useAppStore
+        .getState()
+        .getInstanceByName(inst.name);
       updateEditState(updatedInstance);
       pushNotification({
         module: "bytebase",

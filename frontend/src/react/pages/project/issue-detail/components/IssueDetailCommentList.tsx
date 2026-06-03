@@ -28,21 +28,17 @@ import {
   DialogContent,
   DialogTitle,
 } from "@/react/components/ui/dialog";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
-import { router } from "@/router";
-import { buildPlanDeployRouteFromPlanName } from "@/router/dashboard/projectV1RouteHelpers";
+import { useAppStore } from "@/react/stores/app";
 import {
-  extractUserEmail,
   getIssueCommentType,
   IssueCommentType,
-  pushNotification,
-  useCurrentUserV1,
-  useIssueCommentStore,
-  useProjectV1Store,
-  useSheetV1Store,
-  useUserStore,
-} from "@/store";
+} from "@/react/stores/app/issueComment";
+import { router } from "@/router";
+import { buildPlanDeployRouteFromPlanName } from "@/router/dashboard/projectV1RouteHelpers";
+import { extractUserEmail, pushNotification } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import { getTimeForPbTimestampProtoEs, unknownUser } from "@/types";
 import { ApprovalStatus } from "@/types/proto-es/v1/common_pb";
@@ -76,6 +72,9 @@ import {
   type SpecDiffEntry,
 } from "../utils/diffPlanSpecs";
 
+// Stable empty reference for the no-issue branch of the comments selector.
+const EMPTY_ISSUE_COMMENTS: IssueComment[] = [];
+
 function useIssueRefTransform(projectName: string | undefined) {
   const { t } = useTranslation();
   return useCallback(
@@ -103,16 +102,23 @@ export function IssueDetailCommentList() {
   const { t } = useTranslation();
   const page = useIssueDetailContext();
   const { setEditing } = page;
-  const projectStore = useProjectV1Store();
-  const userStore = useUserStore();
-  const issueCommentStore = useIssueCommentStore();
-  const currentUser = useVueState(() => useCurrentUserV1().value);
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  const batchGetOrFetchUsers = useAppStore(
+    (state) => state.batchGetOrFetchUsers
+  );
+  const currentUser = useCurrentUser();
   const routeHash = useVueState(() => router.currentRoute.value.hash);
   const projectName = `${projectNamePrefix}${page.projectId}`;
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
+  );
+  void projectsByName;
   const issueName = page.issue?.name || page.plan?.issue || "";
-  const issueComments = useVueState(() =>
-    issueName ? issueCommentStore.getIssueComments(issueName) : []
+  // `getIssueComments` returns a stable empty array on miss, so reading it
+  // inside the selector won't loop.
+  const issueComments = useAppStore((state) =>
+    issueName ? state.getIssueComments(issueName) : EMPTY_ISSUE_COMMENTS
   );
   const issueUpdateKey = `${page.issue?.updateTime?.seconds ?? ""}:${page.issue?.updateTime?.nanos ?? ""}`;
   const [activeCommentName, setActiveCommentName] = useState<string>();
@@ -146,7 +152,7 @@ export function IssueDetailCommentList() {
     const run = async () => {
       try {
         setIsRefreshing(true);
-        await issueCommentStore.listIssueComments(
+        await useAppStore.getState().listIssueComments(
           create(ListIssueCommentsRequestSchema, {
             parent: issueName,
             pageSize: 1000,
@@ -162,7 +168,7 @@ export function IssueDetailCommentList() {
     return () => {
       canceled = true;
     };
-  }, [issueCommentStore, issueName, issueUpdateKey]);
+  }, [issueName, issueUpdateKey]);
 
   useEffect(() => {
     if (!routeHash.match(/^#activity(\d+)/)) {
@@ -187,14 +193,14 @@ export function IssueDetailCommentList() {
     if (identifiers.size === 0) {
       return;
     }
-    void userStore.batchGetOrFetchUsers([...identifiers]);
-  }, [issueComments, page.issue?.creator, userStore]);
+    void batchGetOrFetchUsers([...identifiers]);
+  }, [batchGetOrFetchUsers, issueComments, page.issue?.creator]);
 
   const refreshIssueComments = async () => {
     if (!issueName) {
       return;
     }
-    await issueCommentStore.listIssueComments(
+    await useAppStore.getState().listIssueComments(
       create(ListIssueCommentsRequestSchema, {
         parent: issueName,
         pageSize: 1000,
@@ -233,7 +239,7 @@ export function IssueDetailCommentList() {
     if (!activeComment || !allowUpdateComment) {
       return;
     }
-    await issueCommentStore.updateIssueComment({
+    await useAppStore.getState().updateIssueComment({
       issueCommentName: activeComment.name,
       comment: editContent,
     });
@@ -245,7 +251,7 @@ export function IssueDetailCommentList() {
     if (!issueName || !newComment) {
       return;
     }
-    await issueCommentStore.createIssueComment({
+    await useAppStore.getState().createIssueComment({
       issueName,
       comment: newComment,
     });
@@ -359,15 +365,17 @@ function IssueDescriptionCommentRow({
   const { t } = useTranslation();
   const page = useIssueDetailContext();
   const { setEditing } = page;
-  const projectStore = useProjectV1Store();
-  const userStore = useUserStore();
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
   const projectName = `${projectNamePrefix}${page.projectId}`;
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
-  const creator = useVueState(
-    () =>
-      userStore.getUserByIdentifier(page.issue?.creator || "") ??
-      unknownUser(page.issue?.creator || "")
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
   );
+  void projectsByName;
+  const creatorUser = useAppStore((state) =>
+    state.getUserByIdentifier(page.issue?.creator || "")
+  );
+  const creator = creatorUser ?? unknownUser(page.issue?.creator || "");
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(page.issue?.description || "");
   const [isSaving, setIsSaving] = useState(false);
@@ -558,12 +566,10 @@ function IssueCommentRow({
 function CommentActionHeader({ issueComment }: { issueComment: IssueComment }) {
   const { t } = useTranslation();
   const page = useIssueDetailContext();
-  const userStore = useUserStore();
-  const creator = useVueState(
-    () =>
-      userStore.getUserByIdentifier(issueComment.creator) ??
-      unknownUser(issueComment.creator)
+  const creatorUser = useAppStore((state) =>
+    state.getUserByIdentifier(issueComment.creator)
   );
+  const creator = creatorUser ?? unknownUser(issueComment.creator);
   const createdTs = getTimeForPbTimestampProtoEs(issueComment.createTime, 0);
   const updatedTs = getTimeForPbTimestampProtoEs(issueComment.updateTime, 0);
   const isEdited =
@@ -937,12 +943,10 @@ function joinFragments(fragments: ReactNode[], separator: string): ReactNode {
 
 function CommentActionIcon({ issueComment }: { issueComment: IssueComment }) {
   const page = useIssueDetailContext();
-  const userStore = useUserStore();
-  const user = useVueState(
-    () =>
-      userStore.getUserByIdentifier(issueComment.creator) ??
-      unknownUser(issueComment.creator)
+  const creatorUser = useAppStore((state) =>
+    state.getUserByIdentifier(issueComment.creator)
   );
+  const user = creatorUser ?? unknownUser(issueComment.creator);
   const commentType = getIssueCommentType(issueComment);
 
   if (
@@ -1142,7 +1146,6 @@ function IssueDetailStatementUpdateButton({
   oldSheet: string;
 }) {
   const { t } = useTranslation();
-  const sheetStore = useSheetV1Store();
   const [open, setOpen] = useState(false);
   const [oldStatement, setOldStatement] = useState("");
   const [newStatement, setNewStatement] = useState("");
@@ -1161,7 +1164,9 @@ function IssueDetailStatementUpdateButton({
         // rather than fetching by an empty resource name.
         const fetchStatement = async (sheetName: string) => {
           if (!sheetName) return "";
-          const sheet = await sheetStore.getOrFetchSheetByName(sheetName);
+          const sheet = await useAppStore
+            .getState()
+            .getOrFetchSheetByName(sheetName);
           return sheet ? getSheetStatement(sheet) : "";
         };
         const [oldValue, newValue] = await Promise.all([
@@ -1182,7 +1187,7 @@ function IssueDetailStatementUpdateButton({
     return () => {
       canceled = true;
     };
-  }, [newSheet, oldSheet, open, sheetStore]);
+  }, [newSheet, oldSheet, open]);
 
   return (
     <>

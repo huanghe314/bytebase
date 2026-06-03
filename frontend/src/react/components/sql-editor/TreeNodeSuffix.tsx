@@ -1,16 +1,17 @@
 import { MoreHorizontal, Star, Users, X } from "lucide-react";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { useShallow } from "zustand/react/shallow";
 import { Tooltip } from "@/react/components/ui/tooltip";
-import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
-import { useSQLEditorTabStore } from "@/react/stores/sqlEditor/tab-vue-state";
-import { useUserStore, useWorkSheetStore } from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { getSQLEditorTabsState } from "@/react/stores/sqlEditor/tab";
 import { Worksheet_Visibility } from "@/types/proto-es/v1/worksheet_service_pb";
-import type {
-  SheetViewMode,
-  WorksheetFolderNode,
+import {
+  type SheetViewMode,
+  useSheetContext,
+  type WorksheetFolderNode,
 } from "@/views/sql-editor/Sheet";
-import { useSheetContext } from "@/views/sql-editor/Sheet";
 
 type Props = {
   readonly node: WorksheetFolderNode;
@@ -38,26 +39,48 @@ export function TreeNodeSuffix({
 }: Props) {
   const { t } = useTranslation();
 
-  const worksheetStore = useWorkSheetStore();
-  const tabStore = useSQLEditorTabStore();
-  const userStore = useUserStore();
   const { isWorksheetCreator } = useSheetContext();
 
-  const worksheetLite = useVueState(() => {
-    if (!node.worksheet) {
-      return undefined;
+  // `useShallow` is required: this selector builds a fresh object each
+  // call, which would fail `useSyncExternalStore`'s `Object.is` snapshot
+  // check and spin an infinite render loop. Shallow-comparing the fields
+  // keeps the snapshot stable when the worksheet's values are unchanged.
+  const worksheetLite = useAppStore(
+    useShallow((state) => {
+      if (!node.worksheet) {
+        return undefined;
+      }
+      const sheet = state.getWorksheetByName(node.worksheet.name);
+      if (!sheet) {
+        return undefined;
+      }
+      return {
+        name: sheet.name,
+        starred: sheet.starred,
+        visibility: sheet.visibility,
+        creator: sheet.creator,
+      };
+    })
+  );
+  const worksheetCreatorTitle = useAppStore((state) =>
+    worksheetLite?.creator
+      ? state.getUserByIdentifier(worksheetLite.creator)?.title
+      : undefined
+  );
+  const getOrFetchUserByIdentifier = useAppStore(
+    (state) => state.getOrFetchUserByIdentifier
+  );
+
+  useEffect(() => {
+    if (!worksheetLite?.creator || worksheetCreatorTitle) {
+      return;
     }
-    const sheet = worksheetStore.getWorksheetByName(node.worksheet.name);
-    if (!sheet) {
-      return undefined;
-    }
-    return {
-      name: sheet.name,
-      starred: sheet.starred,
-      visibility: sheet.visibility,
-      creator: sheet.creator,
-    };
-  });
+    void getOrFetchUserByIdentifier({ identifier: worksheetLite.creator });
+  }, [
+    getOrFetchUserByIdentifier,
+    worksheetCreatorTitle,
+    worksheetLite?.creator,
+  ]);
 
   const visibilityDisplayName = (visibility: Worksheet_Visibility) => {
     switch (visibility) {
@@ -73,7 +96,7 @@ export function TreeNodeSuffix({
   };
 
   const creatorForSheet = (creator: string) => {
-    return userStore.getUserByIdentifier(creator)?.title ?? creator;
+    return worksheetCreatorTitle ?? creator;
   };
 
   // Draft view: show X button to close the draft tab
@@ -88,7 +111,8 @@ export function TreeNodeSuffix({
           e.stopPropagation();
           if (!node.worksheet?.name) return;
           // Draft nodes use tab.id as worksheet.name (drafts have no worksheet field).
-          const tab = tabStore.getTabById(node.worksheet.name);
+          const tabsState = getSQLEditorTabsState();
+          const tab = tabsState.tabsById.get(node.worksheet.name);
           if (tab && tab.status !== "CLEAN") {
             if (
               !window.confirm(
@@ -98,7 +122,7 @@ export function TreeNodeSuffix({
               return;
             }
           }
-          tabStore.closeTab(node.worksheet.name);
+          tabsState.closeTab(node.worksheet.name);
         }}
       />
     );

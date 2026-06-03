@@ -40,28 +40,61 @@ vi.mock("@/react/i18n", () => ({
 }));
 
 vi.mock("@/store", () => ({
-  useDBSchemaV1Store: () => ({
-    getOrFetchDatabaseMetadata: mocks.getOrFetchDatabaseMetadata,
-    syncDatabase: vi.fn(),
-    getTableMetadata: vi.fn(),
-  }),
-  useDatabaseV1Store: () => ({ getDatabaseByName: vi.fn() }),
   pushNotification: vi.fn(),
 }));
 
-vi.mock("@/react/stores/sqlEditor/tab-vue-state", () => ({
+vi.mock("@/react/hooks/useAppDatabase", () => ({
+  useAppDatabase: (name: string) => ({ name }),
+}));
+
+vi.mock("@/react/stores/app", () => {
+  const state = {
+    getDatabaseByName: (name: string) => ({ name }),
+    getOrFetchDatabaseByName: vi.fn(async (name: string) => ({ name })),
+    batchGetOrFetchDatabases: vi.fn(async () => []),
+    syncDatabase: vi.fn(),
+    fetchDatabases: vi.fn(async () => ({ databases: [], nextPageToken: "" })),
+    databasesByName: {} as Record<string, unknown>,
+    // SchemaPane reads cached metadata reactively via this getter; return
+    // undefined so the tree stays empty unless a test seeds the cache.
+    getCachedDatabaseMetadata: () => undefined,
+    getOrFetchDatabaseMetadata: mocks.getOrFetchDatabaseMetadata,
+  };
+  return {
+    useAppStore: Object.assign(
+      (selector: (s: unknown) => unknown) => selector(state),
+      { getState: () => state }
+    ),
+  };
+});
+
+vi.mock("@/react/hooks/useSQLEditorBridge", () => ({
+  // Returns plain values now — `database` is the unwrapped object.
   useConnectionOfCurrentSQLEditorTab: () => ({
-    database: { value: mocks.databaseRefValue },
-    instance: { value: mocks.instanceRefValue },
+    database: mocks.databaseRefValue,
+    instance: mocks.instanceRefValue,
   }),
-  useSQLEditorTabStore: () => ({
-    currentTab: mocks.currentTab,
-    openTabList: [],
-    addTab: vi.fn(),
-    setCurrentTabId: vi.fn(),
-    updateCurrentTab: vi.fn(),
-    updateTab: vi.fn(),
-  }),
+}));
+
+// Minimal Zustand tabs-state stub. The selector hook runs against a
+// state built from `mocks.currentTab`; the imperative getter exposes the
+// same shape plus the mutators SchemaPane invokes.
+const tabsState = () => ({
+  currentTabId: mocks.currentTab ? "t1" : "",
+  tabsById: new Map<string, unknown>(
+    mocks.currentTab ? [["t1", mocks.currentTab]] : []
+  ),
+  openTmpTabList: [],
+  addTab: vi.fn(),
+  setCurrentTabId: vi.fn(),
+  updateCurrentTab: vi.fn(),
+  updateTab: vi.fn(),
+});
+
+vi.mock("@/react/stores/sqlEditor/tab", () => ({
+  useSQLEditorTabState: (selector: (s: unknown) => unknown) =>
+    selector(tabsState()),
+  getSQLEditorTabsState: () => tabsState(),
 }));
 
 vi.mock("@/types", () => ({

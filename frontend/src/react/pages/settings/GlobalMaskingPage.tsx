@@ -35,13 +35,8 @@ import {
   factorOperatorOverrideMap,
   getClassificationLevelOptions,
 } from "@/react/lib/sensitive-data/components-utils";
-import {
-  pushNotification,
-  useActuatorV1Store,
-  usePolicyV1Store,
-  useSettingV1Store,
-  useSubscriptionV1Store,
-} from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { pushNotification } from "@/store";
 import { ExprSchema } from "@/types/proto-es/google/type/expr_pb";
 import type {
   MaskingRulePolicy_MaskingRule,
@@ -112,7 +107,6 @@ function MaskingRuleConfig({
   onConfirm: (rule: MaskingRulePolicy_MaskingRule) => void;
 }) {
   const { t } = useTranslation();
-  const settingStore = useSettingV1Store();
 
   const readonly = mode === "NORMAL";
 
@@ -126,15 +120,16 @@ function MaskingRuleConfig({
   const [dirty, setDirty] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-  const semanticTypeOptions = useVueState(() => {
-    const setting = settingStore.getSettingByName(
-      Setting_SettingName.SEMANTIC_TYPES
-    );
+  const settingsByName = useAppStore((s) => s.settingsByName);
+  const semanticTypeOptions = useMemo(() => {
+    const setting = useAppStore
+      .getState()
+      .getSettingByName(Setting_SettingName.SEMANTIC_TYPES);
     if (setting?.value?.value?.case === "semanticType") {
       return setting.value.value.value.types ?? [];
     }
     return [];
-  });
+  }, [settingsByName]);
 
   const resetIdRef = useRef(0);
   const resetToRule = useCallback(
@@ -358,13 +353,9 @@ function MaskingRuleConfig({
 
 export function GlobalMaskingPage() {
   const { t } = useTranslation();
-  const policyStore = usePolicyV1Store();
-  const actuatorStore = useActuatorV1Store();
-  const settingStore = useSettingV1Store();
-  const subscriptionStore = useSubscriptionV1Store();
 
   const hasSensitiveDataFeature = useVueState(() =>
-    subscriptionStore.hasInstanceFeature(PlanFeature.FEATURE_DATA_MASKING)
+    useAppStore.getState().hasInstanceFeature(PlanFeature.FEATURE_DATA_MASKING)
   );
 
   const hasPermission = hasWorkspacePermissionV2(
@@ -390,12 +381,17 @@ export function GlobalMaskingPage() {
 
   // Subscribe to reactive store data so the memo recomputes when settings load.
   const environmentOptions = useVueState(() => getEnvironmentIdOptions());
-  const classificationOptions = useVueState(() =>
-    getClassificationLevelOptions()
+  // `getClassificationLevelOptions` reads the app store imperatively, so key
+  // this on a `settingsByName` subscription to recompute once the
+  // DATA_CLASSIFICATION setting resolves.
+  const classificationSettingsByName = useAppStore((s) => s.settingsByName);
+  const classificationOptions = useMemo(
+    () => getClassificationLevelOptions(),
+    [classificationSettingsByName]
   );
 
   const factorOptionsMap = useMemo((): Map<Factor, OptionConfig> => {
-    const workspaceName = actuatorStore.workspaceResourceName;
+    const workspaceName = useAppStore.getState().workspaceResourceName();
     return factorList.reduce((map, factor) => {
       switch (factor) {
         case CEL_ATTRIBUTE_RESOURCE_ENVIRONMENT_ID:
@@ -422,10 +418,12 @@ export function GlobalMaskingPage() {
 
   useEffect(() => {
     const load = async () => {
-      const policy = await policyStore.getOrFetchPolicyByParentAndType({
-        parentPath: actuatorStore.workspaceResourceName,
-        policyType: PolicyType.MASKING_RULE,
-      });
+      const policy = await useAppStore
+        .getState()
+        .getOrFetchPolicyByParentAndType({
+          parentPath: useAppStore.getState().workspaceResourceName(),
+          policyType: PolicyType.MASKING_RULE,
+        });
       if (policy) {
         const rules =
           policy.policy?.case === "maskingRulePolicy"
@@ -434,14 +432,15 @@ export function GlobalMaskingPage() {
         setItems(rules.map((rule) => ({ mode: "NORMAL", rule })));
       }
       await Promise.all([
-        settingStore.getOrFetchSettingByName(
-          Setting_SettingName.SEMANTIC_TYPES,
-          true
-        ),
-        settingStore.getOrFetchSettingByName(
-          Setting_SettingName.DATA_CLASSIFICATION,
-          true
-        ),
+        useAppStore
+          .getState()
+          .getOrFetchSettingByName(Setting_SettingName.SEMANTIC_TYPES, true),
+        useAppStore
+          .getState()
+          .getOrFetchSettingByName(
+            Setting_SettingName.DATA_CLASSIFICATION,
+            true
+          ),
       ]);
     };
     load();
@@ -460,8 +459,8 @@ export function GlobalMaskingPage() {
         }),
       },
     };
-    await policyStore.upsertPolicy({
-      parentPath: actuatorStore.workspaceResourceName,
+    await useAppStore.getState().upsertPolicy({
+      parentPath: useAppStore.getState().workspaceResourceName(),
       policy: patch,
     });
   }, []);
@@ -572,9 +571,10 @@ export function GlobalMaskingPage() {
               disabled={processing}
               onClick={() => {
                 setReorderRules(false);
-                policyStore
+                useAppStore
+                  .getState()
                   .getOrFetchPolicyByParentAndType({
-                    parentPath: actuatorStore.workspaceResourceName,
+                    parentPath: useAppStore.getState().workspaceResourceName(),
                     policyType: PolicyType.MASKING_RULE,
                   })
                   .then((policy) => {

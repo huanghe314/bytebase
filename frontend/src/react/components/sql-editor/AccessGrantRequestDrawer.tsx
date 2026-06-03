@@ -19,17 +19,13 @@ import {
   SheetTitle,
 } from "@/react/components/ui/sheet";
 import { Textarea } from "@/react/components/ui/textarea";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useCurrentUser } from "@/react/hooks/useAppState";
+import { useAppStore } from "@/react/stores/app";
 import { useSQLEditorStore } from "@/react/stores/sqlEditor";
-import { useSQLEditorVueState } from "@/react/stores/sqlEditor/editor-vue-state";
-import { useSQLEditorTabStore } from "@/react/stores/sqlEditor/tab-vue-state";
+import { useSQLEditorEditorState } from "@/react/stores/sqlEditor/editor";
+import { getSQLEditorTabsState } from "@/react/stores/sqlEditor/tab";
 import { router } from "@/router";
 import { PROJECT_V1_ROUTE_ISSUE_DETAIL } from "@/router/dashboard/projectV1";
-import {
-  pushNotification,
-  useCurrentUserV1,
-  useDatabaseV1Store,
-} from "@/store";
 import {
   AccessGrant_Status,
   AccessGrantSchema,
@@ -56,16 +52,15 @@ function MultiDatabaseSelect({
     { name: string; displayName: string }[]
   >([]);
 
-  const databaseStore = useDatabaseV1Store();
+  const fetchDatabases = useAppStore((s) => s.fetchDatabases);
 
   useEffect(() => {
-    databaseStore
-      .fetchDatabases({
-        parent: projectName,
-        filter: { query: "" },
-        pageSize: 100,
-        silent: true,
-      })
+    fetchDatabases({
+      parent: projectName,
+      filter: { query: "" },
+      pageSize: 100,
+      silent: true,
+    })
       .then((result) => {
         setDatabases(
           result.databases.map((db) => {
@@ -77,7 +72,7 @@ function MultiDatabaseSelect({
       .catch(() => {
         /* ignore */
       });
-  }, [databaseStore, projectName]);
+  }, [fetchDatabases, projectName]);
 
   return (
     <Combobox
@@ -98,6 +93,7 @@ interface Props {
   readonly targets?: string[];
   readonly query?: string;
   readonly unmask?: boolean;
+  readonly export?: boolean;
   readonly onClose: () => void;
 }
 
@@ -110,28 +106,28 @@ function AccessGrantRequestDrawerInner({
   onClose,
 }: AccessGrantRequestDrawerInnerProps) {
   const { t } = useTranslation();
-  const currentUser = useCurrentUserV1();
-  const editorStore = useSQLEditorVueState();
-  const tabStore = useSQLEditorTabStore();
+  const currentUserEmail = useCurrentUser().email;
   const setAsidePanelTab = useSQLEditorStore((s) => s.setAsidePanelTab);
   const setHighlightAccessGrantName = useSQLEditorStore(
     (s) => s.setHighlightAccessGrantName
   );
 
-  const currentUserEmail = useVueState(() => currentUser.value.email);
-  const project = useVueState(() => editorStore.project);
+  const project = useSQLEditorEditorState((s) => s.project);
 
   const defaultTargets = useMemo(() => {
     if (stableProps.targets && stableProps.targets.length > 0) {
       return stableProps.targets;
     }
-    const database = tabStore.currentTab?.connection?.database;
+    const tabsState = getSQLEditorTabsState();
+    const database = tabsState.tabsById.get(tabsState.currentTabId)?.connection
+      ?.database;
     return database ? [database] : [];
-  }, [stableProps.targets, tabStore]);
+  }, [stableProps.targets]);
 
   const [targets, setTargets] = useState<string[]>(defaultTargets);
   const [query, setQuery] = useState(stableProps.query ?? "");
   const [unmask, setUnmask] = useState(stableProps.unmask ?? false);
+  const [exportResult, setExportResult] = useState(stableProps.export ?? false);
   const [duration, setDuration] = useState<number>(4);
   const [customExpireTime, setCustomExpireTime] = useState<string | undefined>(
     undefined
@@ -196,6 +192,7 @@ function AccessGrantRequestDrawerInner({
         targets,
         query,
         unmask,
+        export: exportResult,
         reason,
         expiration,
       });
@@ -207,7 +204,7 @@ function AccessGrantRequestDrawerInner({
         })
       );
 
-      pushNotification({
+      useAppStore.getState().notify({
         module: "bytebase",
         style: "SUCCESS",
         title: t("common.created"),
@@ -285,6 +282,20 @@ function AccessGrantRequestDrawerInner({
             </label>
           </div>
 
+          {/* Export */}
+          <div className="flex flex-col gap-y-2">
+            <div className="text-sm font-medium text-control">
+              {t("sql-editor.grant-type-export")}
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <Checkbox
+                checked={exportResult}
+                onCheckedChange={(checked) => setExportResult(checked)}
+              />
+              <span>{t("sql-editor.access-type-export")}</span>
+            </label>
+          </div>
+
           {/* Expiration */}
           <div className="flex flex-col gap-y-2">
             <div className="text-sm font-medium text-control">
@@ -342,9 +353,16 @@ export function AccessGrantRequestDrawer({
   targets,
   query,
   unmask,
+  export: exportResult,
   onClose,
 }: Props) {
-  const propsRef = useRef({ targets, query, unmask, onClose });
+  const propsRef = useRef({
+    targets,
+    query,
+    unmask,
+    export: exportResult,
+    onClose,
+  });
   // Freeze props while drawer is open so inner form stays stable during close animation
   const stableProps = propsRef.current;
 
@@ -352,7 +370,7 @@ export function AccessGrantRequestDrawer({
     <Sheet open={true} onOpenChange={(next) => !next && onClose()}>
       <SheetContent width="standard">
         <AccessGrantRequestDrawerInner
-          key={`${targets?.join(",")}-${query}-${unmask}`}
+          key={`${targets?.join(",")}-${query}-${unmask}-${exportResult}`}
           stableProps={stableProps}
           onClose={onClose}
         />

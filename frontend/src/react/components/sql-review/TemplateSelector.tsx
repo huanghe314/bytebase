@@ -7,7 +7,8 @@ import { Separator } from "@/react/components/ui/separator";
 import { useVueState } from "@/react/hooks/useVueState";
 import { rulesToTemplate } from "@/react/lib/sql-review/utils";
 import { cn } from "@/react/lib/utils";
-import { useProjectV1Store, useSQLReviewStore } from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { useSQLReviewStore } from "@/react/stores/sqlReview";
 import {
   environmentNamePrefix,
   projectNamePrefix,
@@ -30,19 +31,21 @@ interface TemplateSelectorProps {
 
 function ResourceBadge({ resource }: { resource: string }) {
   const { t } = useTranslation();
-  const projectStore = useProjectV1Store();
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
 
   useEffect(() => {
     if (resource.startsWith(projectNamePrefix)) {
-      projectStore.getOrFetchProjectByName(resource, true);
+      useAppStore.getState().getOrFetchProjectByName(resource, true);
     }
-  }, [projectStore, resource]);
+  }, [resource]);
 
   const projectTitle = useVueState(() =>
     resource.startsWith(projectNamePrefix)
-      ? projectStore.getProjectByName(resource)?.title
+      ? useAppStore.getState().getProjectByName(resource)?.title
       : undefined
   );
+  void projectsByName;
 
   if (resource.startsWith(environmentNamePrefix)) {
     return (

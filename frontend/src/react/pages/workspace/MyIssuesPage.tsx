@@ -10,10 +10,11 @@ import {
   PresetButtons,
   useIssueSearchScopeOptions,
 } from "@/react/components/IssueTable";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import { PagedTableFooter, usePagedData } from "@/react/hooks/usePagedData";
-import { useVueState } from "@/react/hooks/useVueState";
+import { refreshIssueList } from "@/react/lib/issue/issueListRefresh";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
-import { refreshIssueList, useCurrentUserV1, useIssueV1Store } from "@/store";
 import { ApprovalStatus } from "@/types/proto-es/v1/common_pb";
 import type { Issue } from "@/types/proto-es/v1/issue_service_pb";
 import { IssueStatus } from "@/types/proto-es/v1/issue_service_pb";
@@ -26,9 +27,10 @@ import {
 
 export function MyIssuesPage() {
   const { t } = useTranslation();
-  const issueStore = useIssueV1Store();
-  const currentUser = useCurrentUserV1();
-  const me = useVueState(() => currentUser.value);
+  const batchGetOrFetchUsers = useAppStore(
+    (state) => state.batchGetOrFetchUsers
+  );
+  const me = useCurrentUser();
 
   const defaultSearchParams = useCallback((): SearchParams => {
     const myEmail = me?.email ?? "";
@@ -108,20 +110,29 @@ export function MyIssuesPage() {
 
   const fetchIssueList = useCallback(
     async (params: { pageSize: number; pageToken: string }) => {
-      const { nextPageToken, issues } = await issueStore.listIssues({
-        find: issueFilter,
-        pageSize: params.pageSize,
-        pageToken: params.pageToken,
-      });
+      const { nextPageToken, issues } = await useAppStore
+        .getState()
+        .listIssues({
+          find: issueFilter,
+          pageSize: params.pageSize,
+          pageToken: params.pageToken,
+        });
       return { list: issues, nextPageToken };
     },
-    [issueStore, issueFilter]
+    [issueFilter]
   );
 
   const paged = usePagedData<Issue>({
     sessionKey: "bb.issue-table.my-issues",
     fetchList: fetchIssueList,
   });
+
+  useEffect(() => {
+    if (paged.dataList.length === 0) {
+      return;
+    }
+    void batchGetOrFetchUsers(paged.dataList.map((issue) => issue.creator));
+  }, [batchGetOrFetchUsers, paged.dataList]);
 
   // Scope options (no project scope — cross-project)
   const scopeOptions = useIssueSearchScopeOptions();

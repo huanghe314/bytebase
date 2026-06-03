@@ -13,7 +13,7 @@ const eventHandlers: Record<string, (payload: unknown) => void> = {};
 
 const mocks = vi.hoisted(() => ({
   useTranslation: vi.fn(() => ({ t: (key: string) => key })),
-  worksheetStore: {
+  appStore: {
     getWorksheetByName: vi.fn(),
   },
   editorWorksheetStore: {
@@ -39,8 +39,8 @@ vi.mock("@/react/hooks/useSQLEditorEvent", () => ({
   ),
 }));
 
-vi.mock("@/store", () => ({
-  useWorkSheetStore: vi.fn(() => mocks.worksheetStore),
+vi.mock("@/react/stores/app", () => ({
+  useAppStore: { getState: () => mocks.appStore },
 }));
 
 vi.mock("@/react/stores/sqlEditor", () => ({
@@ -202,7 +202,7 @@ beforeEach(async () => {
   mocks.editorWorksheetStore.createWorksheet.mockResolvedValue(undefined);
   mocks.sheetContext.getPwdForWorksheet.mockReturnValue("");
   mocks.sheetContext.getFoldersForWorksheet.mockReturnValue([]);
-  mocks.worksheetStore.getWorksheetByName.mockReturnValue(undefined);
+  mocks.appStore.getWorksheetByName.mockReturnValue(undefined);
 
   ({ SaveSheetModal } = await import("./SaveSheetModal"));
 });
@@ -340,6 +340,26 @@ describe("SaveSheetModal", () => {
         database: tabWithoutWorksheet.connection.database,
       })
     );
+
+    unmount();
+  });
+
+  test("6. Saved but untitled tab shows modal instead of saving silently", () => {
+    const { container, render, unmount } = renderIntoContainer(
+      <SaveSheetModal />
+    );
+    render();
+
+    // Worksheet exists (has a name) but its title is empty — a manual save
+    // should prompt for a title rather than silently re-persisting Untitled.
+    const savedUntitledTab = { ...savedTab, title: "" };
+    emitSaveSheet({ tab: savedUntitledTab });
+
+    const dialog = container.querySelector("[data-testid='dialog']");
+    expect(dialog?.getAttribute("data-open")).toBe("true");
+    expect(
+      mocks.editorWorksheetStore.maybeUpdateWorksheet
+    ).not.toHaveBeenCalled();
 
     unmount();
   });

@@ -16,17 +16,12 @@ import { AdvancedSearch } from "@/react/components/AdvancedSearch";
 import { FeatureBadge } from "@/react/components/FeatureBadge";
 import { PermissionGuard } from "@/react/components/PermissionGuard";
 import { Button } from "@/react/components/ui/button";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useAppProject } from "@/react/hooks/useAppProject";
+import { useSQLEditorFeature } from "@/react/hooks/useSQLEditorBridge";
+import { useAppStore } from "@/react/stores/app";
+import type { AccessGrantFilter as AccessFilter } from "@/react/stores/app/types";
 import { useSQLEditorStore } from "@/react/stores/sqlEditor";
-import { useSQLEditorVueState } from "@/react/stores/sqlEditor/editor-vue-state";
-import {
-  hasFeature,
-  useAccessGrantStore,
-  useDatabaseV1Store,
-  useIssueV1Store,
-  useProjectV1Store,
-} from "@/store";
-import type { AccessFilter } from "@/store/modules/accessGrant";
+import { useSQLEditorEditorState } from "@/react/stores/sqlEditor/editor";
 import type { AccessGrant } from "@/types/proto-es/v1/access_grant_service_pb";
 import { AccessGrant_Status } from "@/types/proto-es/v1/access_grant_service_pb";
 import type { Issue } from "@/types/proto-es/v1/issue_service_pb";
@@ -47,11 +42,14 @@ const DEFAULT_SCOPES = [
 export function AccessPane() {
   const { t } = useTranslation();
 
-  const projectStore = useProjectV1Store();
-  const editorStore = useSQLEditorVueState();
-  const accessGrantStore = useAccessGrantStore();
-  const issueStore = useIssueV1Store();
-  const databaseStore = useDatabaseV1Store();
+  const searchMyAccessGrants = useAppStore(
+    (state) => state.searchMyAccessGrants
+  );
+  const fetchDatabases = useAppStore((state) => state.fetchDatabases);
+  const getOrFetchDatabaseByName = useAppStore(
+    (state) => state.getOrFetchDatabaseByName
+  );
+  const fetchIssueByName = useAppStore((state) => state.fetchIssueByName);
   const highlightAccessGrantName = useSQLEditorStore(
     (s) => s.highlightAccessGrantName
   );
@@ -80,14 +78,12 @@ export function AccessPane() {
     scopes: DEFAULT_SCOPES,
   });
 
-  const projectName = useVueState(() => editorStore.project);
+  const projectName = useSQLEditorEditorState((s) => s.project);
 
-  const project = useMemo(() => {
-    if (!projectName) return undefined;
-    return projectStore.getProjectByName(projectName as string);
-  }, [projectStore, projectName]);
+  const resolvedProject = useAppProject(projectName as string);
+  const project = projectName ? resolvedProject : undefined;
 
-  const hasJITFeature = useMemo(() => hasFeature(PlanFeature.FEATURE_JIT), []);
+  const hasJITFeature = useSQLEditorFeature(PlanFeature.FEATURE_JIT);
 
   // Build scope options for AdvancedSearch (React-compatible, no Vue renderers)
   const scopeOptions = useMemo((): ScopeOption[] => {
@@ -127,7 +123,7 @@ export function AccessPane() {
         onSearch: async (keyword: string) => {
           const parent = projectName as string | undefined;
           if (!parent) return [];
-          const result = await databaseStore.fetchDatabases({
+          const result = await fetchDatabases({
             parent,
             filter: { query: keyword },
             pageSize: getDefaultPagination(),
@@ -139,8 +135,42 @@ export function AccessPane() {
           }));
         },
       },
+      {
+        id: "unmask",
+        title: t("sql-editor.grant-type-unmask"),
+        description: t("sql-editor.access-search.scope.unmask.description"),
+        options: [
+          {
+            value: "true",
+            keywords: ["yes", "true"],
+            render: () => t("common.yes"),
+          },
+          {
+            value: "false",
+            keywords: ["no", "false"],
+            render: () => t("common.no"),
+          },
+        ],
+      },
+      {
+        id: "export",
+        title: t("sql-editor.grant-type-export"),
+        description: t("sql-editor.access-search.scope.export.description"),
+        options: [
+          {
+            value: "true",
+            keywords: ["yes", "true"],
+            render: () => t("common.yes"),
+          },
+          {
+            value: "false",
+            keywords: ["no", "false"],
+            render: () => t("common.no"),
+          },
+        ],
+      },
     ];
-  }, [t, projectName, databaseStore]);
+  }, [t, projectName, fetchDatabases]);
 
   // Build AccessFilter from React SearchParams
   const filter = useMemo((): AccessFilter => {
@@ -149,12 +179,20 @@ export function AccessPane() {
       .map((s) => s.value) as AccessGrantFilterStatus[];
 
     const databaseScope = searchParams.scopes.find((s) => s.id === "database");
+    const unmaskScope = searchParams.scopes.find((s) => s.id === "unmask");
+    const exportScope = searchParams.scopes.find((s) => s.id === "export");
 
     const f: AccessFilter = {
       status: selectedStatuses,
     };
     if (databaseScope?.value) {
       f.target = databaseScope.value;
+    }
+    if (unmaskScope?.value === "true" || unmaskScope?.value === "false") {
+      f.unmask = unmaskScope.value === "true";
+    }
+    if (exportScope?.value === "true" || exportScope?.value === "false") {
+      f.export = exportScope.value === "true";
     }
     const queryText = searchParams.query.trim();
     if (queryText) {
@@ -171,7 +209,7 @@ export function AccessPane() {
       const results = await Promise.all(
         pendingWithIssue.map(async (g) => {
           try {
-            const issue = await issueStore.fetchIssueByName(g.issue, true);
+            const issue = await fetchIssueByName(g.issue, true);
             return { grantName: g.name, issue };
           } catch {
             return undefined;
@@ -188,7 +226,7 @@ export function AccessPane() {
         return next;
       });
     },
-    [issueStore]
+    [fetchIssueByName]
   );
 
   const fetchAccessGrants = useCallback(
@@ -198,7 +236,7 @@ export function AccessPane() {
 
       setLoading(true);
       try {
-        const response = await accessGrantStore.searchMyAccessGrants({
+        const response = await searchMyAccessGrants({
           parent,
           filter,
           pageSize: PAGE_SIZE,
@@ -216,7 +254,7 @@ export function AccessPane() {
         setLoading(false);
       }
     },
-    [projectName, filter, accessGrantStore, fetchIssuesForPendingGrants]
+    [projectName, filter, searchMyAccessGrants, fetchIssuesForPendingGrants]
   );
 
   // Re-fetch when project or filter changes
@@ -264,14 +302,14 @@ export function AccessPane() {
     async (grant: AccessGrant) => {
       const database = grant.targets[0] ?? "";
       const instanceName = database.replace(/\/databases\/.*$/, "");
-      await databaseStore.getOrFetchDatabaseByName(database);
+      await getOrFetchDatabaseByName(database);
       await sqlEditorEvents.emit("execute-sql", {
         connection: { instance: instanceName, database },
         statement: grant.query,
         batchQueryContext: { databases: grant.targets },
       });
     },
-    [databaseStore]
+    [getOrFetchDatabaseByName]
   );
 
   return (

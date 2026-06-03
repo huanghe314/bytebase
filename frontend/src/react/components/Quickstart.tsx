@@ -2,9 +2,9 @@ import { CheckCircle, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { RouteLocationRaw } from "vue-router";
-import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
 import { useNavigate } from "@/react/router";
+import { useAppStore } from "@/react/stores/app";
 import { PROJECT_V1_ROUTE_ISSUE_DETAIL } from "@/router/dashboard/projectV1";
 import {
   DATABASE_ROUTE_DASHBOARD,
@@ -14,15 +14,7 @@ import {
   WORKSPACE_ROUTE_USERS,
 } from "@/router/dashboard/workspaceRoutes";
 import { SQL_EDITOR_WORKSHEET_MODULE } from "@/router/sqlEditor";
-import {
-  pushNotification,
-  useActuatorV1Store,
-  useIssueV1Store,
-  useProjectIamPolicyStore,
-  useProjectV1Store,
-  useUIStateStore,
-  useWorkSheetStore,
-} from "@/store";
+import { pushNotification } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import type { Permission } from "@/types";
 import { isValidProjectName, UNKNOWN_PROJECT_NAME } from "@/types";
@@ -69,38 +61,31 @@ interface IntroItem {
 export function Quickstart() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const projectStore = useProjectV1Store();
-  const uiStateStore = useUIStateStore();
-  const actuatorStore = useActuatorV1Store();
-  const issueStore = useIssueV1Store();
-  const worksheetStore = useWorkSheetStore();
-  const projectIamPolicyStore = useProjectIamPolicyStore();
+  const loadProjectIamPolicy = useAppStore(
+    (state) => state.loadProjectIamPolicy
+  );
 
-  const quickStartEnabled = useVueState(() => actuatorStore.quickStartEnabled);
-  const hidden = useVueState(() => uiStateStore.getIntroStateByKey("hidden"));
+  const quickStartEnabled = useAppStore((s) => s.quickStartEnabled());
+  const hidden = useAppStore((s) => s.getIntroStateByKey("hidden"));
 
   // Subscribe to each task's done flag so the line-through + progress
   // bar update live.
-  const issueVisited = useVueState(() =>
-    uiStateStore.getIntroStateByKey("issue.visit")
+  const issueVisited = useAppStore((s) => s.getIntroStateByKey("issue.visit"));
+  const dataQueried = useAppStore((s) => s.getIntroStateByKey("data.query"));
+  const projectVisited = useAppStore((s) =>
+    s.getIntroStateByKey("project.visit")
   );
-  const dataQueried = useVueState(() =>
-    uiStateStore.getIntroStateByKey("data.query")
+  const environmentVisited = useAppStore((s) =>
+    s.getIntroStateByKey("environment.visit")
   );
-  const projectVisited = useVueState(() =>
-    uiStateStore.getIntroStateByKey("project.visit")
+  const instanceVisited = useAppStore((s) =>
+    s.getIntroStateByKey("instance.visit")
   );
-  const environmentVisited = useVueState(() =>
-    uiStateStore.getIntroStateByKey("environment.visit")
+  const databaseVisited = useAppStore((s) =>
+    s.getIntroStateByKey("database.visit")
   );
-  const instanceVisited = useVueState(() =>
-    uiStateStore.getIntroStateByKey("instance.visit")
-  );
-  const databaseVisited = useVueState(() =>
-    uiStateStore.getIntroStateByKey("database.visit")
-  );
-  const memberVisited = useVueState(() =>
-    uiStateStore.getIntroStateByKey("member.visit")
+  const memberVisited = useAppStore((s) =>
+    s.getIntroStateByKey("member.visit")
   );
 
   // ---- async sample fetches --------------------------------------------
@@ -116,23 +101,25 @@ export function Quickstart() {
     }
     let cancelled = false;
     void (async () => {
-      const project = await projectStore.getOrFetchProjectByName(
-        `${projectNamePrefix}${SAMPLE_PROJECT_NAME}`,
-        true /* silent */
-      );
+      const project = await useAppStore
+        .getState()
+        .getOrFetchProjectByName(
+          `${projectNamePrefix}${SAMPLE_PROJECT_NAME}`,
+          true /* silent */
+        );
       if (cancelled) return;
       if (!isValidProjectName(project.name)) {
         setSampleProject(undefined);
         return;
       }
-      await projectIamPolicyStore.getOrFetchProjectIamPolicy(project.name);
+      await loadProjectIamPolicy(project.name);
       if (cancelled) return;
       setSampleProject(project);
     })();
     return () => {
       cancelled = true;
     };
-  }, [quickStartEnabled, projectStore, projectIamPolicyStore]);
+  }, [quickStartEnabled, loadProjectIamPolicy]);
 
   useEffect(() => {
     if (!sampleProject) {
@@ -142,23 +129,27 @@ export function Quickstart() {
     }
     let cancelled = false;
     void (async () => {
-      const issue = await issueStore.fetchIssueByName(
-        `${sampleProject.name}/issues/${SAMPLE_ISSUE_ID}`,
-        true /* silent */
-      );
+      const issue = await useAppStore
+        .getState()
+        .fetchIssueByName(
+          `${sampleProject.name}/issues/${SAMPLE_ISSUE_ID}`,
+          true /* silent */
+        );
       if (!cancelled) setSampleIssueExists(!!issue);
     })();
     void (async () => {
-      const sheet = await worksheetStore.getOrFetchWorksheetByName(
-        `${sampleProject.name}/sheets/${SAMPLE_SHEET_ID}`,
-        true /* silent */
-      );
+      const sheet = await useAppStore
+        .getState()
+        .getOrFetchWorksheetByName(
+          `${sampleProject.name}/sheets/${SAMPLE_SHEET_ID}`,
+          true /* silent */
+        );
       if (!cancelled) setSampleSheetExists(!!sheet);
     })();
     return () => {
       cancelled = true;
     };
-  }, [sampleProject, issueStore, worksheetStore]);
+  }, [sampleProject]);
 
   // ---- intro list (memoized + permission-filtered) ----------------------
 
@@ -275,19 +266,18 @@ export function Quickstart() {
   }, [currentStep, introList.length]);
 
   const handleHide = (silent = false) => {
-    void uiStateStore
-      .saveIntroStateByKey({ key: "hidden", newState: true })
-      .then(() => {
-        if (!silent) {
-          pushNotification({
-            module: "bytebase",
-            style: "INFO",
-            title: t("quick-start.notice.title"),
-            description: t("quick-start.notice.desc"),
-            manualHide: true,
-          });
-        }
+    useAppStore
+      .getState()
+      .saveIntroStateByKey({ key: "hidden", newState: true });
+    if (!silent) {
+      pushNotification({
+        module: "bytebase",
+        style: "INFO",
+        title: t("quick-start.notice.title"),
+        description: t("quick-start.notice.desc"),
+        manualHide: true,
       });
+    }
   };
 
   if (!showQuickstart || introList.length === 0) {

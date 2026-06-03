@@ -23,9 +23,10 @@ import {
   SheetTitle,
 } from "@/react/components/ui/sheet";
 import { useVueState } from "@/react/hooks/useVueState";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import { PROJECT_V1_ROUTE_PLAN_DETAIL } from "@/router/dashboard/projectV1";
-import { pushNotification, useProjectV1Store, useSheetV1Store } from "@/store";
+import { pushNotification } from "@/store";
 import {
   CreatePlanRequestSchema,
   Plan_ChangeDatabaseConfigSchema,
@@ -44,7 +45,7 @@ import {
   extractProjectResourceName,
   hasProjectPermissionV2,
 } from "@/utils";
-import { DatabaseTarget } from "./PlanDetailChangesBranch";
+import { PlanTargetDisplay } from "./PlanTargetDisplay";
 
 export function PlanDetailRollbackSheet({
   open,
@@ -63,13 +64,14 @@ export function PlanDetailRollbackSheet({
   }>;
 }) {
   const { t } = useTranslation();
-  const sheetStore = useSheetV1Store();
-  const projectStore = useProjectV1Store();
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  void projectsByName;
   const normalizedProjectName = projectName.startsWith("projects/")
     ? projectName
     : `projects/${projectName}`;
   const project = useVueState(() =>
-    projectStore.getProjectByName(normalizedProjectName)
+    useAppStore.getState().getProjectByName(normalizedProjectName)
   );
   const [loading, setLoading] = useState(false);
   const [selectedTaskRunNames, setSelectedTaskRunNames] = useState<string[]>(
@@ -198,7 +200,7 @@ export function PlanDetailRollbackSheet({
                       />
                       <div className="min-w-0 space-y-1">
                         <div className="min-w-0 text-sm font-medium text-main">
-                          <DatabaseTarget
+                          <PlanTargetDisplay
                             showEnvironment
                             target={item.task.target}
                           />
@@ -228,7 +230,7 @@ export function PlanDetailRollbackSheet({
                 previews.map((preview) => (
                   <div key={preview.taskRun.name} className="space-y-2">
                     <div className="text-sm font-medium text-main">
-                      <DatabaseTarget
+                      <PlanTargetDisplay
                         showEnvironment
                         target={preview.task.target}
                       />
@@ -239,9 +241,11 @@ export function PlanDetailRollbackSheet({
                       </div>
                     ) : preview.statement ? (
                       <ReadonlyMonaco
-                        className="relative h-auto max-h-[320px] min-h-[120px] overflow-hidden rounded-md border border-control-border"
+                        className="relative rounded-md border border-control-border"
                         content={preview.statement}
                         language="sql"
+                        min={128}
+                        max={256}
                       />
                     ) : (
                       <div className="flex items-center justify-center rounded-md border bg-gray-50 p-8">
@@ -322,7 +326,7 @@ export function PlanDetailRollbackSheet({
                 const specs = [];
                 for (const preview of previews) {
                   if (!preview.statement) continue;
-                  const sheet = await sheetStore.createSheet(
+                  const sheet = await useAppStore.getState().createSheet(
                     projectName,
                     create(SheetSchema, {
                       name: `${projectName}/sheets/${uuidv4()}`,

@@ -345,6 +345,9 @@
     - [PrincipalType](#bytebase-store-PrincipalType)
     - [WorkloadIdentityConfig.ProviderType](#bytebase-store-WorkloadIdentityConfig-ProviderType)
   
+- [store/vcs_provider_user.proto](#store_vcs_provider_user-proto)
+    - [VCSProviderUserPayload](#bytebase-store-VCSProviderUserPayload)
+  
 - [store/worksheet.proto](#store_worksheet-proto)
     - [WorkSheetOrganizerPayload](#bytebase-store-WorkSheetOrganizerPayload)
   
@@ -386,6 +389,7 @@
 | unmask | [bool](#bool) |  | Whether the grant allows unmasking sensitive data. |
 | reason | [string](#string) |  |  |
 | requested_duration | [google.protobuf.Duration](#google-protobuf-Duration) |  | The requested duration for the access grant. Stored when the user provides a TTL instead of an absolute expire_time. The server computes expire_time from this value at activation time. |
+| export | [bool](#bool) |  | Whether export the query result. |
 
 
 
@@ -5515,6 +5519,38 @@ ProviderType identifies the CI/CD platform.
 | GITHUB | 1 |  |
 | GITLAB | 2 |  |
 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="store_vcs_provider_user-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## store/vcs_provider_user.proto
+
+
+
+<a name="bytebase-store-VCSProviderUserPayload"></a>
+
+### VCSProviderUserPayload
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| user_name | [string](#string) |  |  |
+| display_name | [string](#string) |  |  |
+
+
+
+
+
+ 
 
  
 

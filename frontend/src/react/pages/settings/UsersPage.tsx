@@ -39,26 +39,16 @@ import {
   TableRow,
 } from "@/react/components/ui/table";
 import { Tooltip } from "@/react/components/ui/tooltip";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import { PagedTableFooter, usePagedData } from "@/react/hooks/usePagedData";
-import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import {
   WORKSPACE_ROUTE_GROUPS,
   WORKSPACE_ROUTE_USER_PROFILE,
 } from "@/router/dashboard/workspaceRoutes";
-import {
-  pushNotification,
-  useActuatorV1Store,
-  useCurrentUserV1,
-  useGroupStore,
-  useServiceAccountStore,
-  useSettingV1Store,
-  useSubscriptionV1Store,
-  useUserStore,
-  useWorkloadIdentityStore,
-  useWorkspaceV1Store,
-} from "@/store";
+import { pushNotification } from "@/store";
 import { getUserFullNameByType } from "@/store/modules/v1/common";
 import {
   AccountType,
@@ -93,19 +83,32 @@ function UserTable({
   onGroupSelected?: (group: Group) => void;
 }) {
   const { t } = useTranslation();
-  const currentUser = useVueState(() => useCurrentUserV1().value);
-  const groupStore = useGroupStore();
-  const userStore = useUserStore();
-  const serviceAccountStore = useServiceAccountStore();
-  const workloadIdentityStore = useWorkloadIdentityStore();
+  const currentUser = useCurrentUser();
+  const archiveUser = useAppStore((state) => state.archiveUser);
+  const restoreUser = useAppStore((state) => state.restoreUser);
+  const batchGetOrFetchGroups = useAppStore(
+    (state) => state.batchGetOrFetchGroups
+  );
+  const deleteServiceAccount = useAppStore(
+    (state) => state.deleteServiceAccount
+  );
+  const undeleteServiceAccount = useAppStore(
+    (state) => state.undeleteServiceAccount
+  );
+  const deleteWorkloadIdentity = useAppStore(
+    (state) => state.deleteWorkloadIdentity
+  );
+  const undeleteWorkloadIdentity = useAppStore(
+    (state) => state.undeleteWorkloadIdentity
+  );
 
   // Batch fetch groups when user list changes
   useEffect(() => {
     const allGroupNames = users.flatMap((u) => u.groups);
     if (allGroupNames.length > 0) {
-      groupStore.batchGetOrFetchGroups(allGroupNames);
+      batchGetOrFetchGroups(allGroupNames);
     }
-  }, [users, groupStore]);
+  }, [users, batchGetOrFetchGroups]);
 
   const handleDeactivate = async (user: User) => {
     const accountType = getAccountTypeByEmail(user.email);
@@ -118,11 +121,11 @@ function UserTable({
 
     try {
       if (accountType === AccountType.SERVICE_ACCOUNT) {
-        await serviceAccountStore.deleteServiceAccount(fullName);
+        await deleteServiceAccount(fullName);
       } else if (accountType === AccountType.WORKLOAD_IDENTITY) {
-        await workloadIdentityStore.deleteWorkloadIdentity(fullName);
+        await deleteWorkloadIdentity(fullName);
       } else {
-        await userStore.archiveUser(fullName);
+        await archiveUser(fullName);
       }
 
       const updated = create(UserSchema, { ...user, state: State.DELETED });
@@ -144,11 +147,11 @@ function UserTable({
 
     try {
       if (accountType === AccountType.SERVICE_ACCOUNT) {
-        await serviceAccountStore.undeleteServiceAccount(fullName);
+        await undeleteServiceAccount(fullName);
       } else if (accountType === AccountType.WORKLOAD_IDENTITY) {
-        await workloadIdentityStore.undeleteWorkloadIdentity(fullName);
+        await undeleteWorkloadIdentity(fullName);
       } else {
-        await userStore.restoreUser(fullName);
+        await restoreUser(fullName);
       }
 
       const updated = create(UserSchema, { ...user, state: State.ACTIVE });
@@ -407,7 +410,9 @@ function UserGroupsCell({
   user: User;
   onGroupSelected?: (group: Group) => void;
 }) {
-  const groupStore = useGroupStore();
+  const getGroupByIdentifier = useAppStore(
+    (state) => state.getGroupByIdentifier
+  );
 
   if (!user.groups || user.groups.length === 0) {
     return <span className="text-control-light">-</span>;
@@ -416,7 +421,7 @@ function UserGroupsCell({
   return (
     <div className="flex flex-wrap gap-1">
       {user.groups.map((groupName) => {
-        const group = groupStore.getGroupByIdentifier(groupName);
+        const group = getGroupByIdentifier(groupName);
         return (
           <Badge
             key={groupName}
@@ -494,20 +499,18 @@ function UserForm({
   onUpdated,
 }: Omit<CreateUserSheetProps, "open">) {
   const { t } = useTranslation();
-  const userStore = useUserStore();
-  const workspaceStore = useWorkspaceV1Store();
-  const settingV1Store = useSettingV1Store();
-
-  const userMapToRoles = useVueState(() => workspaceStore.userMapToRoles);
-  const passwordRestriction = useVueState(
-    () => settingV1Store.workspaceProfile.passwordRestriction
+  const createUser = useAppStore((state) => state.createUser);
+  const updateUser = useAppStore((state) => state.updateUser);
+  const patchWorkspaceIamPolicy = useAppStore(
+    (state) => state.patchWorkspaceIamPolicy
   );
-  const enforceIdentityDomain = useVueState(
-    () => settingV1Store.workspaceProfile.enforceIdentityDomain
+  const passwordRestriction = useAppStore(
+    (s) => s.getWorkspaceProfile().passwordRestriction
   );
-  const workspaceDomains = useVueState(
-    () => settingV1Store.workspaceProfile.domains
+  const enforceIdentityDomain = useAppStore(
+    (s) => s.getWorkspaceProfile().enforceIdentityDomain
   );
+  const workspaceDomains = useAppStore((s) => s.getWorkspaceProfile().domains);
 
   const isEditMode =
     !!user && user.name !== "" && !user.name.endsWith("/unknown");
@@ -530,7 +533,13 @@ function UserForm({
     if (!user || !isEditMode) {
       return [PresetRoleType.WORKSPACE_MEMBER];
     }
-    const roles = userMapToRoles.get(getUserFullNameByType(user));
+    // Read a one-shot snapshot of the workspace role map at mount. The parent
+    // page loads the workspace IAM policy, so it is populated by the time an
+    // edit sheet opens; reading via getState keeps this baseline mount-only.
+    const roles = useAppStore
+      .getState()
+      .workspaceUserMapToRoles()
+      .get(getUserFullNameByType(user));
     return roles ? [...roles] : [];
   }, []);
   const initialTitle = user?.title ?? "";
@@ -654,7 +663,7 @@ function UserForm({
   };
 
   const handleCreate = async () => {
-    const createdUser = await userStore.createUser({
+    const createdUser = await createUser({
       ...create(UserSchema, {}),
       title: title || extractUserTitle(email),
       email,
@@ -663,7 +672,7 @@ function UserForm({
     });
     if (roles.length > 0) {
       try {
-        await workspaceStore.patchIamPolicy([
+        await patchWorkspaceIamPolicy([
           {
             member: getUserEmailInBinding(createdUser.email),
             roles,
@@ -699,7 +708,7 @@ function UserForm({
     let updatedUser: User = user;
 
     if (updateMask.length > 0) {
-      updatedUser = await userStore.updateUser(
+      updatedUser = await updateUser(
         create(UpdateUserRequestSchema, {
           user: payload,
           updateMask: create(FieldMaskSchema, { paths: updateMask }),
@@ -708,7 +717,7 @@ function UserForm({
     }
 
     if (!isEqual([...initialRoles].sort(), [...roles].sort())) {
-      await workspaceStore.patchIamPolicy([
+      await patchWorkspaceIamPolicy([
         {
           member: getUserEmailInBinding(updatedUser.email),
           roles,
@@ -904,14 +913,12 @@ function UserForm({
 
 export function UsersPage() {
   const { t } = useTranslation();
-  const actuatorStore = useActuatorV1Store();
-  const subscriptionStore = useSubscriptionV1Store();
-  const userStore = useUserStore();
+  const listUsers = useAppStore((state) => state.listUsers);
 
-  const isSaaSMode = useVueState(() => actuatorStore.isSaaSMode);
+  const isSaaSMode = useAppStore((s) => s.isSaaSMode());
 
-  const hasDirectorySyncFeature = useVueState(() =>
-    subscriptionStore.hasInstanceFeature(PlanFeature.FEATURE_DIRECTORY_SYNC)
+  const hasDirectorySyncFeature = useAppStore((s) =>
+    s.hasInstanceFeature(PlanFeature.FEATURE_DIRECTORY_SYNC)
   );
   const canAccessSettings = hasWorkspacePermissionV2("bb.settings.get");
 
@@ -927,14 +934,14 @@ export function UsersPage() {
   // Active users paged data
   const fetchActiveUsers = useCallback(
     async (params: { pageSize: number; pageToken: string }) => {
-      const result = await userStore.fetchUserList({
+      const result = await listUsers({
         pageSize: params.pageSize,
         pageToken: params.pageToken,
         filter: { query: userSearchText },
       });
       return { list: result.users, nextPageToken: result.nextPageToken };
     },
-    [userStore, userSearchText]
+    [listUsers, userSearchText]
   );
 
   const hasUserListPermission = hasWorkspacePermissionV2("bb.users.list");
@@ -947,7 +954,7 @@ export function UsersPage() {
   // Inactive users paged data
   const fetchInactiveUsers = useCallback(
     async (params: { pageSize: number; pageToken: string }) => {
-      const result = await userStore.fetchUserList({
+      const result = await listUsers({
         pageSize: params.pageSize,
         pageToken: params.pageToken,
         filter: { query: inactiveUserSearchText, state: State.DELETED },
@@ -955,7 +962,7 @@ export function UsersPage() {
       });
       return { list: result.users, nextPageToken: result.nextPageToken };
     },
-    [userStore, inactiveUserSearchText]
+    [listUsers, inactiveUserSearchText]
   );
 
   const inactiveUsers = usePagedData<User>({

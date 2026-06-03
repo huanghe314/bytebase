@@ -3,8 +3,9 @@ import { FieldMaskSchema } from "@bufbuild/protobuf/wkt";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/react/components/ui/button";
-import { useVueState } from "@/react/hooks/useVueState";
-import { pushNotification, useCurrentUserV1, useUserStore } from "@/store";
+import { useCurrentUser } from "@/react/hooks/useAppState";
+import { useAppStore } from "@/react/stores/app";
+import { pushNotification } from "@/store";
 import { UpdateUserRequestSchema } from "@/types/proto-es/v1/user_service_pb";
 import { RecoveryCodesView } from "./RecoveryCodesView";
 
@@ -18,12 +19,12 @@ export function RegenerateRecoveryCodesView({
   onClose,
 }: RegenerateRecoveryCodesViewProps) {
   const { t } = useTranslation();
-  const userStore = useUserStore();
-  const currentUser = useVueState(() => useCurrentUserV1().value);
+  const updateUser = useAppStore((state) => state.updateUser);
+  const currentUser = useCurrentUser();
   const [recoveryCodesDownloaded, setRecoveryCodesDownloaded] = useState(false);
 
   useEffect(() => {
-    userStore.updateUser(
+    updateUser(
       create(UpdateUserRequestSchema, {
         user: {
           name: currentUser.name,
@@ -37,7 +38,7 @@ export function RegenerateRecoveryCodesView({
   }, []);
 
   const regenerateRecoveryCodes = useCallback(async () => {
-    await userStore.updateUser(
+    await updateUser(
       create(UpdateUserRequestSchema, {
         user: {
           name: currentUser.name,
@@ -54,7 +55,7 @@ export function RegenerateRecoveryCodesView({
       title: t("two-factor.messages.recovery-codes-regenerated"),
     });
     onClose();
-  }, [currentUser.name, onClose, t, userStore]);
+  }, [currentUser.name, onClose, t, updateUser]);
 
   return (
     <>

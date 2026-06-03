@@ -24,15 +24,15 @@ const mocks = vi.hoisted(() => ({
     t: (key: string) => key,
   })),
   useVueState: vi.fn(),
-  useSettingV1Store: vi.fn(),
-  useSubscriptionV1Store: vi.fn(),
   useDatabaseCatalog: vi.fn(),
-  useDatabaseCatalogV1Store: vi.fn(),
+  updateDatabaseCatalog: vi.fn(),
   getTableCatalog: vi.fn(),
   pushNotification: vi.fn(),
   getOrFetchSettingByName: vi.fn(),
   getSettingByName: vi.fn(),
   getProjectClassification: vi.fn(),
+  hasFeature: vi.fn(() => true),
+  instanceMissingLicense: vi.fn(() => false),
   updateColumnCatalog: vi.fn(),
   updateTableCatalog: vi.fn(),
   getDatabaseProject: vi.fn(),
@@ -125,13 +125,34 @@ vi.mock("@/react/components/FeatureAttention", () => ({
 }));
 
 vi.mock("@/store", () => ({
-  getTableCatalog: mocks.getTableCatalog,
   pushNotification: mocks.pushNotification,
-  useDatabaseCatalog: mocks.useDatabaseCatalog,
-  useDatabaseCatalogV1Store: mocks.useDatabaseCatalogV1Store,
-  useSettingV1Store: mocks.useSettingV1Store,
-  useSubscriptionV1Store: mocks.useSubscriptionV1Store,
 }));
+
+vi.mock("@/react/hooks/useDatabaseCatalog", () => ({
+  useDatabaseCatalog: () => mocks.useDatabaseCatalog(),
+}));
+
+vi.mock("@/react/stores/app/databaseCatalog", () => ({
+  getTableCatalog: mocks.getTableCatalog,
+}));
+
+vi.mock("@/react/stores/app", () => {
+  const getState = () => ({
+    updateDatabaseCatalog: mocks.updateDatabaseCatalog,
+    getOrFetchSettingByName: mocks.getOrFetchSettingByName,
+    getSettingByName: mocks.getSettingByName,
+    getProjectClassification: mocks.getProjectClassification,
+    hasFeature: mocks.hasFeature,
+    instanceMissingLicense: mocks.instanceMissingLicense,
+  });
+  return {
+    useAppStore: Object.assign(
+      (selector?: (s: ReturnType<typeof getState>) => unknown) =>
+        selector ? selector(getState()) : getState(),
+      { getState }
+    ),
+  };
+});
 
 vi.mock("@/utils", () => ({
   getDatabaseProject: mocks.getDatabaseProject,
@@ -262,28 +283,17 @@ beforeEach(async () => {
       },
     };
   });
-  mocks.useSettingV1Store.mockReset();
-  mocks.useSettingV1Store.mockReturnValue({
-    getOrFetchSettingByName: mocks.getOrFetchSettingByName,
-    getSettingByName: mocks.getSettingByName,
-    getProjectClassification: mocks.getProjectClassification,
-  });
-  mocks.useSubscriptionV1Store.mockReset();
-  mocks.useSubscriptionV1Store.mockReturnValue({
-    hasFeature: vi.fn(() => true),
-    instanceMissingLicense: vi.fn(() => false),
-  });
+  mocks.hasFeature.mockReset();
+  mocks.hasFeature.mockReturnValue(true);
+  mocks.instanceMissingLicense.mockReset();
+  mocks.instanceMissingLicense.mockReturnValue(false);
   mocks.useDatabaseCatalog.mockReset();
   mocks.useDatabaseCatalog.mockReturnValue({
-    value: {
-      name: "instances/inst1/databases/db/catalog",
-      schemas: [],
-    },
+    name: "instances/inst1/databases/db/catalog",
+    schemas: [],
   });
-  mocks.useDatabaseCatalogV1Store.mockReset();
-  mocks.useDatabaseCatalogV1Store.mockReturnValue({
-    updateDatabaseCatalog: vi.fn().mockResolvedValue(undefined),
-  });
+  mocks.updateDatabaseCatalog.mockReset();
+  mocks.updateDatabaseCatalog.mockResolvedValue(undefined);
   mocks.getTableCatalog.mockReset();
   mocks.getTableCatalog.mockImplementation(
     (
@@ -708,25 +718,20 @@ describe("TableDetailDialog", () => {
   });
 
   test("restores the legacy NoSQL catalog editor and upload flow", async () => {
-    const updateDatabaseCatalog = vi.fn().mockResolvedValue(undefined);
+    const updateDatabaseCatalog = mocks.updateDatabaseCatalog;
     mocks.useDatabaseCatalog.mockReturnValue({
-      value: {
-        name: "instances/inst1/databases/db/catalog",
-        schemas: [
-          {
-            name: "",
-            tables: [
-              create(TableCatalogSchema, {
-                name: "orders",
-                classification: "PII",
-              }),
-            ],
-          },
-        ],
-      },
-    });
-    mocks.useDatabaseCatalogV1Store.mockReturnValue({
-      updateDatabaseCatalog,
+      name: "instances/inst1/databases/db/catalog",
+      schemas: [
+        {
+          name: "",
+          tables: [
+            create(TableCatalogSchema, {
+              name: "orders",
+              classification: "PII",
+            }),
+          ],
+        },
+      ],
     });
 
     const { container, render, unmount } = renderIntoContainer(

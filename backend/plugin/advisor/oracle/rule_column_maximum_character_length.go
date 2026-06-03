@@ -4,18 +4,14 @@ package oracle
 import (
 	"context"
 	"fmt"
-	"strconv"
 
+	"github.com/bytebase/omni/oracle/ast"
 	"github.com/pkg/errors"
-
-	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/parser/plsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
 	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
-	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -46,22 +42,8 @@ func (*ColumnMaximumCharacterLengthAdvisor) Check(_ context.Context, checkCtx ad
 	}
 
 	rule := NewColumnMaximumCharacterLengthRule(level, checkCtx.Rule.Type.String(), int(numberPayload.Number))
-	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range checkCtx.ParsedStatements {
-		if stmt.AST == nil {
-			continue
-		}
-		antlrAST, ok := base.GetANTLRAST(stmt.AST)
-		if !ok {
-			continue
-		}
-		rule.SetBaseLine(stmt.BaseLine())
-		checker.SetBaseLine(stmt.BaseLine())
-		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
-	}
-
-	return checker.GetAdviceList()
+	return RunOmniRules(checkCtx.ParsedStatements, []OmniRule{rule})
 }
 
 // ColumnMaximumCharacterLengthRule is the rule implementation for maximum character length.
@@ -84,44 +66,30 @@ func (*ColumnMaximumCharacterLengthRule) Name() string {
 	return "column.maximum-character-length"
 }
 
-// OnEnter is called when the parser enters a rule context.
-func (r *ColumnMaximumCharacterLengthRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
-	if nodeType == "Datatype" {
-		r.handleDatatype(ctx.(*parser.DatatypeContext))
-	}
-	return nil
-}
-
-// OnExit is called when the parser exits a rule context.
-func (*ColumnMaximumCharacterLengthRule) OnExit(_ antlr.ParserRuleContext, _ string) error {
-	return nil
-}
-
-func (r *ColumnMaximumCharacterLengthRule) handleDatatype(ctx *parser.DatatypeContext) {
-	if ctx.Native_datatype_element() == nil {
-		return
-	}
-
-	if ctx.Native_datatype_element().CHAR() == nil && ctx.Native_datatype_element().CHARACTER() == nil {
-		return
-	}
-
-	if ctx.Precision_part() == nil {
-		return
-	}
-
-	if ctx.Precision_part().Numeric(0) != nil {
-		lengthText := ctx.Precision_part().Numeric(0).GetText()
-		length, err := strconv.Atoi(lengthText)
-		if err != nil || length <= r.maximum {
+// OnStatement checks CHAR/CHARACTER type modifiers in the omni AST.
+func (r *ColumnMaximumCharacterLengthRule) OnStatement(node ast.Node) {
+	omniWalk(node, func(n ast.Node) {
+		col, ok := n.(*ast.ColumnDef)
+		if !ok || col.TypeName == nil {
 			return
 		}
-	}
-
-	r.AddAdvice(
-		r.level,
-		code.CharLengthExceedsLimit.Int32(),
-		fmt.Sprintf("The maximum character length is %d.", r.maximum),
-		common.ConvertANTLRLineToPosition(r.baseLine+ctx.GetStart().GetLine()),
-	)
+		typeName := omniTypeName(col.TypeName)
+		if typeName != "CHAR" && typeName != "CHARACTER" {
+			return
+		}
+		length, ok := omniFirstTypeModInt(col.TypeName)
+		if !ok || length <= r.maximum {
+			return
+		}
+		r.AddAdvice(
+			r.level,
+			code.CharLengthExceedsLimit.Int32(),
+			fmt.Sprintf("The maximum character length is %d.", r.maximum),
+			common.ConvertANTLRLineToPosition(r.locLine(col.TypeName.Loc)),
+		)
+	})
 }
+
+// OnEnter is called when the parser enters a rule context.
+
+// OnExit is called when the parser exits a rule context.

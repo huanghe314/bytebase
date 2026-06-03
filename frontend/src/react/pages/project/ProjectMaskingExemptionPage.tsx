@@ -29,6 +29,7 @@ import {
   TableRow,
 } from "@/react/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/react/components/ui/tabs";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import { useVueState } from "@/react/hooks/useVueState";
 import {
   buildMemberSummary,
@@ -44,21 +45,10 @@ import type {
   ExemptionMember,
 } from "@/react/lib/sensitive-data/types";
 import { cn } from "@/react/lib/utils";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import { PROJECT_V1_ROUTE_MASKING_EXEMPTION_CREATE } from "@/router/dashboard/projectV1";
-import {
-  composePolicyBindings,
-  extractUserEmail,
-  hasFeature,
-  pushNotification,
-  useCurrentUserV1,
-  useDatabaseV1Store,
-  useGroupStore,
-  usePolicyV1Store,
-  useProjectV1Store,
-  useSettingV1Store,
-  useUserStore,
-} from "@/store";
+import { extractUserEmail, hasFeature, pushNotification } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import type { DatabaseResource } from "@/types";
 import {
@@ -98,13 +88,16 @@ export function ProjectMaskingExemptionPage({
   projectId: string;
 }) {
   const { t } = useTranslation();
-  const projectStore = useProjectV1Store();
-  const databaseStore = useDatabaseV1Store();
-  const userStore = useUserStore();
-  const currentUser = useVueState(() => useCurrentUserV1().value);
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  const listUsers = useAppStore((state) => state.listUsers);
+  const currentUser = useCurrentUser();
 
   const projectName = `${projectNamePrefix}${projectId}`;
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  // subscribe to re-render on project cache change
+  void projectsByName;
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
+  );
   const showDatabaseLink = useMemo(
     () =>
       project ? hasProjectPermissionV2(project, "bb.databases.get") : false,
@@ -280,7 +273,7 @@ export function ProjectMaskingExemptionPage({
       if (!project || !hasProjectPermissionV2(project, "bb.databases.list")) {
         return [];
       }
-      const result = await databaseStore.fetchDatabases({
+      const result = await useAppStore.getState().fetchDatabases({
         parent: projectName,
         pageSize: getDefaultPagination(),
         filter: keyword ? { query: keyword } : undefined,
@@ -299,12 +292,12 @@ export function ProjectMaskingExemptionPage({
         };
       });
     },
-    [databaseStore, projectName, project]
+    [projectName, project]
   );
 
   const searchUsers = useCallback(
     async (keyword: string): Promise<ValueOption[]> => {
-      const result = await userStore.fetchUserList({
+      const result = await listUsers({
         pageSize: getDefaultPagination(),
         filter: keyword ? { query: keyword } : undefined,
       });
@@ -333,7 +326,7 @@ export function ProjectMaskingExemptionPage({
         ),
       }));
     },
-    [userStore, currentUser, t]
+    [listUsers, currentUser, t]
   );
 
   const scopeOptions: ScopeOption[] = useMemo(
@@ -596,19 +589,16 @@ function rebuildExemptions(accessList: AccessUser[]) {
 
 function useExemptionDataReact(projectName: string) {
   const { t } = useTranslation();
-  const policyStore = usePolicyV1Store();
-  const settingStore = useSettingV1Store();
-
-  // Ensure group store is initialized for composePolicyBindings
-  useGroupStore();
+  const batchGetOrFetchGroups = useAppStore(
+    (state) => state.batchGetOrFetchGroups
+  );
 
   // Ensure classification config is loaded
   useEffect(() => {
-    settingStore.getOrFetchSettingByName(
-      Setting_SettingName.DATA_CLASSIFICATION,
-      true
-    );
-  }, [settingStore]);
+    useAppStore
+      .getState()
+      .getOrFetchSettingByName(Setting_SettingName.DATA_CLASSIFICATION, true);
+  }, []);
 
   const [rawAccessList, setRawAccessList] = useState<AccessUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -624,7 +614,7 @@ function useExemptionDataReact(projectName: string) {
     const generation = ++fetchGenRef.current;
 
     try {
-      const pol = await policyStore.getOrFetchPolicyByParentAndType({
+      const pol = await useAppStore.getState().getOrFetchPolicyByParentAndType({
         parentPath: projectName,
         policyType: PolicyType.MASKING_EXEMPTION,
         refresh: true,
@@ -646,7 +636,11 @@ function useExemptionDataReact(projectName: string) {
 
       if (generation !== fetchGenRef.current) return;
 
-      await composePolicyBindings(exemptions, true);
+      await batchGetOrFetchGroups(
+        exemptions
+          .flatMap((exemption) => exemption.members)
+          .filter((member) => member.startsWith(groupBindingPrefix))
+      );
 
       const memberMap = new Map<string, AccessUser>();
       for (let i = 0; i < exemptions.length; i++) {
@@ -668,7 +662,7 @@ function useExemptionDataReact(projectName: string) {
         setLoading(false);
       }
     }
-  }, [projectName, policyStore]);
+  }, [projectName, batchGetOrFetchGroups]);
 
   useEffect(() => {
     fetchData();
@@ -677,8 +671,8 @@ function useExemptionDataReact(projectName: string) {
   // Subscribe to policy changes in the store to re-fetch.
   // Track the number of exemptions so we detect content changes,
   // not just the policy case discriminator which is always the same.
-  const policyExemptionCount = useVueState(() => {
-    const pol = policyStore.getPolicyByParentAndType({
+  const policyExemptionCount = useAppStore((s) => {
+    const pol = s.getPolicyByParentAndType({
       parentPath: projectName,
       policyType: PolicyType.MASKING_EXEMPTION,
     });
@@ -727,10 +721,12 @@ function useExemptionDataReact(projectName: string) {
 
       try {
         // Rebuild and save policy first; only update UI state on success.
-        const pol = await policyStore.getOrFetchPolicyByParentAndType({
-          parentPath: projectName,
-          policyType: PolicyType.MASKING_EXEMPTION,
-        });
+        const pol = await useAppStore
+          .getState()
+          .getOrFetchPolicyByParentAndType({
+            parentPath: projectName,
+            policyType: PolicyType.MASKING_EXEMPTION,
+          });
         if (pol) {
           pol.policy = {
             case: "maskingExemptionPolicy",
@@ -738,7 +734,7 @@ function useExemptionDataReact(projectName: string) {
               exemptions: rebuildExemptions(currentList),
             }),
           };
-          await policyStore.upsertPolicy({
+          await useAppStore.getState().upsertPolicy({
             parentPath: projectName,
             policy: pol,
           });
@@ -759,7 +755,7 @@ function useExemptionDataReact(projectName: string) {
         processingRef.current = false;
       }
     },
-    [projectName, policyStore, t]
+    [projectName, t]
   );
 
   return { members, loading, revokeGrant };
@@ -993,17 +989,17 @@ function ExemptionDetailPanel({
   onRevoke: (grant: ExemptionGrant) => void;
 }) {
   const { t } = useTranslation();
-  const groupStore = useGroupStore();
 
   const userEmail = useMemo(
     () => extractUserEmail(member.member),
     [member.member]
   );
 
-  const group = useVueState(() => {
-    if (!member.member.startsWith(groupBindingPrefix)) return undefined;
-    return groupStore.getGroupByIdentifier(member.member);
-  });
+  const group = useAppStore((state) =>
+    member.member.startsWith(groupBindingPrefix)
+      ? state.getGroupByIdentifier(member.member)
+      : undefined
+  );
 
   const grantMatchesFilter = (grant: ExemptionGrant): boolean => {
     if (!databaseFilter) return false;
@@ -1355,14 +1351,15 @@ function LevelBadge({
   noLimit?: boolean;
 }) {
   const { t } = useTranslation();
-  const settingStore = useSettingV1Store();
+  const settingsByName = useAppStore((s) => s.settingsByName);
 
-  const levelTitle = useVueState(() => {
+  const levelTitle = useMemo(() => {
     if (level === undefined) return undefined;
-    const config = settingStore.classification[0];
+    void settingsByName;
+    const config = useAppStore.getState().classification()[0];
     return config?.levels?.find((l: { level: number }) => l.level === level)
       ?.title;
-  });
+  }, [level, settingsByName]);
 
   const label = useMemo(() => {
     if (noLimit || level === undefined)

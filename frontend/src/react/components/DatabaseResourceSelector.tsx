@@ -18,13 +18,7 @@ import {
 } from "@/react/components/AdvancedSearch";
 import { EnvironmentLabel } from "@/react/components/EnvironmentLabel";
 import { Checkbox } from "@/react/components/ui/checkbox";
-import { useVueState } from "@/react/hooks/useVueState";
-import {
-  useDatabaseV1Store,
-  useEnvironmentV1Store,
-  useInstanceV1Store,
-} from "@/store";
-import { useDBSchemaV1Store } from "@/store/modules/v1/dbSchema";
+import { useAppStore } from "@/react/stores/app";
 import type { DatabaseResource } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import type {
@@ -99,10 +93,9 @@ export function DatabaseResourceSelector({
   includeColumns?: boolean;
 }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
-  const dbSchemaStore = useDBSchemaV1Store();
-  const environmentStore = useEnvironmentV1Store();
-  const instanceStore = useInstanceV1Store();
+  const getOrFetchDatabaseMetadata = useAppStore(
+    (s) => s.getOrFetchDatabaseMetadata
+  );
 
   const [databases, setDatabases] = useState<Database[]>([]);
   const [searchParams, setSearchParams] = useState<SearchParams>({
@@ -122,13 +115,11 @@ export function DatabaseResourceSelector({
   const [loadingMetadata, setLoadingMetadata] = useState<Set<string>>(
     new Set()
   );
-  const environments = useVueState(
-    () => environmentStore.environmentList ?? []
-  );
+  const environments = useAppStore((s) => s.environmentList);
 
   const searchInstances = useCallback(
     async (keyword: string): Promise<ValueOption[]> => {
-      const result = await instanceStore.fetchInstanceList({
+      const result = await useAppStore.getState().fetchInstanceList({
         pageSize: 1000,
         filter: keyword.trim() ? { query: keyword } : undefined,
         silent: true,
@@ -141,7 +132,7 @@ export function DatabaseResourceSelector({
         };
       });
     },
-    [instanceStore]
+    []
   );
 
   const scopeOptions: ScopeOption[] = useMemo(
@@ -236,7 +227,7 @@ export function DatabaseResourceSelector({
       let allDatabases: Database[] = [];
       let pageToken = "";
       do {
-        const result = await databaseStore.fetchDatabases({
+        const result = await useAppStore.getState().fetchDatabases({
           parent: projectName,
           pageSize: 1000,
           pageToken,
@@ -251,7 +242,7 @@ export function DatabaseResourceSelector({
     return () => {
       cancelled = true;
     };
-  }, [projectName, databaseStore, databaseFilter]);
+  }, [projectName, databaseFilter]);
 
   const selectedResourceMap = useMemo(() => {
     const map = new Map<string, DatabaseSelection>();
@@ -694,7 +685,7 @@ export function DatabaseResourceSelector({
         if (!metadataMap.has(dbName) && !loadingMetadata.has(dbName)) {
           setLoadingMetadata((prev) => new Set(prev).add(dbName));
           try {
-            const metadata = await dbSchemaStore.getOrFetchDatabaseMetadata({
+            const metadata = await getOrFetchDatabaseMetadata({
               database: dbName,
             });
             setMetadataMap((prev) => new Map(prev).set(dbName, metadata));
@@ -711,7 +702,12 @@ export function DatabaseResourceSelector({
       }
       setExpandedDatabases(next);
     },
-    [expandedDatabases, metadataMap, loadingMetadata, dbSchemaStore]
+    [
+      expandedDatabases,
+      metadataMap,
+      loadingMetadata,
+      getOrFetchDatabaseMetadata,
+    ]
   );
 
   const toggleExpandSchema = useCallback(

@@ -12,7 +12,7 @@ import {
   wrapAsGroup,
 } from "@/plugins/cel";
 import { DatabaseResourceSelector as DatabaseResourceSelectorComponent } from "@/react/components/DatabaseResourceSelector";
-import { EnvironmentMultiSelect } from "@/react/components/EnvironmentMultiSelect";
+import { EnvironmentSelect } from "@/react/components/EnvironmentSelect";
 import type { OptionConfig } from "@/react/components/ExprEditor";
 import { ExprEditor } from "@/react/components/ExprEditor";
 import { IssueLabelSelect } from "@/react/components/IssueLabelSelect";
@@ -30,19 +30,16 @@ import {
   SheetTitle,
 } from "@/react/components/ui/sheet";
 import { Textarea } from "@/react/components/ui/textarea";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import {
   getRoleEnvironmentLimitationKind,
   roleHasDatabaseLimitation,
 } from "@/react/lib/project-member/utils";
+import { displayRoleTitleFromList } from "@/react/lib/role";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import { PROJECT_V1_ROUTE_ISSUE_DETAIL } from "@/router/dashboard/projectV1";
-import {
-  pushNotification,
-  useCurrentUserV1,
-  useRoleStore,
-  useSettingV1Store,
-} from "@/store";
+import { pushNotification } from "@/store";
 import type { Permission } from "@/types";
 import { type DatabaseResource, PresetRoleType } from "@/types";
 import { ExprSchema as ConditionExprSchema } from "@/types/proto-es/google/type/expr_pb";
@@ -56,7 +53,6 @@ import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import type { Role } from "@/types/proto-es/v1/role_service_pb";
 import {
   batchConvertParsedExprToCELString,
-  displayRoleTitle,
   extractIssueUID,
   extractProjectResourceName,
   formatIssueTitle,
@@ -136,13 +132,7 @@ function RequestRoleForm({
   onClose,
 }: Readonly<Omit<RequestRoleSheetProps, "open">>) {
   const { t } = useTranslation();
-  // Call the Pinia store accessor at the top level of the component so
-  // SonarCloud's React-hook-rule doesn't flag the `use*` call inside
-  // a subscription getter. `useCurrentUserV1()` returns a cached Pinia
-  // computed ref, so calling it once and reading `.value` inside the
-  // getter produces identical reactive semantics.
-  const currentUserRef = useCurrentUserV1();
-  const currentUser = useVueState(() => currentUserRef.value);
+  const currentUser = useCurrentUser();
   const [role, setRole] = useState(initialRole);
   const [reason, setReason] = useState("");
   const [expirationTimestamp, setExpirationTimestamp] = useState<
@@ -168,10 +158,9 @@ function RequestRoleForm({
   const [environments, setEnvironments] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
-  const settingStore = useSettingV1Store();
-  const roleStore = useRoleStore();
-  const selectedRole = useVueState(() =>
-    role ? roleStore.getRoleByName(role) : undefined
+  const roleList = useAppStore((state) => state.roleList);
+  const selectedRole = useAppStore((state) =>
+    role ? state.getRoleByName(role) : undefined
   );
   const requiredPermissionList = useMemo(
     () => [...new Set(requiredPermissions)],
@@ -195,13 +184,13 @@ function RequestRoleForm({
   // Vue ExpirationSelector: PROJECT_OWNER grants are exempted (project
   // owners can request unbounded expirations), otherwise the workspace cap
   // applies. Returns undefined when no cap is set.
-  const maximumRoleExpirationDays = useVueState(() => {
+  const workspaceProfile = useAppStore((state) => state.getWorkspaceProfile());
+  const maximumRoleExpirationDays = useMemo(() => {
     if (role === PresetRoleType.PROJECT_OWNER) return undefined;
-    const seconds =
-      settingStore.workspaceProfile.maximumRoleExpiration?.seconds;
+    const seconds = workspaceProfile.maximumRoleExpiration?.seconds;
     if (!seconds) return undefined;
     return Math.floor(Number(seconds) / (60 * 60 * 24));
-  });
+  }, [workspaceProfile, role]);
 
   // ExprEditor factor/option config — mirrors the old Vue
   // DatabaseResourceForm config for role-grant requests.
@@ -402,7 +391,7 @@ function RequestRoleForm({
         ? `[${t("issue.title.request-role")}] ${trimmedReason}`
         : formatIssueTitle(
             t("issue.title.request-specific-role", {
-              role: displayRoleTitle(role),
+              role: displayRoleTitleFromList(role, roleList),
             }),
             titleDatabaseNames
           );
@@ -561,7 +550,9 @@ function RequestRoleForm({
                 {t("common.environments")}
               </label>
               <DDLWarningCallout type="drawer" kind={envKind} />
-              <EnvironmentMultiSelect
+              <EnvironmentSelect
+                multiple
+                portal
                 value={environments}
                 onChange={setEnvironments}
               />

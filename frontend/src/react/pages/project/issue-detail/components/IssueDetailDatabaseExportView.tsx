@@ -26,18 +26,19 @@ import { Switch } from "@/react/components/ui/switch";
 import { Tooltip } from "@/react/components/ui/tooltip";
 import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
+import { useAppStore } from "@/react/stores/app";
 import { router } from "@/router";
 import { PROJECT_V1_ROUTE_DATABASE_GROUP_DETAIL } from "@/router/dashboard/projectV1";
 import {
   DEFAULT_MAX_RESULT_SIZE_IN_MB,
   getProjectNameAndDatabaseGroupName,
   pushNotification,
-  useDatabaseV1Store,
-  useDBGroupStore,
-  useEnvironmentV1Store,
-  useSettingV1Store,
 } from "@/store";
-import { isValidDatabaseGroupName, isValidDatabaseName } from "@/types";
+import {
+  isValidDatabaseGroupName,
+  isValidDatabaseName,
+  unknownDatabaseGroup,
+} from "@/types";
 import { ExportFormat } from "@/types/proto-es/v1/common_pb";
 import { DatabaseGroupView } from "@/types/proto-es/v1/database_group_service_pb";
 import {
@@ -46,6 +47,7 @@ import {
   UpdatePlanRequestSchema,
 } from "@/types/proto-es/v1/plan_service_pb";
 import { type Task, Task_Status } from "@/types/proto-es/v1/rollout_service_pb";
+import { unknownDatabase } from "@/types/v1/database";
 import {
   extractDatabaseResourceName,
   extractInstanceResourceName,
@@ -378,7 +380,6 @@ function IssueDetailDatabaseExportTasks({
   tasksExpanded: boolean;
 }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
   const visibleTasks = tasksExpanded
     ? tasks
     : tasks.slice(0, DEFAULT_DISPLAY_COUNT);
@@ -388,9 +389,9 @@ function IssueDetailDatabaseExportTasks({
   useEffect(() => {
     const targets = tasks.map((task) => task.target);
     if (targets.length > 0) {
-      void databaseStore.batchGetOrFetchDatabases(targets);
+      void useAppStore.getState().batchGetOrFetchDatabases(targets);
     }
-  }, [databaseStore, tasks]);
+  }, [tasks]);
 
   if (tasks.length === 0) {
     return (
@@ -587,20 +588,18 @@ function IssueDetailDatabaseExportExecutionHistory({
 
 function IssueDetailDatabaseExportTargets({ targets }: { targets: string[] }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
-  const dbGroupStore = useDBGroupStore();
 
   useEffect(() => {
     for (const target of targets) {
       if (isValidDatabaseName(target)) {
-        void databaseStore.getOrFetchDatabaseByName(target);
+        void useAppStore.getState().getOrFetchDatabaseByName(target);
       } else if (isValidDatabaseGroupName(target)) {
-        void dbGroupStore.getOrFetchDBGroupByName(target, {
+        void useAppStore.getState().getOrFetchDBGroupByName(target, {
           view: DatabaseGroupView.FULL,
         });
       }
     }
-  }, [databaseStore, dbGroupStore, targets]);
+  }, [targets]);
 
   if (targets.length === 0) {
     return (
@@ -639,15 +638,18 @@ function IssueDetailDatabaseExportDatabaseTarget({
   target: string;
 }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
-  const environmentStore = useEnvironmentV1Store();
-  const database = useVueState(() => databaseStore.getDatabaseByName(target));
-  const environment = useVueState(() =>
-    environmentStore.getEnvironmentByName(
-      database.effectiveEnvironment ??
-        database.instanceResource?.environment ??
-        ""
-    )
+  const databasesByName = useAppStore((s) => s.databasesByName);
+  const environmentList = useAppStore((s) => s.environmentList);
+  const database = useVueState(
+    () => databasesByName[target] ?? unknownDatabase()
+  );
+  const environmentName =
+    database.effectiveEnvironment ??
+    database.instanceResource?.environment ??
+    "";
+  const environment = useMemo(
+    () => useAppStore.getState().getEnvironmentByName(environmentName),
+    [environmentList, environmentName]
   );
   const instance = database.instanceResource;
   const { databaseName } = extractDatabaseResourceName(target);
@@ -678,10 +680,10 @@ function IssueDetailDatabaseExportDatabaseGroupTarget({
   target: string;
 }) {
   const { t } = useTranslation();
-  const dbGroupStore = useDBGroupStore();
-  const databaseStore = useDatabaseV1Store();
-  const databaseGroup = useVueState(() =>
-    dbGroupStore.getDBGroupByName(target)
+  const cachedGroup = useAppStore((s) => s.dbGroupsByName[target]);
+  const databaseGroup = useMemo(
+    () => cachedGroup ?? unknownDatabaseGroup(),
+    [cachedGroup]
   );
   const databases = useMemo(
     () => databaseGroup.matchedDatabases?.map((db) => db.name) ?? [],
@@ -693,17 +695,17 @@ function IssueDetailDatabaseExportDatabaseGroupTarget({
     if (!isValidDatabaseGroupName(target)) {
       return;
     }
-    void dbGroupStore.getOrFetchDBGroupByName(target, {
+    void useAppStore.getState().getOrFetchDBGroupByName(target, {
       silent: true,
       view: DatabaseGroupView.FULL,
     });
-  }, [dbGroupStore, target]);
+  }, [target]);
 
   useEffect(() => {
     if (databases.length > 0) {
-      void databaseStore.batchGetOrFetchDatabases(databases);
+      void useAppStore.getState().batchGetOrFetchDatabases(databases);
     }
-  }, [databaseStore, databases]);
+  }, [databases]);
 
   const gotoDatabaseGroupDetailPage = () => {
     const [projectId, databaseGroupName] =
@@ -775,14 +777,14 @@ function IssueDetailDatabaseExportDatabaseGroupTarget({
 
 function IssueDetailDatabaseExportLimits() {
   const { t } = useTranslation();
-  const settingStore = useSettingV1Store();
-  const maximumResultSize = useVueState(() => {
-    let size = settingStore.workspaceProfile.sqlResultSize;
+  const workspaceProfile = useAppStore((s) => s.getWorkspaceProfile());
+  const maximumResultSize = useMemo(() => {
+    let size = workspaceProfile.sqlResultSize;
     if (size <= 0) {
       size = BigInt(DEFAULT_MAX_RESULT_SIZE_IN_MB * 1024 * 1024);
     }
     return Number(size) / 1024 / 1024;
-  });
+  }, [workspaceProfile]);
 
   return (
     <div className="flex w-full flex-col gap-y-2">

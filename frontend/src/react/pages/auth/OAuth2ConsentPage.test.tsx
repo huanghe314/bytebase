@@ -10,8 +10,8 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   useVueState: vi.fn<(getter: () => unknown) => unknown>((getter) => getter()),
   useAuthStore: vi.fn(),
-  useActuatorV1Store: vi.fn(),
-  useWorkspaceV1Store: vi.fn(),
+  useAppStore: vi.fn(),
+  useWorkspace: vi.fn(),
   isLoggedIn: { value: true },
   isSaaSMode: { value: false },
   currentWorkspace: {
@@ -23,8 +23,9 @@ const mocks = vi.hoisted(() => ({
       | undefined,
   },
   workspaceList: { value: [] as { name: string; title: string }[] },
-  fetchWorkspaceList: vi.fn(async () => {}),
-  switchWorkspaceWithoutRedirect: vi.fn(async () => {}),
+  loadWorkspace: vi.fn(async () => {}),
+  loadWorkspaceList: vi.fn(async () => {}),
+  switchWorkspace: vi.fn(async () => {}),
   routerReplace: vi.fn(),
   routerBack: vi.fn(),
   currentRoute: {
@@ -40,30 +41,42 @@ mocks.useAuthStore.mockImplementation(() => ({
     return mocks.isLoggedIn.value;
   },
 }));
-mocks.useActuatorV1Store.mockImplementation(() => ({
-  get isSaaSMode() {
-    return mocks.isSaaSMode.value;
-  },
-}));
-mocks.useWorkspaceV1Store.mockImplementation(() => ({
-  get currentWorkspace() {
-    return mocks.currentWorkspace.value;
-  },
-  get workspaceList() {
-    return mocks.workspaceList.value;
-  },
-  fetchWorkspaceList: mocks.fetchWorkspaceList,
-  switchWorkspaceWithoutRedirect: mocks.switchWorkspaceWithoutRedirect,
-}));
+mocks.useWorkspace.mockImplementation(() => mocks.currentWorkspace.value);
+// The OAuth2 consent page selects discrete app-store slices via
+// `useAppStore((state) => state.X)`. Resolve each selector against a
+// mock state that exposes the workspace list (live via getter) plus
+// the action mocks under test. `isSaaSMode` is now an app-store method.
+mocks.useAppStore.mockImplementation((selector: (state: unknown) => unknown) =>
+  selector({
+    get workspaceList() {
+      return mocks.workspaceList.value;
+    },
+    isSaaSMode: () => mocks.isSaaSMode.value,
+    loadWorkspace: mocks.loadWorkspace,
+    loadWorkspaceList: mocks.loadWorkspaceList,
+    switchWorkspace: mocks.switchWorkspace,
+  })
+);
+// The consent page also calls `useAppStore.getState().loadServerInfo()` on mount.
+(mocks.useAppStore as unknown as { getState: () => unknown }).getState =
+  () => ({
+    loadServerInfo: vi.fn().mockResolvedValue(undefined),
+  });
 
 vi.mock("@/react/hooks/useVueState", () => ({
   useVueState: mocks.useVueState,
 }));
 
+vi.mock("@/react/hooks/useAppState", () => ({
+  useWorkspace: mocks.useWorkspace,
+}));
+
+vi.mock("@/react/stores/app", () => ({
+  useAppStore: mocks.useAppStore,
+}));
+
 vi.mock("@/store", () => ({
   useAuthStore: mocks.useAuthStore,
-  useActuatorV1Store: mocks.useActuatorV1Store,
-  useWorkspaceV1Store: mocks.useWorkspaceV1Store,
 }));
 
 // Test-only Select stub: Base UI's Select renders its popup through a portal,
@@ -265,7 +278,7 @@ describe("OAuth2ConsentPage", () => {
     expect(container.textContent).toContain("oauth2.consent.workspace-label");
     expect(container.textContent).toContain("Acme Corp");
     // Self-hosted (default in this test) does NOT prefetch the workspace list.
-    expect(mocks.fetchWorkspaceList).not.toHaveBeenCalled();
+    expect(mocks.loadWorkspaceList).not.toHaveBeenCalled();
     unmount();
   });
 
@@ -291,7 +304,7 @@ describe("OAuth2ConsentPage", () => {
     );
     render();
     await flushPromises();
-    expect(mocks.fetchWorkspaceList).toHaveBeenCalledTimes(1);
+    expect(mocks.loadWorkspaceList).toHaveBeenCalledTimes(1);
     // Picker trigger renders the current workspace title.
     expect(container.textContent).toContain("Acme Corp");
     unmount();
@@ -348,9 +361,10 @@ describe("OAuth2ConsentPage", () => {
     // crucially, that variant does NOT fire the store's onmessage handler
     // in this tab, so we don't race-redirect to the landing page and lose
     // the OAuth query params.
-    expect(mocks.switchWorkspaceWithoutRedirect).toHaveBeenCalledTimes(1);
-    expect(mocks.switchWorkspaceWithoutRedirect).toHaveBeenCalledWith(
-      "workspaces/ws-2"
+    expect(mocks.switchWorkspace).toHaveBeenCalledTimes(1);
+    expect(mocks.switchWorkspace).toHaveBeenCalledWith(
+      "workspaces/ws-2",
+      false
     );
     expect(reload).toHaveBeenCalledTimes(1);
     unmount();
@@ -387,7 +401,7 @@ describe("OAuth2ConsentPage", () => {
       select!.dispatchEvent(new Event("change", { bubbles: true }));
       await Promise.resolve();
     });
-    expect(mocks.switchWorkspaceWithoutRedirect).not.toHaveBeenCalled();
+    expect(mocks.switchWorkspace).not.toHaveBeenCalled();
     unmount();
   });
 

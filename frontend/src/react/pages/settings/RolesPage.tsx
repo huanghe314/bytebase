@@ -49,11 +49,11 @@ import { Textarea } from "@/react/components/ui/textarea";
 import { BlockTooltip } from "@/react/components/ui/tooltip";
 import { useVueState } from "@/react/hooks/useVueState";
 import {
-  pushNotification,
-  useRoleStore,
-  useSubscriptionV1Store,
-  useWorkspaceV1Store,
-} from "@/store";
+  displayRoleDescriptionFromList,
+  displayRoleTitleFromList,
+} from "@/react/lib/role";
+import { useAppStore } from "@/react/stores/app";
+import { pushNotification } from "@/store";
 import { roleNamePrefix } from "@/store/modules/v1/common";
 import {
   BASIC_WORKSPACE_PERMISSIONS,
@@ -64,8 +64,6 @@ import type { Role } from "@/types/proto-es/v1/role_service_pb";
 import { RoleSchema } from "@/types/proto-es/v1/role_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import {
-  displayRoleDescription,
-  displayRoleTitle,
   extractRoleResourceName,
   hasWorkspacePermissionV2,
   isCustomRole,
@@ -211,8 +209,7 @@ function ImportPermissionModal({
   onImport: (permissions: string[]) => void;
 }) {
   const { t } = useTranslation();
-  const roleStore = useRoleStore();
-  const roleList = useVueState(() => [...roleStore.roleList]);
+  const roleList = useAppStore((state) => state.roleList);
   const [selectedRoleName, setSelectedRoleName] = useState<string>("");
 
   const selectedRole = useMemo(
@@ -242,7 +239,7 @@ function ImportPermissionModal({
           {selectedRole && (
             <>
               <p className="textinfolabel">
-                {displayRoleDescription(selectedRole.name)}
+                {displayRoleDescriptionFromList(selectedRole.name, roleList)}
               </p>
               <div>
                 <label className="textlabel mb-1 block">
@@ -292,13 +289,15 @@ function DeleteConfirmModal({
   onCancel: () => void;
 }) {
   const { t } = useTranslation();
+  const roleList = useAppStore((state) => state.roleList);
   const canDelete = occupiedResources.length === 0;
+  const roleTitle = displayRoleTitleFromList(roleName, roleList);
 
   return (
     <AlertDialog open onOpenChange={(nextOpen) => !nextOpen && onCancel()}>
       <AlertDialogContent>
         <AlertDialogTitle>
-          {t("common.delete")} - {displayRoleTitle(roleName)}
+          {t("common.delete")} - {roleTitle}
         </AlertDialogTitle>
 
         {occupiedResources.length > 0 ? (
@@ -309,7 +308,7 @@ function DeleteConfirmModal({
                 <>
                   <p className="mb-2">
                     {t("resource.delete-warning-with-resources", {
-                      name: displayRoleTitle(roleName),
+                      name: roleTitle,
                     })}
                   </p>
                   <ul className="list-disc pl-4 text-sm">
@@ -325,7 +324,7 @@ function DeleteConfirmModal({
         ) : (
           <AlertDialogDescription className="mt-2">
             {t("resource.delete-warning", {
-              name: displayRoleTitle(roleName),
+              name: roleTitle,
             })}
           </AlertDialogDescription>
         )}
@@ -365,7 +364,8 @@ function RoleSheet({
   onShowFeatureModal: () => void;
 }) {
   const { t } = useTranslation();
-  const roleStore = useRoleStore();
+  const upsertRole = useAppStore((state) => state.upsertRole);
+  const roleList = useAppStore((state) => state.roleList);
 
   const [editRole, setEditRole] = useState<Role>(
     create(RoleSchema, { permissions: [...BASIC_WORKSPACE_PERMISSIONS] })
@@ -412,10 +412,7 @@ function RoleSheet({
 
   const validateResourceId = useCallback(
     async (val: string) => {
-      if (
-        val &&
-        roleStore.roleList.find((r) => r.name === `${roleNamePrefix}${val}`)
-      ) {
+      if (val && roleList.find((r) => r.name === `${roleNamePrefix}${val}`)) {
         return [
           {
             type: "error" as const,
@@ -427,7 +424,7 @@ function RoleSheet({
       }
       return [];
     },
-    [roleStore.roleList, t]
+    [roleList, t]
   );
 
   // Sync incoming role prop to local state
@@ -503,7 +500,7 @@ function RoleSheet({
 
     setLoading(true);
     try {
-      await roleStore.upsertRole(editRole);
+      await upsertRole(editRole);
       pushNotification({
         module: "bytebase",
         style: "SUCCESS",
@@ -674,9 +671,9 @@ function RoleSheet({
 
 export function RolesPage() {
   const { t } = useTranslation();
-  const roleStore = useRoleStore();
-  const workspaceStore = useWorkspaceV1Store();
-  const subscriptionStore = useSubscriptionV1Store();
+  const listRoles = useAppStore((state) => state.listRoles);
+  const getRoleByName = useAppStore((state) => state.getRoleByName);
+  const deleteRole = useAppStore((state) => state.deleteRole);
 
   const [ready, setReady] = useState(false);
   const [detailRole, setDetailRole] = useState<Role | undefined>();
@@ -686,13 +683,13 @@ export function RolesPage() {
   const [deleteResources, setDeleteResources] = useState<string[]>([]);
 
   const hasCustomRoleFeature = useVueState(() =>
-    subscriptionStore.hasInstanceFeature(PlanFeature.FEATURE_CUSTOM_ROLES)
+    useAppStore.getState().hasInstanceFeature(PlanFeature.FEATURE_CUSTOM_ROLES)
   );
 
   const canCreate = hasWorkspacePermissionV2("bb.roles.create");
   const canDelete = hasWorkspacePermissionV2("bb.roles.delete");
 
-  const roleList = useVueState(() => [...roleStore.roleList]);
+  const roleList = useAppStore((state) => state.roleList);
 
   const filteredRoleList = useMemo(() => {
     return sortBy(roleList, (role) =>
@@ -702,15 +699,17 @@ export function RolesPage() {
     );
   }, [roleList]);
 
-  // Fetch roles on mount and handle query param
+  // Fetch roles on mount and handle query param. The workspace IAM policy
+  // and its referenced groups (used by the "users with this role" delete
+  // confirmation) are loaded centrally by useEnsureWorkspaceCommonData in
+  // the dashboard shell, so this page doesn't need to hedge here.
   useEffect(() => {
-    roleStore
-      .fetchRoleList()
+    listRoles()
       .then(() => {
         const urlParams = new URLSearchParams(window.location.search);
         const name = urlParams.get("role");
         if (name?.startsWith(roleNamePrefix)) {
-          const role = roleStore.getRoleByName(name);
+          const role = getRoleByName(name);
           if (role) {
             setDetailRole(role);
             setDetailMode("EDIT");
@@ -739,7 +738,8 @@ export function RolesPage() {
     }
 
     const usersWithRole = [
-      ...(workspaceStore.roleMapToUsers.get(role.name) ?? new Set()),
+      ...(useAppStore.getState().workspaceRoleMapToUsers().get(role.name) ??
+        new Set<string>()),
     ];
     setDeleteResources(usersWithRole);
     setDeleteTarget(role);
@@ -748,7 +748,7 @@ export function RolesPage() {
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     try {
-      await roleStore.deleteRole(deleteTarget);
+      await deleteRole(deleteTarget);
       pushNotification({
         module: "bytebase",
         style: "SUCCESS",
@@ -819,7 +819,7 @@ export function RolesPage() {
               {filteredRoleList.map((role) => (
                 <TableRow key={role.name}>
                   <TableCell className="whitespace-nowrap">
-                    <span>{displayRoleTitle(role.name)}</span>
+                    <span>{displayRoleTitleFromList(role.name, roleList)}</span>
                     {!isCustomRole(role.name) && (
                       <Badge variant="secondary" className="ml-2 text-xs">
                         {t("common.system")}
@@ -827,9 +827,14 @@ export function RolesPage() {
                     )}
                   </TableCell>
                   <TableCell className="text-control-light overflow-hidden">
-                    <BlockTooltip content={displayRoleDescription(role.name)}>
+                    <BlockTooltip
+                      content={displayRoleDescriptionFromList(
+                        role.name,
+                        roleList
+                      )}
+                    >
                       <span className="block truncate">
-                        {displayRoleDescription(role.name)}
+                        {displayRoleDescriptionFromList(role.name, roleList)}
                       </span>
                     </BlockTooltip>
                   </TableCell>

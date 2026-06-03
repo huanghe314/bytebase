@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { BannersWrapper } from "@/react/components/BannersWrapper";
+import { useEnsureWorkspaceCommonData } from "@/react/hooks/useEnsureWorkspaceCommonData";
 import { router } from "@/router";
-import { useEnvironmentV1Store, useSettingV1Store } from "@/store";
-import { Setting_SettingName } from "@/types/proto-es/v1/setting_service_pb";
 import { provideSheetContext } from "@/views/sql-editor/Sheet";
 import { RequestDrawerHost } from "./RequestDrawerHost";
 import { SQLEditorRouteShell } from "./SQLEditorRouteShell";
@@ -15,40 +14,34 @@ import { useSQLEditorAutoSave } from "./useSQLEditorAutoSave";
  *  - the legacy `#sql-editor-debug` teleport target (kept hidden by
  *    default, used by debug `<li>` strings the inner shells emit).
  *  - the React `<BannersWrapper>` at the top.
- *  - workspace profile + environment fetch on mount, gated by Vue
- *    Router's `isReady()` so the SQL Editor doesn't bootstrap before
- *    initial route resolution.
+ *  - workspace-scope common data via `useEnsureWorkspaceCommonData()` —
+ *    the same hook DashboardFrameShell uses. Idempotent loaders make it
+ *    safe to call from every top-level shell.
  *  - `useSQLEditorAutoSave()` — the 2-second debounced worksheet
  *    auto-save extracted from the legacy `provideSQLEditorContext()`.
  *  - the `<SQLEditorRouteShell>` once `ready` flips true.
  */
 export function SQLEditorLayout() {
-  const settingStore = useSettingV1Store();
-  const environmentStore = useEnvironmentV1Store();
   // Boots the per-view watchers (selectedKeys ↔ active tab) the moment
   // the layout appears. The sheet-context singleton is module-level and
   // lazy — calling it here ensures the watchers are wired before any
   // child component reads from it.
   provideSheetContext();
 
-  const [ready, setReady] = useState(false);
+  const commonDataReady = useEnsureWorkspaceCommonData();
+  const [routerReady, setRouterReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      await router.isReady();
-      await Promise.all([
-        settingStore.getOrFetchSettingByName(
-          Setting_SettingName.WORKSPACE_PROFILE
-        ),
-        environmentStore.fetchEnvironments(),
-      ]);
-      if (!cancelled) setReady(true);
-    })();
+    void router.isReady().then(() => {
+      if (!cancelled) setRouterReady(true);
+    });
     return () => {
       cancelled = true;
     };
-  }, [settingStore, environmentStore]);
+  }, []);
+
+  const ready = commonDataReady && routerReady;
 
   useSQLEditorAutoSave();
 

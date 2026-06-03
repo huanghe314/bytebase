@@ -1,20 +1,19 @@
 package plsql
 
 import (
+	"errors"
+	"fmt"
+	"reflect"
 	"unicode/utf8"
 
-	"github.com/antlr4-go/antlr/v4"
 	"github.com/bytebase/omni/oracle/ast"
 	oracleparser "github.com/bytebase/omni/oracle/parser"
-	antlrparser "github.com/bytebase/parser/plsql"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 // OmniAST wraps an omni AST node and implements the base.AST interface.
-// During migration, it also implements AntlrASTProvider so that callers
-// still using GetANTLRAST() can fall back to the ANTLR tree.
 type OmniAST struct {
 	// Node is the omni AST node (e.g. *ast.SelectStmt, *ast.CreateTableStmt).
 	Node ast.Node
@@ -22,12 +21,6 @@ type OmniAST struct {
 	Text string
 	// StartPosition is the 1-based position where this statement starts.
 	StartPosition *storepb.Position
-
-	// antlrAST is lazily populated when AsANTLRAST() is called.
-	// This field will be removed once all Oracle modules are migrated to omni.
-	antlrAST *base.ANTLRAST
-	// antlrParsed tracks whether we've attempted the ANTLR parse.
-	antlrParsed bool
 }
 
 // ASTStartPosition implements base.AST.
@@ -35,45 +28,86 @@ func (a *OmniAST) ASTStartPosition() *storepb.Position {
 	return a.StartPosition
 }
 
-// AsANTLRAST implements base.AntlrASTProvider for backward compatibility.
-// It lazily parses the SQL text with the ANTLR parser and caches the result.
-func (a *OmniAST) AsANTLRAST() (*base.ANTLRAST, bool) {
-	if a.antlrParsed {
-		return a.antlrAST, a.antlrAST != nil
-	}
-	a.antlrParsed = true
-
-	tree, tokens := parseSinglePLSQLLenient(a.Text)
-	a.antlrAST = &base.ANTLRAST{
-		StartPosition: a.StartPosition,
-		Tree:          tree,
-		Tokens:        tokens,
-	}
-	return a.antlrAST, true
-}
-
-// parseSinglePLSQLLenient parses a single Oracle statement without error listeners.
-// The omni parser has already validated the SQL; this tree only exists for
-// backward-compatible ANTLR consumers during the migration window.
-func parseSinglePLSQLLenient(statement string) (antlr.Tree, *antlr.CommonTokenStream) {
-	inputStream := antlr.NewInputStream(addSemicolonIfNeeded(statement))
-	lexer := antlrparser.NewPlSqlLexer(inputStream)
-	stream := antlr.NewCommonTokenStream(lexer, 0)
-	p := antlrparser.NewPlSqlParser(stream)
-	p.SetVersion12(true)
-
-	lexer.RemoveErrorListeners()
-	p.RemoveErrorListeners()
-	p.BuildParseTrees = true
-
-	tree := p.Sql_script()
-	return tree, stream
-}
-
 // ParsePLSQLOmni parses SQL using omni's parser and returns an ast.List.
 // This is the recommended entry point for new Oracle code that needs omni AST nodes.
 func ParsePLSQLOmni(sql string) (*ast.List, error) {
-	return oracleparser.Parse(sql)
+	statements, err := SplitSQL(sql)
+	if err != nil {
+		return nil, err
+	}
+
+	list := &ast.List{}
+	for _, statement := range statements {
+		if statement.Empty {
+			continue
+		}
+		parsed, err := oracleparser.Parse(statement.Text)
+		if err != nil {
+			if statement.Range != nil {
+				return nil, offsetOracleParseError(err, int(statement.Range.Start))
+			}
+			return nil, err
+		}
+		if parsed == nil {
+			continue
+		}
+		if statement.Range != nil {
+			offsetOmniLocs(parsed, int(statement.Range.Start))
+		}
+		list.Items = append(list.Items, parsed.Items...)
+	}
+	return list, nil
+}
+
+func offsetOracleParseError(err error, offset int) error {
+	var parseErr *oracleparser.ParseError
+	if !errors.As(err, &parseErr) {
+		return err
+	}
+	adjusted := *parseErr
+	adjusted.Position += offset
+	return &adjusted
+}
+
+type omniLocOffsetter int
+
+func offsetOmniLocs(node ast.Node, offset int) {
+	if offset == 0 {
+		return
+	}
+	ast.Walk(omniLocOffsetter(offset), node)
+}
+
+func (o omniLocOffsetter) Visit(node ast.Node) ast.Visitor {
+	if node == nil {
+		return nil
+	}
+	value := reflect.ValueOf(node)
+	if value.Kind() != reflect.Pointer || value.IsNil() {
+		return o
+	}
+	elem := value.Elem()
+	if elem.Kind() != reflect.Struct {
+		return o
+	}
+	locField := elem.FieldByName("Loc")
+	if !locField.IsValid() || !locField.CanSet() || locField.Type() != reflect.TypeOf(ast.Loc{}) {
+		return o
+	}
+
+	loc, ok := locField.Interface().(ast.Loc)
+	if !ok {
+		return o
+	}
+	offset := int(o)
+	if loc.Start >= 0 {
+		loc.Start += offset
+	}
+	if loc.End >= 0 {
+		loc.End += offset
+	}
+	locField.Set(reflect.ValueOf(loc))
+	return o
 }
 
 // GetOmniNode extracts the omni AST node from a base.AST interface.
@@ -113,5 +147,27 @@ func ByteOffsetToRunePosition(sql string, byteOffset int) *storepb.Position {
 	return &storepb.Position{
 		Line:   line,
 		Column: runeCol + 1, // convert to 1-based
+	}
+}
+
+func convertOmniError(err error, stmt base.Statement) error {
+	var parseErr *oracleparser.ParseError
+	if !errors.As(err, &parseErr) {
+		return err
+	}
+
+	pos := ByteOffsetToRunePosition(stmt.Text, parseErr.Position)
+	if stmt.Start != nil {
+		if pos.Line == 1 {
+			pos.Column += stmt.Start.Column - 1
+		}
+		pos.Line += stmt.Start.Line - 1
+	}
+
+	msg := fmt.Sprintf("Syntax error at line %d:%d: %s", pos.Line, pos.Column, parseErr.Message)
+	return &base.SyntaxError{
+		Position:   pos,
+		Message:    msg,
+		RawMessage: parseErr.Message,
 	}
 }

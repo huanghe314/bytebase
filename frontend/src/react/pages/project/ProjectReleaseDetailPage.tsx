@@ -1,4 +1,4 @@
-import { Clock4, EllipsisVertical, Link2 } from "lucide-react";
+import { Clock4, EllipsisVertical, Link2, LoaderCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { HumanizeTs } from "@/react/components/HumanizeTs";
@@ -26,7 +26,8 @@ import {
   SheetTitle,
 } from "@/react/components/ui/sheet";
 import { useVueState } from "@/react/hooks/useVueState";
-import { pushNotification, useProjectV1Store, useReleaseStore } from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { pushNotification } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import { getTimeForPbTimestampProtoEs } from "@/types";
 import { State, VCSType } from "@/types/proto-es/v1/common_pb";
@@ -41,29 +42,42 @@ export function ProjectReleaseDetailPage({
   releaseId: string;
 }) {
   const { t } = useTranslation();
-  const releaseStore = useReleaseStore();
-  const projectV1Store = useProjectV1Store();
+  const fetchRelease = useAppStore((state) => state.fetchRelease);
+  const deleteRelease = useAppStore((state) => state.deleteRelease);
+  const undeleteRelease = useAppStore((state) => state.undeleteRelease);
+  const projectsByName = useAppStore((s) => s.projectsByName);
 
   const projectName = `${projectNamePrefix}${projectId}`;
   const releaseName = `${projectName}/releases/${releaseId}`;
 
-  const release = useVueState(() => releaseStore.getReleaseByName(releaseName));
+  const release = useAppStore((state) => state.getReleaseByName(releaseName));
+  // subscribe to re-render on project cache change
+  void projectsByName;
   const project = useVueState(() =>
-    projectV1Store.getProjectByName(projectName)
+    useAppStore.getState().getProjectByName(projectName)
   );
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    void projectV1Store.getOrFetchProjectByName(projectName).catch((error) => {
-      if (!cancelled) console.error("Failed to fetch project", error);
-    });
-    void releaseStore.fetchReleaseByName(releaseName).catch((error) => {
-      if (!cancelled) console.error("Failed to fetch release", error);
-    });
+    setIsLoading(true);
+    void useAppStore
+      .getState()
+      .getOrFetchProjectByName(projectName)
+      .catch((error) => {
+        if (!cancelled) console.error("Failed to fetch project", error);
+      });
+    void fetchRelease(releaseName)
+      .catch((error) => {
+        if (!cancelled) console.error("Failed to fetch release", error);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [projectV1Store, releaseStore, projectName, releaseName]);
+  }, [fetchRelease, projectName, releaseName]);
 
   useEffect(() => {
     if (project?.title) {
@@ -77,16 +91,32 @@ export function ProjectReleaseDetailPage({
   const [archiveOpen, setArchiveOpen] = useState(false);
 
   const releaseDisplayName = useMemo(() => {
-    const parts = release.name.split("/");
-    return parts[parts.length - 1] || release.name;
-  }, [release.name]);
+    const name = release?.name ?? releaseName;
+    const parts = name.split("/");
+    return parts[parts.length - 1] || name;
+  }, [release?.name, releaseName]);
+
+  if (!release) {
+    return (
+      <div className="flex flex-col items-start gap-y-4 p-4">
+        <h1 className="text-xl font-medium truncate">{releaseDisplayName}</h1>
+        {isLoading ? (
+          <div className="flex w-full items-center justify-center py-10">
+            <LoaderCircle className="h-4 w-4 animate-spin text-control-light" />
+          </div>
+        ) : (
+          <div className="text-control-light">{t("release.not-found")}</div>
+        )}
+      </div>
+    );
+  }
 
   const isActive = release.state === State.ACTIVE;
   const isDeleted = release.state === State.DELETED;
 
   const handleArchive = async () => {
     try {
-      await releaseStore.deleteRelease(release.name);
+      await deleteRelease(release.name);
     } catch (error) {
       pushNotification({
         module: "bytebase",
@@ -101,7 +131,7 @@ export function ProjectReleaseDetailPage({
 
   const handleRestore = async () => {
     try {
-      await releaseStore.undeleteRelease(release.name);
+      await undeleteRelease(release.name);
     } catch (error) {
       pushNotification({
         module: "bytebase",

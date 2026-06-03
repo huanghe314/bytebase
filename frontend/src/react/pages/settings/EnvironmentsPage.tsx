@@ -58,29 +58,18 @@ import {
 import { useEnvironmentList } from "@/react/hooks/useAppState";
 import { useUnsavedChangesGuard } from "@/react/hooks/useUnsavedChangesGuard";
 import { useVueState } from "@/react/hooks/useVueState";
+import { displayRoleTitleFromList } from "@/react/lib/role";
 import { cn } from "@/react/lib/utils";
 import { useAppStore } from "@/react/stores/app";
+import { getEmptyRolloutPolicy } from "@/react/stores/app/policy";
+import { useSQLReviewStore } from "@/react/stores/sqlReview";
 import { router } from "@/router";
 import {
   WORKSPACE_ROUTE_SQL_REVIEW_CREATE,
   WORKSPACE_ROUTE_SQL_REVIEW_DETAIL,
 } from "@/router/dashboard/workspaceRoutes";
-import {
-  pushNotification,
-  useActuatorV1Store,
-  useDatabaseV1Store,
-  useEnvironmentV1Store,
-  useInstanceV1Store,
-  useRoleStore,
-  useSQLReviewStore,
-  useSubscriptionV1Store,
-  useUIStateStore,
-} from "@/store";
+import { pushNotification } from "@/store";
 import { environmentNamePrefix } from "@/store/modules/v1/common";
-import {
-  getEmptyRolloutPolicy,
-  usePolicyV1Store,
-} from "@/store/modules/v1/policy";
 import {
   formatEnvironmentName,
   isValidEnvironmentName,
@@ -101,7 +90,6 @@ import {
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import type { Environment } from "@/types/v1/environment";
 import {
-  displayRoleTitle,
   hasWorkspacePermissionV2,
   hexToRgb,
   sqlReviewPolicySlug,
@@ -121,9 +109,8 @@ function EnvironmentName({
   environment: Environment;
   link?: boolean;
 }) {
-  const subscriptionStore = useSubscriptionV1Store();
-  const hasEnvTierFeature = useVueState(() =>
-    subscriptionStore.hasInstanceFeature(PlanFeature.FEATURE_ENVIRONMENT_TIERS)
+  const hasEnvTierFeature = useAppStore((s) =>
+    s.hasInstanceFeature(PlanFeature.FEATURE_ENVIRONMENT_TIERS)
   );
   const color = environment.color || "#4f46e5";
   const rgbValues = hexToRgb(color);
@@ -208,11 +195,9 @@ function RolloutPolicyConfig({
   onChange: (policy: Policy) => void;
 }) {
   const { t } = useTranslation();
-  const roleStore = useRoleStore();
-  const subscriptionStore = useSubscriptionV1Store();
-  const roleList = useVueState(() => [...roleStore.roleList]);
-  const hasCustomRoleFeature = useVueState(() =>
-    subscriptionStore.hasInstanceFeature(PlanFeature.FEATURE_CUSTOM_ROLES)
+  const roleList = useAppStore((state) => state.roleList);
+  const hasCustomRoleFeature = useAppStore((s) =>
+    s.hasInstanceFeature(PlanFeature.FEATURE_CUSTOM_ROLES)
   );
   const canUpdatePolicy = hasWorkspacePermissionV2("bb.policies.update");
 
@@ -220,6 +205,14 @@ function RolloutPolicyConfig({
     policy.policy?.case === "rolloutPolicy"
       ? policy.policy.value
       : create(RolloutPolicySchema);
+  const roleByName = useMemo(
+    () => new Map(roleList.map((role) => [role.name, role])),
+    [roleList]
+  );
+  const displayPolicyRoleTitle = useCallback(
+    (name: string) => displayRoleTitleFromList(name, roleList),
+    [roleList]
+  );
 
   const update = (rp: RolloutPolicy) => {
     onChange({
@@ -267,20 +260,16 @@ function RolloutPolicyConfig({
       roles: { name: string; title: string }[];
     }[] = [];
 
-    const wsRoles = PRESET_WORKSPACE_ROLES.map((name) =>
-      roleStore.getRoleByName(name)
-    )
+    const wsRoles = PRESET_WORKSPACE_ROLES.map((name) => roleByName.get(name))
       .filter((r) => r && !selected.has(r.name))
-      .map((r) => ({ name: r!.name, title: displayRoleTitle(r!.name) }));
+      .map((r) => ({ name: r!.name, title: displayPolicyRoleTitle(r!.name) }));
     if (wsRoles.length > 0) {
       groups.push({ label: t("role.workspace-roles.self"), roles: wsRoles });
     }
 
-    const projRoles = PRESET_PROJECT_ROLES.map((name) =>
-      roleStore.getRoleByName(name)
-    )
+    const projRoles = PRESET_PROJECT_ROLES.map((name) => roleByName.get(name))
       .filter((r) => r && !selected.has(r.name))
-      .map((r) => ({ name: r!.name, title: displayRoleTitle(r!.name) }));
+      .map((r) => ({ name: r!.name, title: displayPolicyRoleTitle(r!.name) }));
     if (projRoles.length > 0) {
       groups.push({ label: t("role.project-roles.self"), roles: projRoles });
     }
@@ -288,7 +277,7 @@ function RolloutPolicyConfig({
     if (hasCustomRoleFeature) {
       const customRoles = roleList
         .filter((r) => !PRESET_ROLES.includes(r.name) && !selected.has(r.name))
-        .map((r) => ({ name: r.name, title: displayRoleTitle(r.name) }));
+        .map((r) => ({ name: r.name, title: displayPolicyRoleTitle(r.name) }));
       if (customRoles.length > 0) {
         groups.push({
           label: t("role.custom-roles.self"),
@@ -298,7 +287,14 @@ function RolloutPolicyConfig({
     }
 
     return groups;
-  }, [roleList, rolloutPolicy.roles, roleStore, t]);
+  }, [
+    displayPolicyRoleTitle,
+    hasCustomRoleFeature,
+    roleByName,
+    roleList,
+    rolloutPolicy.roles,
+    t,
+  ]);
 
   const [showRoleDropdown, setShowRoleDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -328,7 +324,7 @@ function RolloutPolicyConfig({
                 key={role}
                 className="inline-flex items-center gap-x-1 rounded-xs bg-gray-100 px-2 py-1 text-sm"
               >
-                {displayRoleTitle(role)}
+                {displayPolicyRoleTitle(role)}
                 {canUpdatePolicy && (
                   <button
                     type="button"
@@ -466,9 +462,10 @@ function SQLReviewSectionInner(
 
   // Fetch the full review policy list and the current resource's policy on mount
   useEffect(() => {
-    reviewStore.fetchReviewPolicyList();
-    reviewStore.getOrFetchReviewPolicyByResource(resourcePath, true);
-  }, [resourcePath, reviewStore]);
+    const store = useSQLReviewStore.getState();
+    store.fetchReviewPolicyList();
+    store.getOrFetchReviewPolicyByResource(resourcePath, true);
+  }, [resourcePath]);
 
   const isDirty =
     enforce !== (currentPolicy?.enforce ?? false) ||
@@ -479,9 +476,10 @@ function SQLReviewSectionInner(
   }, [isDirty, onDirtyChange]);
 
   const saveSQLReview = useCallback(async () => {
+    const store = useSQLReviewStore.getState();
     if (!isEqual(currentPolicy, pendingPolicy)) {
       if (currentPolicy) {
-        await reviewStore.upsertReviewConfigTag({
+        await store.upsertReviewConfigTag({
           oldResources: [...currentPolicy.resources],
           newResources: currentPolicy.resources.filter(
             (r) => r !== resourcePath
@@ -490,7 +488,7 @@ function SQLReviewSectionInner(
         });
       }
       if (pendingPolicy) {
-        await reviewStore.upsertReviewConfigTag({
+        await store.upsertReviewConfigTag({
           oldResources: [...pendingPolicy.resources],
           newResources: [...pendingPolicy.resources, resourcePath],
           review: pendingPolicy.id,
@@ -498,12 +496,12 @@ function SQLReviewSectionInner(
       }
     }
     if (pendingPolicy && pendingPolicy.enforce !== enforce) {
-      await reviewStore.upsertReviewPolicy({
+      await store.upsertReviewPolicy({
         id: pendingPolicy.id,
         enforce,
       });
     }
-  }, [currentPolicy, pendingPolicy, enforce, resourcePath, reviewStore]);
+  }, [currentPolicy, pendingPolicy, enforce, resourcePath]);
 
   const revertSQLReview = useCallback(() => {
     setPendingPolicy(currentPolicy);
@@ -640,9 +638,6 @@ function EnvironmentDetail({
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const environmentStore = useEnvironmentV1Store();
-  const policyStore = usePolicyV1Store();
-  const subscriptionStore = useSubscriptionV1Store();
   const refreshEnvironmentList = useAppStore(
     (state) => state.refreshEnvironmentList
   );
@@ -666,8 +661,8 @@ function EnvironmentDetail({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [sqlReviewDirty, setSqlReviewDirty] = useState(false);
 
-  const hasEnvironmentTiers = useVueState(() =>
-    subscriptionStore.hasInstanceFeature(PlanFeature.FEATURE_ENVIRONMENT_TIERS)
+  const hasEnvironmentTiers = useAppStore((s) =>
+    s.hasInstanceFeature(PlanFeature.FEATURE_ENVIRONMENT_TIERS)
   );
 
   const environmentList = useEnvironmentList();
@@ -684,10 +679,12 @@ function EnvironmentDetail({
   useEffect(() => {
     const fetchPolicy = async () => {
       const envName = formatEnvironmentName(environment.id);
-      const policy = await policyStore.getOrFetchPolicyByParentAndType({
-        parentPath: envName,
-        policyType: PolicyType.ROLLOUT_POLICY,
-      });
+      const policy = await useAppStore
+        .getState()
+        .getOrFetchPolicyByParentAndType({
+          parentPath: envName,
+          policyType: PolicyType.ROLLOUT_POLICY,
+        });
       const result =
         policy ??
         create(PolicySchema, {
@@ -700,13 +697,9 @@ function EnvironmentDetail({
       setOriginalRolloutPolicy(cloneDeep(result));
     };
     fetchPolicy();
-  }, [environment.id, policyStore]);
+  }, [environment.id]);
 
   // Check for related resources (instances/databases)
-  const instanceStore = useInstanceV1Store();
-  const databaseStore = useDatabaseV1Store();
-  const actuatorStore = useActuatorV1Store();
-
   useEffect(() => {
     const checkRelatedResources = async () => {
       if (!canEdit || environmentList.length <= 1) {
@@ -715,14 +708,14 @@ function EnvironmentDetail({
       }
       try {
         const [instResp, dbResp] = await Promise.all([
-          instanceStore.fetchInstanceList({
+          useAppStore.getState().fetchInstanceList({
             pageSize: 1,
             filter: { environment: environment.name },
             silent: true,
           }),
-          databaseStore.fetchDatabases({
+          useAppStore.getState().fetchDatabases({
             pageSize: 1,
-            parent: actuatorStore.workspaceResourceName,
+            parent: useAppStore.getState().workspaceResourceName(),
             filter: { environment: environment.name },
             silent: true,
           }),
@@ -735,15 +728,7 @@ function EnvironmentDetail({
       }
     };
     checkRelatedResources();
-  }, [
-    environment.id,
-    environment.name,
-    canEdit,
-    environmentList.length,
-    instanceStore,
-    databaseStore,
-    actuatorStore,
-  ]);
+  }, [environment.id, environment.name, canEdit, environmentList.length]);
 
   const envChanged = useMemo(() => {
     return (
@@ -784,7 +769,7 @@ function EnvironmentDetail({
     if (envChanged) {
       const newTags = { ...environment.tags };
       newTags.protected = editProtected ? "protected" : "unprotected";
-      const updated = await environmentStore.updateEnvironment({
+      const updated = await useAppStore.getState().updateEnvironment({
         ...environment,
         title: editTitle,
         color: editColor,
@@ -799,7 +784,7 @@ function EnvironmentDetail({
 
     // Update rollout policy if changed
     if (policyChanged && rolloutPolicy) {
-      await policyStore.upsertPolicy({
+      await useAppStore.getState().upsertPolicy({
         parentPath: formatEnvironmentName(environment.id),
         policy: rolloutPolicy,
       });
@@ -1052,11 +1037,9 @@ function CreateSheet({
   }) => void;
 }) {
   const { t } = useTranslation();
-  const subscriptionStore = useSubscriptionV1Store();
-  const environmentStore = useEnvironmentV1Store();
 
-  const hasEnvironmentTiers = useVueState(() =>
-    subscriptionStore.hasInstanceFeature(PlanFeature.FEATURE_ENVIRONMENT_TIERS)
+  const hasEnvironmentTiers = useAppStore((s) =>
+    s.hasInstanceFeature(PlanFeature.FEATURE_ENVIRONMENT_TIERS)
   );
 
   const [title, setTitle] = useState("");
@@ -1105,10 +1088,9 @@ function CreateSheet({
 
   const validateResourceId = useCallback(
     async (id: string) => {
-      const env = environmentStore.getEnvironmentByName(
-        `${environmentNamePrefix}${id}`,
-        false
-      );
+      const env = useAppStore
+        .getState()
+        .getEnvironmentByName(`${environmentNamePrefix}${id}`, false);
       if (isValidEnvironmentName(env.name)) {
         return [
           {
@@ -1121,7 +1103,7 @@ function CreateSheet({
       }
       return [];
     },
-    [environmentStore, t]
+    [t]
   );
 
   const onColorChange = (newColor: string) => {
@@ -1433,9 +1415,6 @@ function ReorderSheetInner({
 // ============================================================
 export function EnvironmentsPage() {
   const { t } = useTranslation();
-  const environmentStore = useEnvironmentV1Store();
-  const policyStore = usePolicyV1Store();
-  const uiStateStore = useUIStateStore();
   const refreshEnvironmentList = useAppStore(
     (state) => state.refreshEnvironmentList
   );
@@ -1454,18 +1433,19 @@ export function EnvironmentsPage() {
   const canEdit = hasWorkspacePermissionV2("bb.settings.setEnvironment");
 
   useEffect(() => {
-    void environmentStore.fetchEnvironments();
-  }, [environmentStore]);
+    void useAppStore.getState().fetchEnvironments();
+  }, []);
 
   // Initialize selected tab and intro state
   useEffect(() => {
-    if (!uiStateStore.getIntroStateByKey("environment.visit")) {
-      uiStateStore.saveIntroStateByKey({
+    const store = useAppStore.getState();
+    if (!store.getIntroStateByKey("environment.visit")) {
+      store.saveIntroStateByKey({
         key: "environment.visit",
         newState: true,
       });
     }
-  }, [uiStateStore]);
+  }, []);
 
   // Select from hash or default to first
   useEffect(() => {
@@ -1525,7 +1505,7 @@ export function EnvironmentsPage() {
       "",
       PolicyResourceType.ENVIRONMENT
     );
-    const createdEnvironment = await environmentStore.createEnvironment({
+    const createdEnvironment = await useAppStore.getState().createEnvironment({
       id: environment.id,
       title: environment.title,
       order: environmentList.length,
@@ -1535,7 +1515,7 @@ export function EnvironmentsPage() {
 
     const isCustomized = !isEqual(rolloutPolicy, DEFAULT_POLICY);
     if (isCustomized) {
-      await policyStore.upsertPolicy({
+      await useAppStore.getState().upsertPolicy({
         parentPath: `${environmentNamePrefix}${createdEnvironment.id}`,
         policy: rolloutPolicy,
       });
@@ -1547,9 +1527,9 @@ export function EnvironmentsPage() {
   };
 
   const handleDelete = async (environment: Environment) => {
-    await environmentStore.deleteEnvironment(
-      formatEnvironmentName(environment.id)
-    );
+    await useAppStore
+      .getState()
+      .deleteEnvironment(formatEnvironmentName(environment.id));
     pushNotification({
       module: "bytebase",
       style: "SUCCESS",
@@ -1563,7 +1543,7 @@ export function EnvironmentsPage() {
   };
 
   const handleReorder = async (reordered: Environment[]) => {
-    await environmentStore.reorderEnvironmentList(reordered);
+    await useAppStore.getState().reorderEnvironmentList(reordered);
     await refreshEnvironmentList();
     setShowReorder(false);
     pushNotification({

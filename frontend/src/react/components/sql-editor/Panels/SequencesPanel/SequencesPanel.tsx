@@ -1,8 +1,7 @@
 import { useState } from "react";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useAppDatabaseMetadata } from "@/react/hooks/useAppDatabaseMetadata";
+import { useConnectionOfCurrentSQLEditorTab } from "@/react/hooks/useSQLEditorBridge";
 import { keyWithPosition } from "@/react/lib/keyWithPosition";
-import { useConnectionOfCurrentSQLEditorTab } from "@/react/stores/sqlEditor/tab-vue-state";
-import { useDBSchemaV1Store } from "@/store";
 import { PanelSearchBox } from "../common/PanelSearchBox";
 import { useViewStateNav } from "../common/useViewStateNav";
 import { SequencesTable } from "./SequencesTable";
@@ -13,20 +12,18 @@ import { SequencesTable } from "./SequencesTable";
  * to scroll that row into view (no separate detail surface).
  */
 export function SequencesPanel() {
-  const dbSchemaStore = useDBSchemaV1Store();
   const { database } = useConnectionOfCurrentSQLEditorTab();
-  const databaseName = useVueState(() => database.value.name);
-  const databaseMetadata = useVueState(
-    () => dbSchemaStore.getDatabaseMetadata(databaseName ?? ""),
-    { deep: true }
-  );
+  const databaseName = database.name;
+  const databaseMetadata = useAppDatabaseMetadata(databaseName ?? "", {
+    autoFetch: false,
+  });
 
   const { schema: schemaName, setDetail } = useViewStateNav();
 
   const [keyword, setKeyword] = useState("");
 
-  const schema = databaseMetadata?.schemas.find((s) => s.name === schemaName);
-  if (!databaseMetadata || !schema) return null;
+  const schema = databaseMetadata.schemas.find((s) => s.name === schemaName);
+  if (!schema) return null;
 
   return (
     <div className="h-full overflow-hidden flex flex-col">

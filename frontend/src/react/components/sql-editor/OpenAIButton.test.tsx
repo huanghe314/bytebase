@@ -10,14 +10,24 @@ import { Engine } from "@/types/proto-es/v1/common_pb";
 
 const mocks = vi.hoisted(() => ({
   useTranslation: vi.fn(() => ({ t: (key: string) => key })),
-  useVueState: vi.fn<(getter: () => unknown) => unknown>(),
-  useSQLEditorTabStore: vi.fn(),
+  // Pinia bridge — runs the getter (resolves openAIEnabled from settings).
+  usePiniaBridge: vi.fn<(getter: () => unknown) => unknown>(),
+  // Per-test controllable tab-derived state.
+  tabState: {
+    isDisconnected: false,
+    currentMode: "WORKSHEET" as string | undefined,
+  },
   // New zustand state mirror.
   state: { showAIPanel: false },
   setShowAIPanel: vi.fn((v: boolean) => {
     mocks.state.showAIPanel = v;
   }),
   useSettingV1Store: vi.fn(),
+  // App-store AI setting + fetch — the component reads
+  // `useAppStore((s) => s.getSettingByName(AI))` for the enabled state and
+  // `useAppStore((s) => s.getOrFetchSettingByName)` in an effect.
+  aiSetting: undefined as unknown,
+  getOrFetchSettingByName: vi.fn().mockResolvedValue(undefined),
   useConnectionOfCurrentSQLEditorTab: vi.fn(),
   hasWorkspacePermissionV2: vi.fn(() => true),
   nextAnimationFrame: vi.fn(() => Promise.resolve()),
@@ -31,17 +41,45 @@ vi.mock("react-i18next", () => ({
   useTranslation: mocks.useTranslation,
 }));
 
-vi.mock("@/react/hooks/useVueState", () => ({
-  useVueState: mocks.useVueState,
+vi.mock("@/react/hooks/usePiniaBridge", () => ({
+  usePiniaBridge: mocks.usePiniaBridge,
 }));
 
 vi.mock("@/store", () => ({
   useSettingV1Store: mocks.useSettingV1Store,
 }));
 
-vi.mock("@/react/stores/sqlEditor/tab-vue-state", () => ({
+vi.mock("@/react/stores/app", () => {
+  const state = {
+    getOrFetchSettingByName: mocks.getOrFetchSettingByName,
+    getSettingByName: () => mocks.aiSetting,
+  };
+  return {
+    useAppStore: Object.assign(
+      (selector: (s: typeof state) => unknown) => selector(state),
+      { getState: () => state }
+    ),
+  };
+});
+
+// `useConnectionOfCurrentSQLEditorTab` now lives on the Pinia bridge hook.
+vi.mock("@/react/hooks/useSQLEditorBridge", () => ({
   useConnectionOfCurrentSQLEditorTab: mocks.useConnectionOfCurrentSQLEditorTab,
-  useSQLEditorTabStore: mocks.useSQLEditorTabStore,
+}));
+
+// Zustand tab store — derived hook + selector hook for connection/mode.
+vi.mock("@/react/stores/sqlEditor/tab", () => ({
+  useIsDisconnected: () => mocks.tabState.isDisconnected,
+  useSQLEditorTabState: (
+    selector: (s: {
+      currentTabId: string;
+      tabsById: Map<string, { mode: string | undefined }>;
+    }) => unknown
+  ) =>
+    selector({
+      currentTabId: "tab1",
+      tabsById: new Map([["tab1", { mode: mocks.tabState.currentMode }]]),
+    }),
 }));
 
 vi.mock("@/react/stores/sqlEditor", () => ({
@@ -197,33 +235,21 @@ const setupDefaultMocks = (overrides: Partial<VueStateValues> = {}) => {
   };
 
   mocks.state.showAIPanel = values.showAIPanel;
-  const tabStore = {
-    isDisconnected: values.isDisconnected,
-    currentTab: { mode: values.currentMode },
-  };
-  const settingStore = {
-    getOrFetchSettingByName: vi.fn().mockResolvedValue(undefined),
-    getSettingByName: vi.fn(),
-  };
+  mocks.tabState.isDisconnected = values.isDisconnected;
+  mocks.tabState.currentMode = values.currentMode;
 
-  mocks.useSQLEditorTabStore.mockReturnValue(tabStore);
-  mocks.useSettingV1Store.mockReturnValue(settingStore);
+  // `openAIEnabled` is derived from the app-store AI setting in the
+  // component (`s.getSettingByName(AI)` → `.value.value.case === "ai"
+  // ? .enabled : false`). Build a setting whose shape matches the
+  // configured value.
+  mocks.aiSetting = values.openAIEnabled
+    ? { value: { value: { case: "ai", value: { enabled: true } } } }
+    : undefined;
+
+  // Migrated hook returns PLAIN values — no Vue `.value` wrapper.
   mocks.useConnectionOfCurrentSQLEditorTab.mockReturnValue({
-    instance: { value: values.instance },
+    instance: values.instance,
   });
-
-  // useVueState order after migration: isDisconnected, currentMode,
-  // instance, openAIEnabled (showAIPanel now read via zustand selector).
-  const ordered = [
-    values.isDisconnected,
-    values.currentMode,
-    values.instance,
-    values.openAIEnabled,
-  ];
-  let idx = 0;
-  mocks.useVueState.mockImplementation(() => ordered[idx++]);
-
-  return { tabStore, settingStore };
 };
 
 beforeEach(async () => {

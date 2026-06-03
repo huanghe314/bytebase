@@ -11,12 +11,8 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  pushNotification,
-  useEnvironmentV1Store,
-  useInstanceV1Store,
-  useSubscriptionV1Store,
-} from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { pushNotification } from "@/store";
 import { Engine, State } from "@/types/proto-es/v1/common_pb";
 import type {
   DataSource,
@@ -63,7 +59,7 @@ export interface InstanceFormContextValue {
   allowEdit: boolean;
   allowCreate: boolean;
   environment: ReturnType<
-    ReturnType<typeof useEnvironmentV1Store>["getEnvironmentByName"]
+    ReturnType<typeof useAppStore.getState>["getEnvironmentByName"]
   >;
   basicInfo: BasicInfo;
   setBasicInfo: React.Dispatch<React.SetStateAction<BasicInfo>>;
@@ -130,9 +126,7 @@ export function InstanceFormProvider({
   children: ReactNode;
 }) {
   const { t } = useTranslation();
-  const instanceStore = useInstanceV1Store();
-  const subscriptionStore = useSubscriptionV1Store();
-  const environmentStore = useEnvironmentV1Store();
+  const environmentList = useAppStore((s) => s.environmentList);
 
   const [state, setState] = useState<LocalState>(() => ({
     editingDataSourceId: instance?.dataSources.find(
@@ -212,20 +206,21 @@ export function InstanceFormProvider({
 
   const hasReadOnlyDataSource = readonlyDataSourceList.length > 0;
 
-  const hasReadonlyReplicaFeature = useMemo(
-    () =>
-      subscriptionStore.hasInstanceFeature(
-        PlanFeature.FEATURE_INSTANCE_READ_ONLY_CONNECTION,
-        instance
-      ),
-    [subscriptionStore, instance]
+  const hasReadonlyReplicaFeature = useAppStore((s) =>
+    s.hasInstanceFeature(
+      PlanFeature.FEATURE_INSTANCE_READ_ONLY_CONNECTION,
+      instance
+    )
   );
 
   const specs = useInstanceSpecs(basicInfo, adminDataSource, editingDataSource);
 
   const environment = useMemo(
-    () => environmentStore.getEnvironmentByName(basicInfo.environment ?? ""),
-    [environmentStore, basicInfo.environment]
+    () =>
+      useAppStore.getState().getEnvironmentByName(basicInfo.environment ?? ""),
+    // Re-resolve when the environment cache loads (environmentList) or the
+    // selected environment changes.
+    [basicInfo.environment, environmentList]
   );
 
   const checkDataSource = useCallback(
@@ -472,7 +467,7 @@ export function InstanceFormProvider({
         );
         inst.dataSources = [dataSourceCreate];
         try {
-          await instanceStore.createInstance(inst, true);
+          await useAppStore.getState().createInstance(inst, true);
           return ok();
         } catch (err) {
           return fail(dataSourceCreate.host, err);
@@ -481,7 +476,7 @@ export function InstanceFormProvider({
         const ds = extractDataSourceFromEdit(instance!.engine, editingDS);
         if (editingDS.pendingCreate) {
           try {
-            await instanceStore.createDataSource({
+            await useAppStore.getState().createDataSource({
               instance: instance!.name,
               dataSource: ds,
               validateOnly: true,
@@ -501,7 +496,7 @@ export function InstanceFormProvider({
               original,
               editingDS
             );
-            await instanceStore.updateDataSource({
+            await useAppStore.getState().updateDataSource({
               instance: instance!.name,
               dataSource: ds,
               updateMask,
@@ -514,14 +509,7 @@ export function InstanceFormProvider({
         }
       }
     },
-    [
-      isCreating,
-      basicInfo,
-      instance,
-      instanceStore,
-      extractDataSourceFromEdit,
-      t,
-    ]
+    [isCreating, basicInfo, instance, extractDataSourceFromEdit, t]
   );
 
   // Debounced valueChanged to avoid expensive deep comparison on every keystroke.

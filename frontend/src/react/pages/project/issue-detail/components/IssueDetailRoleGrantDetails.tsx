@@ -13,14 +13,10 @@ import {
 import { useEnvironmentList } from "@/react/hooks/useAppState";
 import { useVueState } from "@/react/hooks/useVueState";
 import { getRoleEnvironmentLimitationKind } from "@/react/lib/project-member/utils";
-import {
-  useDatabaseV1Store,
-  useEnvironmentV1Store,
-  useInstanceV1Store,
-  useRoleStore,
-} from "@/store";
+import { displayRoleTitleFromList } from "@/react/lib/role";
+import { useAppStore } from "@/react/stores/app";
 import type { DatabaseResource } from "@/types";
-import { displayRoleTitle } from "@/utils";
+import { unknownDatabase } from "@/types/v1/database";
 import {
   type ConditionExpression,
   convertFromCELString,
@@ -31,12 +27,11 @@ import { useIssueDetailContext } from "../context/IssueDetailContext";
 export function IssueDetailRoleGrantDetails() {
   const { t } = useTranslation();
   const page = useIssueDetailContext();
-  const roleStore = useRoleStore();
-  const databaseStore = useDatabaseV1Store();
   const issue = page.issue;
   const requestRoleName = issue?.roleGrant?.role ?? "";
-  const requestRole = useVueState(() =>
-    roleStore.getRoleByName(requestRoleName)
+  const roleList = useAppStore((state) => state.roleList);
+  const requestRole = useAppStore((state) =>
+    state.getRoleByName(requestRoleName)
   );
   const [condition, setCondition] = useState<ConditionExpression | undefined>();
 
@@ -65,11 +60,13 @@ export function IssueDetailRoleGrantDetails() {
   useEffect(() => {
     const resources = condition?.databaseResources ?? [];
     if (resources.length > 0) {
-      void databaseStore.batchGetOrFetchDatabases(
-        resources.map((resource) => resource.databaseFullName)
-      );
+      void useAppStore
+        .getState()
+        .batchGetOrFetchDatabases(
+          resources.map((resource) => resource.databaseFullName)
+        );
     }
-  }, [condition?.databaseResources, databaseStore]);
+  }, [condition?.databaseResources]);
 
   const envKind = getRoleEnvironmentLimitationKind(requestRoleName);
   const envNames = condition?.environments ?? [];
@@ -99,7 +96,9 @@ export function IssueDetailRoleGrantDetails() {
         {requestRoleName && (
           <div className="flex flex-col gap-y-2">
             <span className="text-sm text-control-light">{t("role.self")}</span>
-            <div className="text-base">{displayRoleTitle(requestRoleName)}</div>
+            <div className="text-base">
+              {displayRoleTitleFromList(requestRoleName, roleList)}
+            </div>
           </div>
         )}
 
@@ -177,26 +176,30 @@ function IssueDetailDatabaseResourceTable({
   databaseResourceList: DatabaseResource[];
 }) {
   const { t } = useTranslation();
-  const databaseStore = useDatabaseV1Store();
-  const environmentStore = useEnvironmentV1Store();
-  const instanceStore = useInstanceV1Store();
+  // Subscribe to the instance cache so rows reactively pick up titles once
+  // instances hydrate; a bare getState() read would not re-render here because
+  // useVueState only tracks Vue dependencies.
+  const instancesByName = useAppStore((s) => s.instancesByName);
+  const databasesByName = useAppStore((s) => s.databasesByName);
+  // Subscribe so titles refresh if the environment list changes.
+  void useAppStore((s) => s.environmentList);
   const rows = useVueState(() =>
     databaseResourceList.map((resource) => {
-      const database = databaseStore.getDatabaseByName(
-        resource.databaseFullName
-      );
+      const database =
+        databasesByName[resource.databaseFullName] ?? unknownDatabase();
       const { databaseName, instanceName } = extractDatabaseResourceName(
         resource.databaseFullName
       );
       const instance = instanceName
-        ? instanceStore.getInstanceByName(`instances/${instanceName}`)
+        ? instancesByName[`instances/${instanceName}`]
         : database.instanceResource;
       const environmentName =
         database.effectiveEnvironment ??
         database.instanceResource?.environment ??
         "";
-      const environment =
-        environmentStore.getEnvironmentByName(environmentName);
+      const environment = useAppStore
+        .getState()
+        .getEnvironmentByName(environmentName);
       return {
         databaseName,
         environmentTitle: environment.title,

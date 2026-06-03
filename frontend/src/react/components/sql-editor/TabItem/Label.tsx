@@ -3,8 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { EllipsisText } from "@/react/components/ui/ellipsis-text";
 import { cn } from "@/react/lib/utils";
-import { useSQLEditorTabStore } from "@/react/stores/sqlEditor/tab-vue-state";
-import { useWorkSheetStore } from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { getSQLEditorTabsState } from "@/react/stores/sqlEditor/tab";
 import { WorksheetSchema } from "@/types/proto-es/v1/worksheet_service_pb";
 import type { SQLEditorTab } from "@/types/sqlEditor/tab";
 import { tabListEvents } from "@/views/sql-editor/TabList/events";
@@ -23,8 +23,6 @@ type Props = {
  */
 export function Label({ tab }: Props) {
   const { t } = useTranslation();
-  const tabStore = useSQLEditorTabStore();
-  const worksheetStore = useWorkSheetStore();
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(tab.title);
@@ -54,9 +52,9 @@ export function Label({ tab }: Props) {
 
   const confirmEdit = () => {
     const title = draft.trim();
-    tabStore.updateTab(tab.id, { title });
+    getSQLEditorTabsState().updateTab(tab.id, { title });
     if (tab.worksheet) {
-      void worksheetStore.patchWorksheet(
+      void useAppStore.getState().patchWorksheet(
         create(WorksheetSchema, {
           name: tab.worksheet,
           title,
@@ -93,7 +91,7 @@ export function Label({ tab }: Props) {
   useEffect(() => {
     const unsubscribe = tabListEvents.on("rename-tab", (payload) => {
       if (payload.tab.id !== tab.id) return;
-      tabStore.setCurrentTabId(tab.id);
+      getSQLEditorTabsState().setCurrentTabId(tab.id);
       if (readonly) return;
       setDraft(tab.title);
       setEditing(true);
@@ -101,7 +99,7 @@ export function Label({ tab }: Props) {
     return () => {
       unsubscribe();
     };
-  }, [tab.id, tab.title, readonly, tabStore]);
+  }, [tab.id, tab.title, readonly]);
 
   return (
     <div
@@ -137,7 +135,8 @@ export function Label({ tab }: Props) {
         <div
           className="absolute inset-0 cursor-text"
           onMouseDown={() => {
-            wasCurrentAtMouseDownRef.current = tabStore.currentTabId === tab.id;
+            wasCurrentAtMouseDownRef.current =
+              getSQLEditorTabsState().currentTabId === tab.id;
           }}
           onClick={() => {
             if (wasCurrentAtMouseDownRef.current) beginEdit();

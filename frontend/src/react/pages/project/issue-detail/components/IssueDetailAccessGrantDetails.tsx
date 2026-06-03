@@ -1,19 +1,15 @@
 import { Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { EngineIcon } from "@/react/components/EngineIcon";
 import { Alert } from "@/react/components/ui/alert";
-import { Checkbox } from "@/react/components/ui/checkbox";
+import { Badge } from "@/react/components/ui/badge";
 import { useVueState } from "@/react/hooks/useVueState";
-import {
-  useAccessGrantStore,
-  useDatabaseV1Store,
-  useEnvironmentV1Store,
-  useProjectV1Store,
-} from "@/store";
+import { useAppStore } from "@/react/stores/app";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import { isValidDatabaseName } from "@/types";
 import type { AccessGrant } from "@/types/proto-es/v1/access_grant_service_pb";
+import { unknownDatabase } from "@/types/v1/database";
 import { extractProjectResourceName, hasProjectPermissionV2 } from "@/utils";
 import { getAccessGrantExpirationText } from "@/utils/accessGrant";
 import { extractDatabaseResourceName } from "@/utils/v1/database";
@@ -22,11 +18,17 @@ import { useIssueDetailContext } from "../context/IssueDetailContext";
 export function IssueDetailAccessGrantDetails() {
   const { t } = useTranslation();
   const page = useIssueDetailContext();
-  const projectStore = useProjectV1Store();
-  const databaseStore = useDatabaseV1Store();
-  const accessGrantStore = useAccessGrantStore();
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  const fetchAccessGrant = useAppStore((state) => state.fetchAccessGrant);
+  const searchMyAccessGrants = useAppStore(
+    (state) => state.searchMyAccessGrants
+  );
   const projectName = `${projectNamePrefix}${page.projectId}`;
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
+  );
+  void projectsByName;
   const [isLoading, setIsLoading] = useState(true);
   const [accessGrant, setAccessGrant] = useState<AccessGrant | undefined>();
 
@@ -45,10 +47,10 @@ export function IssueDetailAccessGrantDetails() {
       try {
         let grant: AccessGrant | undefined;
         if (hasProjectPermissionV2(project, "bb.accessGrants.get")) {
-          grant = await accessGrantStore.getAccessGrant(name);
+          grant = await fetchAccessGrant(name);
         } else {
           const parent = `projects/${extractProjectResourceName(page.issue.name)}`;
-          const response = await accessGrantStore.searchMyAccessGrants({
+          const response = await searchMyAccessGrants({
             parent,
             filter: { name },
           });
@@ -63,7 +65,7 @@ export function IssueDetailAccessGrantDetails() {
         if (grant) {
           for (const target of grant.targets) {
             if (isValidDatabaseName(target)) {
-              void databaseStore.getOrFetchDatabaseByName(target);
+              void useAppStore.getState().getOrFetchDatabaseByName(target);
             }
           }
         }
@@ -78,7 +80,7 @@ export function IssueDetailAccessGrantDetails() {
     return () => {
       canceled = true;
     };
-  }, [accessGrantStore, databaseStore, page.issue, project]);
+  }, [fetchAccessGrant, searchMyAccessGrants, page.issue, project]);
 
   const expirationInfo = accessGrant
     ? getAccessGrantExpirationText(accessGrant)
@@ -126,12 +128,26 @@ export function IssueDetailAccessGrantDetails() {
                   {accessGrant.query}
                 </pre>
               </div>
-              <label className="flex items-center gap-2">
-                <Checkbox checked={accessGrant.unmask} disabled />
-                <span className="text-base">
-                  {t("sql-editor.access-type-unmask")}
-                </span>
-              </label>
+            </div>
+          )}
+
+          {(accessGrant.unmask || accessGrant.export) && (
+            <div className="flex flex-col gap-y-2">
+              <span className="text-sm text-control-light">
+                {t("common.permissions")}
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {accessGrant.unmask && (
+                  <Badge variant="secondary">
+                    {t("sql-editor.access-type-unmask")}
+                  </Badge>
+                )}
+                {accessGrant.export && (
+                  <Badge variant="secondary">
+                    {t("sql-editor.access-type-export")}
+                  </Badge>
+                )}
+              </div>
             </div>
           )}
 
@@ -154,13 +170,22 @@ export function IssueDetailAccessGrantDetails() {
 }
 
 function IssueDetailAccessGrantTarget({ target }: { target: string }) {
-  const databaseStore = useDatabaseV1Store();
-  const environmentStore = useEnvironmentV1Store();
-  const database = useVueState(() => databaseStore.getDatabaseByName(target));
-  const environment = useVueState(() =>
-    environmentStore.getEnvironmentByName(
-      database.effectiveEnvironment ?? database.environment ?? ""
-    )
+  const databasesByName = useAppStore((s) => s.databasesByName);
+  const database = useVueState(
+    () => databasesByName[target] ?? unknownDatabase()
+  );
+  // Subscribe to the env cache so the row re-resolves once it loads; compute
+  // via getState() in a memo because getEnvironmentByName returns a fresh
+  // fallback object on a miss (unsafe as a raw selector — would loop).
+  const environmentList = useAppStore((s) => s.environmentList);
+  const environment = useMemo(
+    () =>
+      useAppStore
+        .getState()
+        .getEnvironmentByName(
+          database.effectiveEnvironment ?? database.environment ?? ""
+        ),
+    [environmentList, database]
   );
   const instance = database.instanceResource;
   const { databaseName } = extractDatabaseResourceName(target);

@@ -7,23 +7,20 @@ import {
   User,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { issueServiceClientConnect } from "@/connect";
 import { FeatureBadge } from "@/react/components/FeatureBadge";
 import { getAvatarColor, getInitials } from "@/react/components/UserAvatar";
 import { Button } from "@/react/components/ui/button";
 import { Tooltip } from "@/react/components/ui/tooltip";
+import { useCurrentUser } from "@/react/hooks/useAppState";
 import { useVueState } from "@/react/hooks/useVueState";
+import { displayRoleTitleFromList } from "@/react/lib/role";
 import { cn } from "@/react/lib/utils";
-import {
-  pushNotification,
-  useCurrentUserV1,
-  useGroupStore,
-  useProjectIamPolicyStore,
-  useProjectV1Store,
-  useUserStore,
-} from "@/store";
+import { useAppStore } from "@/react/stores/app";
+import { ensureGroupIdentifier } from "@/react/stores/app/group";
+import { pushNotification } from "@/store";
 import { projectNamePrefix, userNamePrefix } from "@/store/modules/v1/common";
 import {
   ApprovalStatus,
@@ -44,7 +41,6 @@ import {
   groupBindingPrefix,
 } from "@/types/v1/user";
 import {
-  displayRoleTitle,
   ensureUserFullName,
   isBindingPolicyExpired,
   memberMapToRolesInProjectIAM,
@@ -56,19 +52,19 @@ type ApprovalStepStatus = "approved" | "rejected" | "current" | "pending";
 export function IssueDetailApprovalFlow() {
   const { t } = useTranslation();
   const page = useIssueDetailContext();
-  const projectStore = useProjectV1Store();
-  const projectIamPolicyStore = useProjectIamPolicyStore();
+  const loadProjectIamPolicy = useAppStore(
+    (state) => state.loadProjectIamPolicy
+  );
   const projectName = `${projectNamePrefix}${page.projectId}`;
   const issue = page.issue;
 
   useEffect(() => {
-    void projectStore
+    void useAppStore
+      .getState()
       .getOrFetchProjectByName(projectName)
       .catch(() => undefined);
-    void projectIamPolicyStore
-      .getOrFetchProjectIamPolicy(projectName)
-      .catch(() => undefined);
-  }, [projectIamPolicyStore, projectName, projectStore]);
+    void loadProjectIamPolicy(projectName).catch(() => undefined);
+  }, [loadProjectIamPolicy, projectName]);
 
   if (!issue) {
     return null;
@@ -297,14 +293,16 @@ function ApprovalStepItem({
 }
 
 function ApprovalUserText({ candidate }: { candidate: string }) {
-  const userStore = useUserStore();
+  const getOrFetchUserByIdentifier = useAppStore(
+    (state) => state.getOrFetchUserByIdentifier
+  );
   const [user, setUser] = useState<UserMessage>();
 
   useEffect(() => {
     let canceled = false;
 
     const load = async () => {
-      const next = await userStore.getOrFetchUserByIdentifier({
+      const next = await getOrFetchUserByIdentifier({
         identifier: candidate,
       });
       if (canceled || !next) {
@@ -325,7 +323,7 @@ function ApprovalUserText({ candidate }: { candidate: string }) {
     return () => {
       canceled = true;
     };
-  }, [candidate, userStore]);
+  }, [candidate, getOrFetchUserByIdentifier]);
 
   if (!user) {
     return null;
@@ -398,7 +396,7 @@ function ApprovalCandidateRow({
   user: UserMessage;
 }) {
   const { t } = useTranslation();
-  const currentUser = useVueState(() => useCurrentUserV1().value);
+  const currentUser = useCurrentUser();
   const displayName = user.title || user.email.split("@")[0];
   const isCurrentUser = currentUser?.name === user.name;
 
@@ -499,19 +497,35 @@ function getStatusTag(
 
 function useApprovalStep(issue: Issue, step: string, stepIndex: number) {
   const { t } = useTranslation();
+  const roleList = useAppStore((state) => state.roleList);
   const page = useIssueDetailContext();
-  const currentUser = useVueState(() => useCurrentUserV1().value);
-  const groupStore = useGroupStore();
-  const projectStore = useProjectV1Store();
-  const projectIamPolicyStore = useProjectIamPolicyStore();
-  const userStore = useUserStore();
+  const currentUser = useCurrentUser();
+  // subscribe to re-render on project cache change
+  const projectsByName = useAppStore((s) => s.projectsByName);
+  const batchGetOrFetchUsers = useAppStore(
+    (state) => state.batchGetOrFetchUsers
+  );
+  const batchGetOrFetchGroups = useAppStore(
+    (state) => state.batchGetOrFetchGroups
+  );
+  const groupsByName = useAppStore((state) => state.groupsByName);
+  // Resolve groups from the app store cache the prefetch above populates.
+  // Depending on `groupsByName` makes candidate computation recompute once
+  // the prefetched groups arrive.
+  const getGroupByIdentifier = useCallback(
+    (identifier: string) => groupsByName[ensureGroupIdentifier(identifier)],
+    [groupsByName]
+  );
   const [potentialApprovers, setPotentialApprovers] = useState<UserMessage[]>(
     []
   );
   const [reRequesting, setReRequesting] = useState(false);
   const projectName = `${projectNamePrefix}${page.projectId}`;
   const currentUserEmail = currentUser?.email ?? "";
-  const project = useVueState(() => projectStore.getProjectByName(projectName));
+  const project = useVueState(() =>
+    useAppStore.getState().getProjectByName(projectName)
+  );
+  void projectsByName;
   const stepApprover = issue.approvers[stepIndex];
 
   const status = useMemo<ApprovalStepStatus>(() => {
@@ -539,9 +553,9 @@ function useApprovalStep(issue: Issue, step: string, stepIndex: number) {
 
   const roleName = useMemo(() => {
     return step
-      ? displayRoleTitle(step)
+      ? displayRoleTitleFromList(step, roleList)
       : t("custom-approval.approval-flow.node.approver");
-  }, [step, t]);
+  }, [roleList, step, t]);
 
   const canReRequest = useMemo(() => {
     return (
@@ -550,10 +564,19 @@ function useApprovalStep(issue: Issue, step: string, stepIndex: number) {
     );
   }, [currentUserEmail, issue.creator, stepApprover?.status]);
 
-  const groupNamesKey = useVueState(() => {
-    const policy = projectIamPolicyStore.getProjectIamPolicy(projectName);
+  // Subscribe directly to the Zustand project IAM cache so groupNames /
+  // candidateEmails recompute the moment loadProjectIamPolicy() resolves.
+  // Wrapping the Zustand getter in useVueState would only react to Vue
+  // dependencies and miss the Zustand write, leaving the approval step
+  // empty on a cold issue page.
+  const projectIamPolicy = useAppStore(
+    (state) => state.projectPoliciesByName[projectName]
+  );
+
+  const groupNames = useMemo(() => {
+    if (!projectIamPolicy) return [];
     const names: string[] = [];
-    for (const binding of policy.bindings) {
+    for (const binding of projectIamPolicy.bindings) {
       if (binding.role !== step || isBindingPolicyExpired(binding)) {
         continue;
       }
@@ -563,30 +586,28 @@ function useApprovalStep(issue: Issue, step: string, stepIndex: number) {
         }
       }
     }
-    return [...new Set(names)].sort().join("\u0000");
-  });
-  const groupNames = useMemo(() => {
-    return groupNamesKey ? groupNamesKey.split("\u0000") : [];
-  }, [groupNamesKey]);
+    return [...new Set(names)].sort();
+  }, [projectIamPolicy, step]);
 
   useEffect(() => {
-    void groupStore.batchGetOrFetchGroups(groupNames).catch(() => undefined);
-  }, [groupNames, groupStore]);
+    void batchGetOrFetchGroups(groupNames).catch(() => undefined);
+  }, [groupNames, batchGetOrFetchGroups]);
 
-  const candidateEmailsKey = useVueState(() => {
-    const policy = projectIamPolicyStore.getProjectIamPolicy(projectName);
-    const memberMap = memberMapToRolesInProjectIAM(policy, step);
+  const candidateEmails = useMemo(() => {
+    if (!projectIamPolicy) return [];
+    const memberMap = memberMapToRolesInProjectIAM(
+      projectIamPolicy,
+      step,
+      getGroupByIdentifier
+    );
     const candidates: string[] = [];
     for (const fullname of memberMap.keys()) {
       if (fullname.startsWith(userNamePrefix)) {
         candidates.push(fullname);
       }
     }
-    return [...new Set(candidates)].sort().join("\u0000");
-  });
-  const candidateEmails = useMemo(() => {
-    return candidateEmailsKey ? candidateEmailsKey.split("\u0000") : [];
-  }, [candidateEmailsKey]);
+    return [...new Set(candidates)].sort();
+  }, [projectIamPolicy, step, getGroupByIdentifier]);
 
   const isCurrentUserInCandidates = useMemo(() => {
     return candidateEmails.includes(`${userNamePrefix}${currentUserEmail}`);
@@ -633,7 +654,7 @@ function useApprovalStep(issue: Issue, step: string, stepIndex: number) {
         return;
       }
 
-      const users = await userStore.batchGetOrFetchUsers(
+      const users = await batchGetOrFetchUsers(
         filteredCandidateEmails.map(ensureUserFullName)
       );
       if (canceled) {
@@ -661,7 +682,7 @@ function useApprovalStep(issue: Issue, step: string, stepIndex: number) {
     return () => {
       canceled = true;
     };
-  }, [currentUserEmail, filteredCandidateEmails, status, userStore]);
+  }, [batchGetOrFetchUsers, currentUserEmail, filteredCandidateEmails, status]);
 
   const handleReRequestReview = async () => {
     if (reRequesting) {
