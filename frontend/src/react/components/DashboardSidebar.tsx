@@ -30,7 +30,6 @@ import {
   PROJECT_V1_ROUTE_DASHBOARD,
   router,
   SETTING_ROUTE_WORKSPACE_GENERAL,
-  SETTING_ROUTE_WORKSPACE_SUBSCRIPTION,
   SQL_EDITOR_HOME_MODULE,
   useCurrentRoute,
   WORKSPACE_ROUTE_AUDIT_LOG,
@@ -252,11 +251,6 @@ function useSidebarItems(): SidebarItem[] {
           {
             title: t("settings.sidebar.general"),
             name: SETTING_ROUTE_WORKSPACE_GENERAL,
-            type: "route",
-          },
-          {
-            title: t("settings.sidebar.subscription"),
-            name: SETTING_ROUTE_WORKSPACE_SUBSCRIPTION,
             type: "route",
           },
         ],
