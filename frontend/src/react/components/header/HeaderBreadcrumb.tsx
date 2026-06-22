@@ -2,7 +2,6 @@ import { Building2, Check, ChevronDown, FolderKanban } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { RouterLink } from "@/react/components/RouterLink";
-import { Badge } from "@/react/components/ui/badge";
 import {
   Popover,
   PopoverContent,
@@ -10,7 +9,6 @@ import {
 } from "@/react/components/ui/popover";
 import {
   useProject,
-  useSubscription,
   useSwitchWorkspace,
   useWorkspace,
   useWorkspaceList,
@@ -22,38 +20,8 @@ import {
 } from "@/react/lib/resourceName";
 import { cn } from "@/react/lib/utils";
 import { useCurrentRoute, WORKSPACE_ROUTE_LANDING } from "@/react/router";
-import { PlanType } from "@/types/proto-es/v1/subscription_service_pb";
 import { ProjectCreateDialog } from "./ProjectCreateDialog";
 import { ProjectSwitchPanel } from "./ProjectSwitchPanel";
-
-function planLabel(
-  t: (key: string) => string,
-  plan: PlanType
-): string | undefined {
-  switch (plan) {
-    case PlanType.FREE:
-      return t("subscription.plan.free.title");
-    case PlanType.TEAM:
-      return t("subscription.plan.team.title");
-    case PlanType.ENTERPRISE:
-      return t("subscription.plan.enterprise.title");
-    default:
-      return undefined;
-  }
-}
-
-function planVariant(
-  plan: PlanType
-): "default" | "secondary" | "success" | "warning" {
-  switch (plan) {
-    case PlanType.TEAM:
-      return "default";
-    case PlanType.ENTERPRISE:
-      return "secondary";
-    default:
-      return "success";
-  }
-}
 
 // ---------------------------------------------------------------------------
 // WorkspaceSegment — shows workspace name + plan badge + optional dropdown
@@ -63,9 +31,6 @@ function WorkspaceSegment() {
   const workspace = useWorkspace();
   const workspaceList = useWorkspaceList();
   const currentWorkspaceName = workspace?.name ?? "";
-  const { subscription } = useSubscription();
-  const currentPlan = subscription?.plan ?? PlanType.FREE;
-  const label = planLabel(t, currentPlan);
   const hasMultiple = workspaceList.length > 1;
   const switchWorkspace = useSwitchWorkspace();
   const [open, setOpen] = useState(false);
@@ -87,14 +52,6 @@ function WorkspaceSegment() {
       >
         <Building2 className="size-4 text-control-light shrink-0" />
         <span className="truncate max-w-40">{workspace?.title}</span>
-        {label && (
-          <Badge
-            variant={planVariant(currentPlan)}
-            className="text-[10px] px-1.5 py-0 hidden lg:block"
-          >
-            {label}
-          </Badge>
-        )}
       </RouterLink>
       {hasMultiple && (
         <Popover open={open} onOpenChange={setOpen}>
