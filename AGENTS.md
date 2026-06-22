@@ -52,7 +52,7 @@ Bytebase is the standard for database development. Every product and engineering
 go build -ldflags "-w -s" -p=16 -o ./bytebase-build/bytebase ./backend/bin/server/main.go
 
 # Start backend
-PG_URL=postgresql://bbdev@localhost/bbdev go run ./backend/bin/server/main.go --port 8080 --data . --debug
+PG_URL=postgresql://bytebase:bytebase@localhost:5432/bytebase?sslmode=disable go run ./backend/bin/server/main.go --port 8080 --data . --debug
 
 # Run single test
 go test -v -count=1 github.com/bytebase/bytebase/backend/path/to/tests -run ^TestFunctionName$
@@ -103,7 +103,7 @@ cd proto && buf generate
 
 ```bash
 # Connect to Postgres
-psql -U bbdev bbdev
+PGPASSWORD=bytebase psql -h localhost -p 5432 -U bytebase bytebase
 ```
 
 ## Code Style
@@ -231,3 +231,63 @@ Always follow these guidelines to avoid common linting errors:
 
 - The database JSONB columns store JSON marshalled by `protojson.Marshal` in Go code. `protojson.Marshal` produces camelCased keys rather than the snake_case keys defined in the proto files. e.g. `task_run` becomes `taskRun`
 - When modifying multiple files, run file modification tasks in parallel whenever possible, instead of processing them sequentially
+
+## Branch Discipline
+
+**NEVER commit directly to `main`.** Always create a feature branch:
+
+```bash
+git checkout -b feature/xxx     # create branch
+git push origin feature/xxx     # push branch
+# then merge back to main when done
+```
+
+`main` is a protected integration branch — it only receives merges, never direct commits.
+
+## No-License Fork
+
+This is a fork of [bytebase/bytebase](https://github.com/bytebase/bytebase) with all license/subscription/telemetry features removed.
+
+### Removed Features (DO NOT re-add)
+
+| Feature | What was removed |
+|---------|-----------------|
+| Subscription page | Route + sidebar menu item + `SubscriptionPage.tsx` |
+| License dev-mode switcher | "License" submenu in avatar dropdown (`ProfileMenuTrigger.tsx`) |
+| Plan badges | Header workspace segment + VersionMenuItem plan labels |
+| Telemetry | `InitGlobalReporter`, `sql_review_telemetry.go`, `ProductImprovementSection` |
+| Metric collection default | `EnableMetricCollection` set to `false` in `server.go` and `workspace.go` |
+
+When syncing from upstream, conflicts in these areas must be resolved by keeping the fork's version (no-license).
+
+### Key Files Affected
+
+- `backend/server/server.go` — telemetry init removed
+- `backend/server/sql_review_telemetry.go` — **deleted**
+- `backend/store/workspace.go` — `EnableMetricCollection: false`
+- `frontend/src/react/components/DashboardSidebar.tsx` — subscription menu removed
+- `frontend/src/react/components/header/ProfileMenuTrigger.tsx` — license switcher removed
+- `frontend/src/react/components/header/VersionMenuItem.tsx` — plan badge removed
+- `frontend/src/react/components/header/HeaderBreadcrumb.tsx` — plan badge removed
+- `frontend/src/react/pages/settings/general/ProductImprovementSection.tsx` — **deleted**
+- `frontend/src/store/modules/v1/subscription.ts` — **kept** (fork-specific, upstream deleted)
+
+## Environment Setup
+
+### Go
+
+Go 1.26.3 at `/usr/local/go/bin/go`. Use this binary explicitly or ensure it's first in PATH:
+
+```bash
+export PATH=/usr/local/go/bin:$PATH
+```
+
+### PostgreSQL (Docker)
+
+```bash
+# Start
+docker start bytebase-postgres
+
+# Connection
+PG_URL=postgresql://bytebase:bytebase@localhost:5432/bytebase?sslmode=disable
+```
