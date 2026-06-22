@@ -2012,3 +2012,33 @@ func checkAndGetDataSourceQueriable(
 	}
 	return dataSource, nil
 }
+
+// unresolvedSchemaSentinel is an impossible schema name (it contains NUL, which no real
+// PostgreSQL/MSSQL identifier can) used as the default schema for UNqualified write targets
+// when the schema the engine will actually resolve cannot be known ahead of execution
+// (Postgres's connection-user `$user` search_path, MSSQL's login default_schema). It
+// propagates only to unqualified targets — qualified ones keep their explicit schema — and
+// is mapped to "" so the resource.schema_name attribute is omitted before the grant check.
+const unresolvedSchemaSentinel = "\x00bb_unresolved_schema\x00"
+
+// schemaForWriteTargetResolution returns the default schema to resolve UNqualified write
+// targets against, per engine — the schema the engine will actually write to, or the
+// sentinel when that can't be determined here (so the schema_name attribute is omitted and
+// schema-scoped grants fail closed). Qualified targets ignore this and keep their qualifier.
+func schemaForWriteTargetResolution(engine storepb.Engine, databaseName, requestSchema string) string {
+	switch engine {
+	case storepb.Engine_POSTGRES:
+		if requestSchema != "" {
+			return requestSchema
+		}
+		return unresolvedSchemaSentinel
+	case storepb.Engine_MSSQL:
+		return unresolvedSchemaSentinel
+	case storepb.Engine_ORACLE:
+		return databaseName
+	case storepb.Engine_MYSQL, storepb.Engine_TIDB:
+		return ""
+	default:
+		return unresolvedSchemaSentinel
+	}
+}
