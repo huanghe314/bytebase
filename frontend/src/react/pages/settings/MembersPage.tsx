@@ -69,7 +69,7 @@ import {
 import { Tooltip } from "@/react/components/ui/tooltip";
 import { useCurrentUser } from "@/react/hooks/useAppState";
 import { useEscapeKey } from "@/react/hooks/useEscapeKey";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useProjectByName } from "@/react/hooks/useProjectByName";
 import {
   getMemberBindings,
   groupProjectRoleBindings,
@@ -92,6 +92,7 @@ import {
   ALL_USERS_USER_EMAIL,
   type DatabaseResource,
   isDefaultProject,
+  type Permission,
   PresetRoleType,
   userBindingPrefix,
 } from "@/types";
@@ -162,7 +163,7 @@ function MemberTable({
 }) {
   const { t } = useTranslation();
   const currentUser = useCurrentUser();
-  const isSaaSMode = useVueState(() => useAppStore.getState().isSaaSMode());
+  const isSaaSMode = useAppStore((s) => s.isSaaSMode());
   const batchGetOrFetchUsers = useAppStore(
     (state) => state.batchGetOrFetchUsers
   );
@@ -174,8 +175,8 @@ function MemberTable({
   // Group expand state. Cache is keyed by group name and invalidated
   // when the group-binding *content* changes — not on `bindings`
   // reference change, because the parent rebuilds `memberBindings` via
-  // `useVueState(() => getMemberBindings(...))` and gets a new array
-  // identity on every render. We can't use the `prevBindingsRef.current
+  // `useMemo(() => getMemberBindings(...))` and gets a new array identity
+  // whenever its deps change. We can't use the `prevBindingsRef.current
   // !== bindings` shortcut that `GroupsPage` uses (its `groups` comes
   // from a reducer-backed `usePagedData` with stable identity).
   // Comparing a content-derived signature instead lets the cache only
@@ -620,7 +621,7 @@ function MemberTableByRole({
 }) {
   const { t } = useTranslation();
   const currentUser = useCurrentUser();
-  const isSaaSMode = useVueState(() => useAppStore.getState().isSaaSMode());
+  const isSaaSMode = useAppStore((s) => s.isSaaSMode());
   const roleList = useAppStore((state) => state.roleList);
   const [expandedRoles, setExpandedRoles] = useState<Set<string>>(new Set());
   const initializedRef = useRef(false);
@@ -892,16 +893,16 @@ function formatExpirationDate(timestampMs?: number): string {
 // must be in the future and within the cap.
 function isExpirationValid(
   form: RoleBindingFormState,
-  maximumRoleExpirationDays: number | undefined
+  maximumRequestExpirationDays: number | undefined
 ): boolean {
   if (form.expirationTimestampInMS === undefined) {
-    return maximumRoleExpirationDays === undefined;
+    return maximumRequestExpirationDays === undefined;
   }
   const now = Date.now();
   if (form.expirationTimestampInMS <= now) return false;
   if (
-    maximumRoleExpirationDays !== undefined &&
-    form.expirationTimestampInMS > now + maximumRoleExpirationDays * 86400000
+    maximumRequestExpirationDays !== undefined &&
+    form.expirationTimestampInMS > now + maximumRequestExpirationDays * 86400000
   ) {
     return false;
   }
@@ -1038,14 +1039,14 @@ function ProjectRoleBindingForm({
   onRemove,
   canRemove,
   projectName,
-  maximumRoleExpirationDays,
+  maximumRequestExpirationDays,
 }: {
   form: RoleBindingFormState;
   onChange: (updated: RoleBindingFormState) => void;
   onRemove: () => void;
   canRemove: boolean;
   projectName: string;
-  maximumRoleExpirationDays: number | undefined;
+  maximumRequestExpirationDays: number | undefined;
 }) {
   const { t } = useTranslation();
 
@@ -1055,16 +1056,16 @@ function ProjectRoleBindingForm({
     () =>
       EXPIRATION_PRESETS.filter(
         (preset) =>
-          maximumRoleExpirationDays === undefined ||
-          preset.days <= maximumRoleExpirationDays
+          maximumRequestExpirationDays === undefined ||
+          preset.days <= maximumRequestExpirationDays
       ),
-    [maximumRoleExpirationDays]
+    [maximumRequestExpirationDays]
   );
   const minDatetime = dayjs().format("YYYY-MM-DDTHH:mm");
   const maxDatetime =
-    maximumRoleExpirationDays !== undefined
+    maximumRequestExpirationDays !== undefined
       ? dayjs()
-          .add(maximumRoleExpirationDays, "days")
+          .add(maximumRequestExpirationDays, "days")
           .format("YYYY-MM-DDTHH:mm")
       : undefined;
   const now = Date.now();
@@ -1074,8 +1075,9 @@ function ProjectRoleBindingForm({
     form.expirationTimestampInMS <= now;
   const expirationExceedsMax =
     form.expirationTimestampInMS !== undefined &&
-    maximumRoleExpirationDays !== undefined &&
-    form.expirationTimestampInMS > now + maximumRoleExpirationDays * 86400000;
+    maximumRequestExpirationDays !== undefined &&
+    form.expirationTimestampInMS >
+      now + maximumRequestExpirationDays * 86400000;
   const factorList = useMemo<Factor[]>(
     () => [
       CEL_ATTRIBUTE_RESOURCE_DATABASE,
@@ -1152,9 +1154,9 @@ function ProjectRoleBindingForm({
     // Seed the picker with the current timestamp, or a default 1 week
     // (clamped to the cap) when switching from "Never".
     const seedDays =
-      maximumRoleExpirationDays !== undefined
-        ? Math.min(7, maximumRoleExpirationDays)
-        : 7;
+      maximumRequestExpirationDays === undefined
+        ? 7
+        : Math.min(7, maximumRequestExpirationDays);
     onChange({
       ...form,
       expirationCustom: true,
@@ -1287,7 +1289,7 @@ function ProjectRoleBindingForm({
         </label>
         <div className="flex flex-wrap gap-1.5">
           {/* "Never" is only offered when the workspace sets no cap. */}
-          {maximumRoleExpirationDays === undefined && (
+          {maximumRequestExpirationDays === undefined && (
             <ExpirationChip
               label={t("project.members.never-expires")}
               selected={
@@ -1324,10 +1326,10 @@ function ProjectRoleBindingForm({
             maxDate={maxDatetime}
           />
         )}
-        {maximumRoleExpirationDays !== undefined && (
+        {maximumRequestExpirationDays !== undefined && (
           <p className="text-xs text-control-light">
             {t("project.members.request-role.max-expiration-hint", {
-              days: maximumRoleExpirationDays,
+              days: maximumRequestExpirationDays,
             })}
           </p>
         )}
@@ -1339,7 +1341,7 @@ function ProjectRoleBindingForm({
         {expirationExceedsMax && (
           <p className="text-xs text-error">
             {t("project.members.request-role.expiration-exceeds-max", {
-              days: maximumRoleExpirationDays,
+              days: maximumRequestExpirationDays,
             })}
           </p>
         )}
@@ -1381,7 +1383,7 @@ function EditMemberRoleDrawer({
   const updateProjectIamPolicy = useAppStore(
     (state) => state.updateProjectIamPolicy
   );
-  const isSaaSMode = useVueState(() => useAppStore.getState().isSaaSMode());
+  const isSaaSMode = useAppStore((s) => s.isSaaSMode());
   const roleList = useAppStore((state) => state.roleList);
   const settingsByName = useAppStore((s) => s.settingsByName);
   const hasEmailSetting = useMemo(
@@ -1400,7 +1402,8 @@ function EditMemberRoleDrawer({
 
   // Live project role bindings for the member (reactively updated when IAM policy changes).
   // Active bindings come first, expired ones last; original order is preserved within each group.
-  const liveProjectRoleBindings = useVueState(() => {
+  const projectPoliciesByName = useAppStore((s) => s.projectPoliciesByName);
+  const liveProjectRoleBindings = useMemo(() => {
     if (!isProjectEditMode || !member || !projectName) return [];
     const policy = getProjectIamPolicy(projectName);
     const matching = policy.bindings.filter((b) =>
@@ -1411,7 +1414,14 @@ function EditMemberRoleDrawer({
       const bExpired = isBindingPolicyExpired(b) ? 1 : 0;
       return aExpired - bExpired;
     });
-  });
+    // projectPoliciesByName backs getProjectIamPolicy — recompute on its change.
+  }, [
+    isProjectEditMode,
+    member,
+    projectName,
+    getProjectIamPolicy,
+    projectPoliciesByName,
+  ]);
 
   const [selectedBindings, setSelectedBindings] = useState<string[]>(
     initialBindings ?? []
@@ -1443,9 +1453,9 @@ function EditMemberRoleDrawer({
   // grants are exempt; returns undefined when no cap is set. Mirrors
   // RequestRoleSheet so direct grants and role requests behave the same.
   const workspaceProfile = useAppStore((s) => s.getWorkspaceProfile());
-  const maximumRoleExpirationDays = useMemo(() => {
+  const maximumRequestExpirationDays = useMemo(() => {
     if (form.role === PresetRoleType.PROJECT_OWNER) return undefined;
-    const seconds = workspaceProfile.maximumRoleExpiration?.seconds;
+    const seconds = workspaceProfile.maximumRequestExpiration?.seconds;
     if (!seconds) return undefined;
     return Math.floor(Number(seconds) / (60 * 60 * 24));
   }, [workspaceProfile, form.role]);
@@ -1759,7 +1769,7 @@ function EditMemberRoleDrawer({
   const allowConfirm = isProjectCreateMode
     ? selectedBindings.length > 0 &&
       !!form.role &&
-      isExpirationValid(form, maximumRoleExpirationDays) &&
+      isExpirationValid(form, maximumRequestExpirationDays) &&
       !(
         roleHasDatabaseLimitation(form.role) &&
         form.databaseMode === "SELECT" &&
@@ -1987,7 +1997,7 @@ function EditMemberRoleDrawer({
                   onRemove={() => {}}
                   canRemove={false}
                   projectName={projectName}
-                  maximumRoleExpirationDays={maximumRoleExpirationDays}
+                  maximumRequestExpirationDays={maximumRequestExpirationDays}
                 />
               </div>
             ) : (
@@ -2062,11 +2072,8 @@ export function MembersPage({ projectId }: { projectId?: string }) {
   const projectName = projectId
     ? `${projectNamePrefix}${projectId}`
     : undefined;
-  const project = useVueState(() =>
-    projectName
-      ? useAppStore.getState().getProjectByName(projectName)
-      : undefined
-  );
+  const projectFromName = useProjectByName(projectName ?? "");
+  const project = projectName ? projectFromName : undefined;
 
   const [memberSearchText, setMemberSearchText] = useState("");
   const [memberViewTab, setMemberViewTab] = useState<"MEMBERS" | "ROLES">(
@@ -2079,9 +2086,10 @@ export function MembersPage({ projectId }: { projectId?: string }) {
   >();
   const [showRequestRoleDialog, setShowRequestRoleDialog] = useState(false);
 
-  const hasRequestRoleFeature = useVueState(() =>
-    useAppStore.getState().hasFeature(PlanFeature.FEATURE_REQUEST_ROLE_WORKFLOW)
+  const hasRequestRoleFeature = useAppStore((s) =>
+    s.hasFeature(PlanFeature.FEATURE_REQUEST_ROLE_WORKFLOW)
   );
+  const roleList = useAppStore((state) => state.roleList);
 
   // IAM policy loads are owned by the parent shells: ProjectRouteShell
   // loads project IAM on /projects/:projectId/members, and
@@ -2089,37 +2097,42 @@ export function MembersPage({ projectId }: { projectId?: string }) {
   // (+ referenced groups) on /settings/members. This page just reads them.
   // Subscribe directly to the Zustand projectPoliciesByName slice so the
   // member table re-renders when loadProjectIamPolicy / updateProjectIamPolicy
-  // writes to the app store. Wrapping `getProjectIamPolicy()` in
-  // `useVueState` would only re-render on Vue reactivity changes and miss
-  // these Zustand writes.
+  // writes to the app store.
   const projectIamPolicy = useAppStore((state) =>
     projectName ? state.projectPoliciesByName[projectName] : undefined
   );
-
-  // `useVueState` ensures we re-render whenever any reactive dep
-  // `getMemberBindings(...)` reads from changes — IAM policies, but
-  // also the group / user / service-account / workload-identity stores
-  // it pulls metadata from. The result array reference changes on every
-  // render; the table component handles that with content-based change
-  // detection (a group-bindings signature) so its expand-cache only
-  // resets on real membership changes.
-  // Keep this in useVueState so it re-runs when the Pinia user/group/
-  // service-account/workload-identity stores that getMemberBindings reads
-  // for member metadata change. The workspace IAM policy itself now comes
-  // from the app store: subscribing to `workspacePolicy` above re-renders
-  // this component on policy changes, and useVueState reads the latest getter
-  // each render, so both reactivity sources are covered.
-  const memberBindings = useVueState(() =>
-    getMemberBindings({
-      policies:
-        projectName && projectIamPolicy
-          ? [{ level: "PROJECT" as const, policy: projectIamPolicy }]
-          : workspacePolicy
-            ? [{ level: "WORKSPACE" as const, policy: workspacePolicy }]
-            : [],
-      searchText: memberSearchText,
-      ignoreRoles: EMPTY_ROLE_SET,
-    })
+  // getMemberBindings reads member metadata from the group / user /
+  // service-account / workload-identity app-store maps via getState(); subscribe
+  // to them (plus the IAM policies) so the list refreshes when any of those
+  // caches hydrate.
+  const groupsByName = useAppStore((s) => s.groupsByName);
+  const usersByName = useAppStore((s) => s.usersByName);
+  const serviceAccountsByName = useAppStore((s) => s.serviceAccountsByName);
+  const workloadIdentitiesByName = useAppStore(
+    (s) => s.workloadIdentitiesByName
+  );
+  const memberBindings = useMemo(
+    () =>
+      getMemberBindings({
+        policies:
+          projectName && projectIamPolicy
+            ? [{ level: "PROJECT" as const, policy: projectIamPolicy }]
+            : workspacePolicy
+              ? [{ level: "WORKSPACE" as const, policy: workspacePolicy }]
+              : [],
+        searchText: memberSearchText,
+        ignoreRoles: EMPTY_ROLE_SET,
+      }),
+    [
+      projectName,
+      projectIamPolicy,
+      workspacePolicy,
+      memberSearchText,
+      groupsByName,
+      usersByName,
+      serviceAccountsByName,
+      workloadIdentitiesByName,
+    ]
   );
 
   const canSetIamPolicy = project
@@ -2127,6 +2140,29 @@ export function MembersPage({ projectId }: { projectId?: string }) {
       project.state !== State.DELETED &&
       hasProjectPermissionV2(project, "bb.projects.setIamPolicy")
     : hasWorkspacePermissionV2("bb.workspaces.setIamPolicy");
+
+  // Whether the current user already holds every PROJECT_OWNER permission
+  // (workspace- or project-scoped). hasProjectPermissionV2 falls back to
+  // workspace permissions, so a single check covers both contexts. Mirrors the
+  // Vue `hasMissingPermission` gate rather than checking `setIamPolicy` alone.
+  // Computed inline (not memoized) so it tracks live IAM policy changes, the
+  // same way canSetIamPolicy above does — the permission check reads
+  // current-user state that isn't captured by [project, roleList] deps.
+  const ownerPermissions = project
+    ? (roleList.find((r) => r.name === PresetRoleType.PROJECT_OWNER)
+        ?.permissions ?? [])
+    : [];
+  // Require a non-empty owner permission set: when roleList is empty (roles
+  // still loading, or listRoles failed and the loader continued with []), a
+  // vacuous every() would otherwise report "full access" and wrongly block a
+  // non-owner from the request-role flow. Falling through to false keeps the
+  // request flow reachable (it has its own permission guard).
+  const hasFullProjectAccess =
+    !!project &&
+    ownerPermissions.length > 0 &&
+    ownerPermissions.every((permission) =>
+      hasProjectPermissionV2(project, permission as Permission)
+    );
 
   const handleRevokeSelected = async () => {
     if (
@@ -2204,10 +2240,10 @@ export function MembersPage({ projectId }: { projectId?: string }) {
         projectName,
         projectReady: !!project,
         allowRequestRole: project?.allowRequestRole ?? false,
-        canSetIamPolicy,
+        hasFullProjectAccess,
         hasRequestRoleFeature,
       }),
-    [projectName, project, canSetIamPolicy, hasRequestRoleFeature]
+    [projectName, project, hasFullProjectAccess, hasRequestRoleFeature]
   );
 
   const requestRoleDisabledReason = useMemo(() => {
@@ -2223,10 +2259,7 @@ export function MembersPage({ projectId }: { projectId?: string }) {
         );
       case "can-grant-access-directly":
         return t(
-          "project.members.request-role.disabled-reason.can-grant-access-directly",
-          {
-            permission: reason.permission,
-          }
+          "project.members.request-role.disabled-reason.can-grant-access-directly"
         );
       case "feature-unavailable":
         return t(

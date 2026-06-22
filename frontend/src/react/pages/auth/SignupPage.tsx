@@ -1,16 +1,17 @@
 import { useEffect, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
+import { AuthDivider } from "@/react/components/auth/AuthDivider";
 import { AuthFooter } from "@/react/components/auth/AuthFooter";
 import { UserPasswordFields } from "@/react/components/auth/UserPasswordFields";
 import { computePasswordValidation } from "@/react/components/auth/userPasswordValidation";
 import { BytebaseLogo } from "@/react/components/BytebaseLogo";
+import { RouterLink } from "@/react/components/RouterLink";
 import { Button } from "@/react/components/ui/button";
 import { Checkbox } from "@/react/components/ui/checkbox";
 import { Input } from "@/react/components/ui/input";
+import { router } from "@/react/router";
+import { AUTH_SIGNIN_MODULE } from "@/react/router/handles";
 import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
-import { AUTH_SIGNIN_MODULE } from "@/router/auth";
-import { useAuthStore } from "@/store";
 import { isValidEmail } from "@/utils";
 
 export function SignupPage() {
@@ -96,7 +97,7 @@ export function SignupPage() {
     if (isLoading) return;
     setIsLoading(true);
     try {
-      await useAuthStore().signup({ email, password, name });
+      await useAppStore.getState().signup({ email, password, name });
     } finally {
       setIsLoading(false);
     }
@@ -222,29 +223,17 @@ export function SignupPage() {
         </div>
 
         {!needAdminSetup && (
-          <div className="mt-6 relative">
-            <div
-              aria-hidden="true"
-              className="absolute inset-0 flex items-center"
+          <AuthDivider className="mt-6">
+            <span className="pl-2 bg-white text-control">
+              {t("auth.sign-up.existing-user")}
+            </span>
+            <RouterLink
+              to={{ name: AUTH_SIGNIN_MODULE, query }}
+              className="accent-link px-2 bg-white"
             >
-              <div className="w-full border-t border-control-border" />
-            </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="pl-2 bg-white text-control">
-                {t("auth.sign-up.existing-user")}
-              </span>
-              <a
-                href="#"
-                className="accent-link px-2 bg-white"
-                onClick={(e) => {
-                  e.preventDefault();
-                  router.push({ name: AUTH_SIGNIN_MODULE, query });
-                }}
-              >
-                {t("common.sign-in")}
-              </a>
-            </div>
-          </div>
+              {t("common.sign-in")}
+            </RouterLink>
+          </AuthDivider>
         )}
       </div>
 

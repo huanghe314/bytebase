@@ -18,6 +18,11 @@ import { ExprEditor } from "@/react/components/ExprEditor";
 import { IssueLabelSelect } from "@/react/components/IssueLabelSelect";
 import { RoleSelect } from "@/react/components/RoleSelect";
 import { DDLWarningCallout } from "@/react/components/role-grant/DDLWarningCallout";
+import {
+  themeColorScheme,
+  themeToCssVars,
+} from "@/react/components/sql-editor/theme/derive";
+import type { SQLEditorTheme } from "@/react/components/sql-editor/theme/types";
 import { Alert } from "@/react/components/ui/alert";
 import { Button } from "@/react/components/ui/button";
 import { ExpirationPicker } from "@/react/components/ui/expiration-picker";
@@ -36,9 +41,9 @@ import {
   roleHasDatabaseLimitation,
 } from "@/react/lib/project-member/utils";
 import { displayRoleTitleFromList } from "@/react/lib/role";
+import { router } from "@/react/router";
+import { PROJECT_V1_ROUTE_ISSUE_DETAIL } from "@/react/router/handles";
 import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
-import { PROJECT_V1_ROUTE_ISSUE_DETAIL } from "@/router/dashboard/projectV1";
 import { pushNotification } from "@/store";
 import type { Permission } from "@/types";
 import { type DatabaseResource, PresetRoleType } from "@/types";
@@ -90,6 +95,14 @@ export interface RequestRoleSheetProps {
    * switch to ALL or EXPRESSION mode if they want to broaden the scope.
    */
   initialDatabaseResources?: DatabaseResource[];
+  /**
+   * SQL-Editor theme to apply to the drawer chrome. Set ONLY by the SQL-Editor
+   * host (`RequestDrawerHost`) to the active theme (dark admin fallback
+   * included). Omitted by every other caller (MembersPage,
+   * ComponentPermissionGuard, …) so the drawer always renders in the default
+   * (light) app theme outside the SQL Editor.
+   */
+  theme?: SQLEditorTheme;
   onClose: () => void;
 }
 
@@ -110,10 +123,32 @@ const databaseModeLabelKey = (mode: DatabaseMode): string => {
 };
 
 export function RequestRoleSheet(props: Readonly<RequestRoleSheetProps>) {
-  const { open, project, onClose } = props;
+  const { open, project, theme, onClose } = props;
+  // The Sheet portals to the app-global overlay root, so a SQL-Editor theme
+  // scope's CSS vars don't cascade in via the DOM — apply them inline on
+  // SheetContent instead, and ONLY when a `theme` is explicitly passed (by the
+  // SQL-Editor host). With no `theme`, leave SheetContent unstyled so it
+  // inherits `:root` and always renders in the default light app theme outside
+  // the SQL Editor — regardless of any ambient theme scope.
+  const sheetStyle = useMemo(
+    () =>
+      theme
+        ? {
+            ...themeToCssVars(theme.tokens),
+            // Native controls (the datetime picker, scrollbars) follow
+            // color-scheme, not our --color-* tokens.
+            colorScheme: themeColorScheme(theme),
+          }
+        : undefined,
+    [theme]
+  );
   return (
     <Sheet open={open} onOpenChange={(next) => !next && onClose()}>
-      <SheetContent width="standard">
+      <SheetContent
+        width="standard"
+        style={sheetStyle}
+        className={theme ? "text-main" : undefined}
+      >
         {/* Base UI's Dialog.Portal unmounts after the close animation,
             so the inner form mounts/unmounts with the Sheet's lifecycle
             without needing an explicit {open && ...} guard. The `key`
@@ -133,6 +168,8 @@ function RequestRoleForm({
 }: Readonly<Omit<RequestRoleSheetProps, "open">>) {
   const { t } = useTranslation();
   const currentUser = useCurrentUser();
+  // Theming is handled by the outer RequestRoleSheet (inline vars on
+  // SheetContent); this form just inherits them.
   const [role, setRole] = useState(initialRole);
   const [reason, setReason] = useState("");
   const [expirationTimestamp, setExpirationTimestamp] = useState<
@@ -185,9 +222,9 @@ function RequestRoleForm({
   // owners can request unbounded expirations), otherwise the workspace cap
   // applies. Returns undefined when no cap is set.
   const workspaceProfile = useAppStore((state) => state.getWorkspaceProfile());
-  const maximumRoleExpirationDays = useMemo(() => {
+  const maximumRequestExpirationDays = useMemo(() => {
     if (role === PresetRoleType.PROJECT_OWNER) return undefined;
-    const seconds = workspaceProfile.maximumRoleExpiration?.seconds;
+    const seconds = workspaceProfile.maximumRequestExpiration?.seconds;
     if (!seconds) return undefined;
     return Math.floor(Number(seconds) / (60 * 60 * 24));
   }, [workspaceProfile, role]);
@@ -228,8 +265,10 @@ function RequestRoleForm({
   // can't silently pick a time earlier today and submit a zero-duration
   // role grant.
   const minDatetime = dayjs().format("YYYY-MM-DDTHH:mm");
-  const maxDatetime = maximumRoleExpirationDays
-    ? dayjs().add(maximumRoleExpirationDays, "days").format("YYYY-MM-DDTHH:mm")
+  const maxDatetime = maximumRequestExpirationDays
+    ? dayjs()
+        .add(maximumRequestExpirationDays, "days")
+        .format("YYYY-MM-DDTHH:mm")
     : undefined;
 
   const expirationIsInPast =
@@ -241,9 +280,9 @@ function RequestRoleForm({
   // disables over-cap dates in its picker).
   const expirationExceedsMax =
     !!expirationTimestamp &&
-    !!maximumRoleExpirationDays &&
+    !!maximumRequestExpirationDays &&
     dayjs(expirationTimestamp).isAfter(
-      dayjs().add(maximumRoleExpirationDays, "days")
+      dayjs().add(maximumRequestExpirationDays, "days")
     );
 
   const labelsMisconfigured =
@@ -270,7 +309,7 @@ function RequestRoleForm({
   // pick an expiration — leaving it empty sends `roleGrant.expiration` as
   // `undefined`, which the backend's approval runner treats as effectively
   // unbounded (math.MaxInt32 days), bypassing the cap entirely.
-  const expirationRequired = maximumRoleExpirationDays !== undefined;
+  const expirationRequired = maximumRequestExpirationDays !== undefined;
 
   const canSubmit =
     !submitting &&
@@ -571,10 +610,10 @@ function RequestRoleForm({
               minDate={minDatetime}
               maxDate={maxDatetime}
             />
-            {maximumRoleExpirationDays !== undefined && (
+            {maximumRequestExpirationDays !== undefined && (
               <p className="text-xs text-control-light">
                 {t("project.members.request-role.max-expiration-hint", {
-                  days: maximumRoleExpirationDays,
+                  days: maximumRequestExpirationDays,
                 })}
               </p>
             )}
@@ -586,7 +625,7 @@ function RequestRoleForm({
             {expirationExceedsMax && (
               <p className="text-xs text-error">
                 {t("project.members.request-role.expiration-exceeds-max", {
-                  days: maximumRoleExpirationDays,
+                  days: maximumRequestExpirationDays,
                 })}
               </p>
             )}

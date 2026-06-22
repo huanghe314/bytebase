@@ -9,15 +9,11 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   useTranslation: vi.fn(() => ({ t: (key: string) => key })),
-  usePiniaBridge: vi.fn<(getter: () => unknown) => unknown>(),
   serverInfo: { externalUrl: "https://example.com" } as
     | { externalUrl: string }
     | undefined,
   useCurrentUser: vi.fn(),
   patchWorksheet: vi.fn().mockResolvedValue({}),
-  // `useSQLEditorTabState(selector)` runs `selector` against this stub
-  // state; the component selects `tabsById.get(currentTabId)?.status`.
-  tabStatus: "CLEAN" as string,
   pushNotification: vi.fn(),
   extractProjectResourceName: vi.fn(
     (name: string) => name.split("/")[1] ?? name
@@ -28,10 +24,6 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("react-i18next", () => ({
   useTranslation: mocks.useTranslation,
-}));
-
-vi.mock("@/react/hooks/usePiniaBridge", () => ({
-  usePiniaBridge: mocks.usePiniaBridge,
 }));
 
 vi.mock("@/react/hooks/useAppState", () => ({
@@ -55,25 +47,13 @@ vi.mock("@/react/stores/app", () => {
   };
 });
 
-vi.mock("@/react/stores/sqlEditor/tab", () => ({
-  useSQLEditorTabState: (
-    selector: (s: {
-      currentTabId: string;
-      tabsById: Map<string, { status: string }>;
-    }) => unknown
-  ) =>
-    selector({
-      currentTabId: "t1",
-      tabsById: new Map([["t1", { status: mocks.tabStatus }]]),
-    }),
-}));
-
 vi.mock("@/utils", () => ({
   extractProjectResourceName: mocks.extractProjectResourceName,
   extractWorksheetID: mocks.extractWorksheetID,
 }));
 
-vi.mock("@/router", () => ({
+vi.mock("@/react/router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/react/router")>()),
   router: {
     resolve: mocks.routerResolve,
   },
@@ -149,9 +129,6 @@ beforeEach(async () => {
     name: "users/test@example.com",
   });
   mocks.patchWorksheet.mockResolvedValue({});
-  mocks.tabStatus = "CLEAN";
-
-  mocks.usePiniaBridge.mockImplementation((getter: () => unknown) => getter());
 
   // Mock clipboard
   Object.defineProperty(navigator, "clipboard", {
@@ -201,9 +178,6 @@ describe("SharePopoverBody", () => {
       email: "other@example.com",
       name: "users/other@example.com",
     });
-    mocks.usePiniaBridge.mockImplementation((getter: () => unknown) =>
-      getter()
-    );
 
     const { container, render, unmount } = renderIntoContainer(
       <SharePopoverBody worksheet={mockWorksheet as never} />
@@ -244,7 +218,11 @@ describe("SharePopoverBody", () => {
 
   test("copy button writes to clipboard and pushes notification", async () => {
     const { container, render, unmount } = renderIntoContainer(
-      <SharePopoverBody worksheet={mockWorksheet as never} />
+      <SharePopoverBody
+        worksheet={
+          { ...mockWorksheet, visibility: 1 /* PROJECT_READ */ } as never
+        }
+      />
     );
     render();
 
@@ -262,12 +240,26 @@ describe("SharePopoverBody", () => {
     unmount();
   });
 
-  test("copy button disabled when currentTab status is not CLEAN", () => {
-    mocks.tabStatus = "DIRTY";
-    mocks.usePiniaBridge.mockImplementation((getter: () => unknown) =>
-      getter()
+  test("copy button disabled when there is no shareable worksheet link", () => {
+    // No worksheet (an unsaved draft) → no link → copy disabled. A saved
+    // worksheet from the tree always has a link, so copy is enabled regardless
+    // of the current tab's status (covered by the private-worksheet test below).
+    const { container, render, unmount } = renderIntoContainer(
+      <SharePopoverBody worksheet={undefined as never} />
     );
+    render();
 
+    const copyBtn = container.querySelector(
+      "[data-copy-btn]"
+    ) as HTMLButtonElement;
+    expect(copyBtn).not.toBeNull();
+    expect(copyBtn.disabled).toBe(true);
+    unmount();
+  });
+
+  test("copy button enabled for a private worksheet (share status ignored)", () => {
+    // mockWorksheet is PRIVATE; the copy button stays enabled regardless of
+    // share status, gated only by the tab's saved state.
     const { container, render, unmount } = renderIntoContainer(
       <SharePopoverBody worksheet={mockWorksheet as never} />
     );
@@ -277,7 +269,7 @@ describe("SharePopoverBody", () => {
       "[data-copy-btn]"
     ) as HTMLButtonElement;
     expect(copyBtn).not.toBeNull();
-    expect(copyBtn.disabled).toBe(true);
+    expect(copyBtn.disabled).toBe(false);
     unmount();
   });
 });

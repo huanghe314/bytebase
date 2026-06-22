@@ -3,6 +3,7 @@ import { isEmpty } from "lodash-es";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
+  ChevronDownIcon,
   ChevronRightIcon,
   CopyIcon,
   InfoIcon,
@@ -30,6 +31,12 @@ import {
 import { EngineIcon } from "@/react/components/EngineIcon";
 import { Alert } from "@/react/components/ui/alert";
 import { Button } from "@/react/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/react/components/ui/dropdown-menu";
 import { EllipsisText } from "@/react/components/ui/ellipsis-text";
 import { Switch } from "@/react/components/ui/switch";
 import { Tooltip } from "@/react/components/ui/tooltip";
@@ -66,6 +73,7 @@ import {
 import { instanceV1Name } from "@/utils/v1/instance";
 import { compareQueryRowValues, extractSQLRowValuePlain } from "@/utils/v1/sql";
 import { SQLResultViewProvider, useSelectionContext } from "./context";
+import { formatAsCSV, formatAsSQL, formatAsText } from "./copy-formats";
 import { DetailPanel } from "./DetailPanel";
 import { EmptyView } from "./EmptyView";
 import { ErrorView } from "./ErrorView";
@@ -81,7 +89,6 @@ import {
 } from "./VirtualDataTable";
 
 export interface SingleResultViewProps {
-  dark: boolean;
   disallowCopyingData: boolean;
   params: SQLEditorQueryParams;
   database: Database;
@@ -95,6 +102,9 @@ export interface SingleResultViewProps {
   // Rendered in the toolbar when `showExport` is false — e.g. a
   // "Request export" affordance when the policy disables direct export.
   requestExportSlot?: ReactNode;
+  // Compact layout (fixed-height, non-growing body) used by the terminal /
+  // admin result panel. Defaults to the flex-grow worksheet layout.
+  compact?: boolean;
 }
 
 type ViewMode = "RESULT" | "EMPTY" | "AFFECTED-ROWS" | "ERROR";
@@ -110,7 +120,7 @@ type ViewMode = "RESULT" | "EMPTY" | "AFFECTED-ROWS" | "ERROR";
  * them twice and doubled the 100k-row allocation on large result sets.
  */
 export function SingleResultView(props: SingleResultViewProps) {
-  const { dark, disallowCopyingData, database, result } = props;
+  const { disallowCopyingData, database, result } = props;
   const engine = getInstanceResource(database).engine;
   const [noSQLTableView, setNoSQLTableView] = useLocalStorageBoolean(
     STORAGE_KEY_SQL_EDITOR_NOSQL_TABLE_VIEW,
@@ -189,8 +199,9 @@ export function SingleResultView(props: SingleResultViewProps) {
 
   return (
     <SQLResultViewProvider
-      dark={dark}
       disallowCopyingData={disallowCopyingData}
+      engine={engine}
+      schema={props.params.connection.schema}
       rows={rows}
       columns={columns}
     >
@@ -223,7 +234,6 @@ interface SingleResultViewInnerProps extends SingleResultViewProps {
 }
 
 function SingleResultViewInner({
-  dark,
   disallowCopyingData,
   params,
   database,
@@ -242,6 +252,7 @@ function SingleResultViewInner({
   supportsTableViewToggle,
   noSQLTableView,
   setNoSQLTableView,
+  compact = false,
 }: SingleResultViewInnerProps) {
   const { t } = useTranslation();
   const project = useSQLEditorEditorState((s) => s.project);
@@ -252,7 +263,7 @@ function SingleResultViewInner({
   const resultRowsLimit = useSQLEditorEditorState((s) => s.resultRowsLimit);
   const policyMaxRows = queryDataPolicy.maximumResultRows;
   const { runQuery } = useExecuteSQL();
-  const { copyAll } = useSelectionContext();
+  const { copy, canCopyAsInsert } = useSelectionContext();
 
   const supportFormats = useMemo(
     () => [
@@ -503,7 +514,7 @@ function SingleResultViewInner({
       <div
         className={cn(
           "text-md font-normal flex items-center gap-x-1",
-          dark ? "text-matrix-green-hover" : "text-control-light"
+          "text-control-light"
         )}
       >
         <span>{String(extractSQLRowValuePlain(result.rows[0].values[0]))}</span>
@@ -513,7 +524,7 @@ function SingleResultViewInner({
   }
 
   if (viewMode === "EMPTY") {
-    return <EmptyView dark={dark} />;
+    return <EmptyView />;
   }
 
   return (
@@ -533,7 +544,7 @@ function SingleResultViewInner({
         <>
           {result.error && (
             <Alert variant="error" className="w-full mb-2">
-              <ErrorView dark={dark} error={result.error} />
+              <ErrorView error={result.error} />
             </Alert>
           )}
 
@@ -579,19 +590,53 @@ function SingleResultViewInner({
                 </span>
               </div>
               {!disallowCopyingData && rows.length > 0 && (
-                // `variant="outline"` is `bg-transparent + text-control`, which
-                // disappears inside the admin-mode dark backdrop. Force an
-                // opaque light-on-dark surface in `.dark` to match the Vue
-                // toolbar's contrast (light gray bg + dark text).
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 px-2 dark:bg-gray-700 dark:text-gray-100 dark:border-zinc-600 dark:hover:bg-gray-600"
-                  onClick={copyAll}
-                >
-                  <CopyIcon className="size-4" />
-                  {t("common.copy")}
-                </Button>
+                // Split button: the main action copies as plain text (TSV); the
+                // dropdown caret (hover) offers CSV and, for SQL engines, SQL.
+                <div className="flex items-center">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 rounded-r-none border-r-0 text-control border-control-border hover:bg-control-bg-hover"
+                    onClick={() => copy("all", formatAsText)}
+                  >
+                    <CopyIcon className="size-4" />
+                    {t("common.copy-all")}
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      openOnHover
+                      delay={100}
+                      render={
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          aria-label={t("common.copy")}
+                          className="h-7 w-6 px-0 rounded-l-none text-control border-control-border hover:bg-control-bg-hover"
+                        >
+                          <ChevronDownIcon className="size-4" />
+                        </Button>
+                      }
+                    />
+                    <DropdownMenuContent align="end" className="min-w-0">
+                      <DropdownMenuItem
+                        onClick={() => copy("all", formatAsCSV)}
+                        className="px-2 py-1 text-xs gap-x-1.5"
+                      >
+                        <CopyIcon className="size-3" />
+                        {t("sql-editor.copy-all-rows-as-csv")}
+                      </DropdownMenuItem>
+                      {canCopyAsInsert && (
+                        <DropdownMenuItem
+                          onClick={() => copy("all", formatAsSQL)}
+                          className="px-2 py-1 text-xs gap-x-1.5"
+                        >
+                          <CopyIcon className="size-3" />
+                          {t("sql-editor.copy-all-rows-as-sql")}
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               )}
               {showExport ? (
                 <DataExportButton
@@ -616,7 +661,9 @@ function SingleResultViewInner({
           <div
             className={cn(
               "w-full flex flex-col relative",
-              dark ? "h-80 overflow-hidden" : "flex-1 min-h-0 overflow-y-auto"
+              compact
+                ? "h-80 overflow-hidden"
+                : "flex-1 min-h-0 overflow-y-auto"
             )}
           >
             {vertical ? (

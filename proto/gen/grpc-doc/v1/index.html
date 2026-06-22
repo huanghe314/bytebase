@@ -1068,6 +1068,10 @@
                 </li>
               
                 <li>
+                  <a href="#bytebase.v1.GetQueryHistoryRequest"><span class="badge">M</span>GetQueryHistoryRequest</a>
+                </li>
+              
+                <li>
                   <a href="#bytebase.v1.MaskingReason"><span class="badge">M</span>MaskingReason</a>
                 </li>
               
@@ -1453,6 +1457,10 @@
                 </li>
               
                 <li>
+                  <a href="#bytebase.v1.Announcement.AnnouncementTheme"><span class="badge">M</span>Announcement.AnnouncementTheme</a>
+                </li>
+              
+                <li>
                   <a href="#bytebase.v1.AppIMSetting"><span class="badge">M</span>AppIMSetting</a>
                 </li>
               
@@ -1541,6 +1549,14 @@
                 </li>
               
                 <li>
+                  <a href="#bytebase.v1.SQLEditorThemeSetting"><span class="badge">M</span>SQLEditorThemeSetting</a>
+                </li>
+              
+                <li>
+                  <a href="#bytebase.v1.SQLEditorThemeSetting.TokensEntry"><span class="badge">M</span>SQLEditorThemeSetting.TokensEntry</a>
+                </li>
+              
+                <li>
                   <a href="#bytebase.v1.SemanticTypeSetting"><span class="badge">M</span>SemanticTypeSetting</a>
                 </li>
               
@@ -1591,10 +1607,6 @@
               
                 <li>
                   <a href="#bytebase.v1.Algorithm.InnerOuterMask.MaskType"><span class="badge">E</span>Algorithm.InnerOuterMask.MaskType</a>
-                </li>
-              
-                <li>
-                  <a href="#bytebase.v1.Announcement.AlertLevel"><span class="badge">E</span>Announcement.AlertLevel</a>
                 </li>
               
                 <li>
@@ -13604,6 +13616,31 @@ Empty when the user was authorized through normal ACL rather than a grant. </p><
 
         
       
+        <h3 id="bytebase.v1.GetQueryHistoryRequest">GetQueryHistoryRequest</h3>
+        <p></p>
+
+        
+          <table class="field-table">
+            <thead>
+              <tr><td>Field</td><td>Type</td><td>Label</td><td>Description</td></tr>
+            </thead>
+            <tbody>
+              
+                <tr>
+                  <td>name</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p>The name of the query history to retrieve.
+Format: projects/{project}/queryHistories/{id} </p></td>
+                </tr>
+              
+            </tbody>
+          </table>
+
+          
+
+        
+      
         <h3 id="bytebase.v1.MaskingReason">MaskingReason</h3>
         <p></p>
 
@@ -14803,6 +14840,14 @@ Permissions required: None (only returns caller&#39;s own query histories)</p></
               </tr>
             
               <tr>
+                <td>GetQueryHistory</td>
+                <td><a href="#bytebase.v1.GetQueryHistoryRequest">GetQueryHistoryRequest</a></td>
+                <td><a href="#bytebase.v1.QueryHistory">QueryHistory</a></td>
+                <td><p>GetQueryHistory gets a single query history for the caller.
+Permissions required: None (only returns the caller&#39;s own query history)</p></td>
+              </tr>
+            
+              <tr>
                 <td>Export</td>
                 <td><a href="#bytebase.v1.ExportRequest">ExportRequest</a></td>
                 <td><a href="#bytebase.v1.ExportResponse">ExportResponse</a></td>
@@ -14871,6 +14916,16 @@ Permissions required: None (authenticated users only, requires AI to be enabled)
                 <td>POST</td>
                 <td>/v1/queryHistories:search</td>
                 <td>*</td>
+              </tr>
+              
+            
+              
+              
+              <tr>
+                <td>GetQueryHistory</td>
+                <td>GET</td>
+                <td>/v1/{name=projects/*/queryHistories/*}</td>
+                <td></td>
               </tr>
               
             
@@ -17956,13 +18011,6 @@ Uses character indices (not byte offsets) for display-oriented masking. </p></td
             <tbody>
               
                 <tr>
-                  <td>level</td>
-                  <td><a href="#bytebase.v1.Announcement.AlertLevel">Announcement.AlertLevel</a></td>
-                  <td></td>
-                  <td><p>The alert level of announcement </p></td>
-                </tr>
-              
-                <tr>
                   <td>text</td>
                   <td><a href="#string">string</a></td>
                   <td></td>
@@ -17974,6 +18022,45 @@ Uses character indices (not byte offsets) for display-oriented masking. </p></td
                   <td><a href="#string">string</a></td>
                   <td></td>
                   <td><p>The optional link, user can follow the link to check extra details </p></td>
+                </tr>
+              
+                <tr>
+                  <td>theme</td>
+                  <td><a href="#bytebase.v1.Announcement.AnnouncementTheme">Announcement.AnnouncementTheme</a></td>
+                  <td></td>
+                  <td><p>Banner colors. Built-in presets (info/warning/critical) are a
+frontend-only concept that seeds these colors; the store only holds them. </p></td>
+                </tr>
+              
+            </tbody>
+          </table>
+
+          
+
+        
+      
+        <h3 id="bytebase.v1.Announcement.AnnouncementTheme">Announcement.AnnouncementTheme</h3>
+        <p></p>
+
+        
+          <table class="field-table">
+            <thead>
+              <tr><td>Field</td><td>Type</td><td>Label</td><td>Description</td></tr>
+            </thead>
+            <tbody>
+              
+                <tr>
+                  <td>background</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p>&#34;r g b&#34; </p></td>
+                </tr>
+              
+                <tr>
+                  <td>text</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p>&#34;r g b&#34; </p></td>
                 </tr>
               
             </tbody>
@@ -18737,6 +18824,82 @@ are /[a-z][0-9]-/. </p></td>
 
         
       
+        <h3 id="bytebase.v1.SQLEditorThemeSetting">SQLEditorThemeSetting</h3>
+        <p></p>
+
+        
+          <table class="field-table">
+            <thead>
+              <tr><td>Field</td><td>Type</td><td>Label</td><td>Description</td></tr>
+            </thead>
+            <tbody>
+              
+                <tr>
+                  <td>id</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>name</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>monaco_base</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>tokens</td>
+                  <td><a href="#bytebase.v1.SQLEditorThemeSetting.TokensEntry">SQLEditorThemeSetting.TokensEntry</a></td>
+                  <td>repeated</td>
+                  <td><p> </p></td>
+                </tr>
+              
+            </tbody>
+          </table>
+
+          
+
+        
+      
+        <h3 id="bytebase.v1.SQLEditorThemeSetting.TokensEntry">SQLEditorThemeSetting.TokensEntry</h3>
+        <p></p>
+
+        
+          <table class="field-table">
+            <thead>
+              <tr><td>Field</td><td>Type</td><td>Label</td><td>Description</td></tr>
+            </thead>
+            <tbody>
+              
+                <tr>
+                  <td>key</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>value</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+            </tbody>
+          </table>
+
+          
+
+        
+      
         <h3 id="bytebase.v1.SemanticTypeSetting">SemanticTypeSetting</h3>
         <p></p>
 
@@ -19102,7 +19265,7 @@ When source is CHANGE_DATABASE, support: statement.*, resource.* (excluding requ
 When source is CREATE_DATABASE, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name
 When source is EXPORT_DATA, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name, resource.schema_name, resource.table_name
 When source is REQUEST_ROLE, support: resource.project_id, request.expiration_days, request.role
-When source is REQUEST_ACCESS, support: resource.environment_id, resource.project_id, request.unmask, request.data_export
+When source is REQUEST_ACCESS, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name, resource.schema_name, resource.table_name, request.unmask, request.data_export
 
 For examples:
 resource.environment_id == &#34;prod&#34; &amp;&amp; statement.affected_rows &gt;= 100
@@ -19169,10 +19332,10 @@ resource.table_name.matches(&#34;sensitive_.*&#34;) &amp;&amp; resource.db_engin
                 </tr>
               
                 <tr>
-                  <td>maximum_role_expiration</td>
+                  <td>maximum_request_expiration</td>
                   <td><a href="#google.protobuf.Duration">google.protobuf.Duration</a></td>
                   <td></td>
-                  <td><p>The max duration for role expired. </p></td>
+                  <td><p>The max expiration duration for role grants and data access requests. </p></td>
                 </tr>
               
                 <tr>
@@ -19282,6 +19445,22 @@ The default value is 100MB, we will use the default value if the setting not exi
                   <td></td>
                   <td><p>Allow signin/signup using email &#43; a 6-digit one-time verification code.
 Requires the EMAIL setting to be configured on the workspace. </p></td>
+                </tr>
+              
+                <tr>
+                  <td>sql_editor_theme_id</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p>Enforced SQL Editor theme id: OPAQUE — a frontend-resolved built-in preset id
+OR a custom theme&#39;s uuid. Empty ⇒ default light. </p></td>
+                </tr>
+              
+                <tr>
+                  <td>sql_editor_custom_theme</td>
+                  <td><a href="#bytebase.v1.SQLEditorThemeSetting">SQLEditorThemeSetting</a></td>
+                  <td></td>
+                  <td><p>The enforced CUSTOM theme&#39;s full definition — present ONLY when
+sql_editor_theme_id is a custom uuid. tokens is always complete. </p></td>
                 </tr>
               
             </tbody>
@@ -19423,41 +19602,6 @@ Requires the EMAIL setting to be configured on the workspace. </p></td>
               <tr>
                 <td>OUTER</td>
                 <td>2</td>
-                <td><p></p></td>
-              </tr>
-            
-          </tbody>
-        </table>
-      
-        <h3 id="bytebase.v1.Announcement.AlertLevel">Announcement.AlertLevel</h3>
-        <p>We support three levels of AlertLevel: INFO, WARNING, and ERROR.</p>
-        <table class="enum-table">
-          <thead>
-            <tr><td>Name</td><td>Number</td><td>Description</td></tr>
-          </thead>
-          <tbody>
-            
-              <tr>
-                <td>ALERT_LEVEL_UNSPECIFIED</td>
-                <td>0</td>
-                <td><p></p></td>
-              </tr>
-            
-              <tr>
-                <td>INFO</td>
-                <td>1</td>
-                <td><p></p></td>
-              </tr>
-            
-              <tr>
-                <td>WARNING</td>
-                <td>2</td>
-                <td><p></p></td>
-              </tr>
-            
-              <tr>
-                <td>CRITICAL</td>
-                <td>3</td>
                 <td><p></p></td>
               </tr>
             
@@ -20550,11 +20694,25 @@ If the condition evaluates to false, then this binding does not apply to the cur
 The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
 Support variables:
-resource.database: the database full name in &#34;instances/{instance}/databases/{database}&#34; format, used by the &#34;roles/sqlEditorUser&#34; and &#34;roles/sqlEditorReadUser&#34; roles, support &#34;==&#34; operator.
-resource.schema_name: the schema name, used by the &#34;roles/sqlEditorUser&#34; and &#34;roles/sqlEditorReadUser&#34; roles, support &#34;==&#34; operator.
-resource.table_name: the table name, used by the &#34;roles/sqlEditorUser&#34; and &#34;roles/sqlEditorReadUser&#34; roles, support &#34;==&#34; operator.
+resource.database: the database full name in &#34;instances/{instance}/databases/{database}&#34; format, used by any role with SQL Editor read (e.g. &#34;roles/sqlEditorUser&#34;, &#34;roles/sqlEditorReadUser&#34;) or write (bb.sql.ddl / bb.sql.dml) access, support &#34;==&#34; operator.
+resource.schema_name: the schema name, used by any role with SQL Editor read or write (bb.sql.ddl / bb.sql.dml) access; for writes it is evaluated per write-target table, support &#34;==&#34; operator.
+resource.table_name: the table name, used by any role with SQL Editor read or write (bb.sql.ddl / bb.sql.dml) access; for writes it is evaluated per write-target table, support &#34;==&#34; operator.
 resource.environment_id: the environment to allow the DDL/DML operation in the SQL Editor, only works for the role with bb.sql.ddl or bb.sql.dml permissions. Support &#34;in&#34; operator.
 request.time: the expiration. Only support &#34;&lt;&#34; operation in `request.time &lt; timestamp(&#34;{ISO datetime string format}&#34;)`.
+
+Known limitations of table/schema-scoped DDL/DML grants:
+- The scope only gates the write target, not the read sources of a write: e.g. `INSERT INTO granted_table SELECT * FROM other_table` may read `other_table` without a grant on it, so a table-scoped write grant is not an exfiltration boundary.
+- It must be paired with a database/project-level read grant: a table-scoped grant alone does not satisfy the SQL Editor query method permission (bb.databases.get).
+- A resource.schema_name-scoped grant only authorizes a write whose schema is unambiguous — qualify the table (schema.table) or select the schema for the SQL Editor session. An unqualified write whose effective schema cannot be determined ahead of execution is denied (qualify it, or use a table-only grant).
+- Multi-statement batches are authorized at the database level: an earlier statement can rebind the session&#39;s default schema or database mid-batch, so per-table/schema scoping is dropped and a table/schema-scoped grant requires a database-level grant. The database-level check is still per target database — a qualified cross-database write is gated by a grant on its own database, not the request database — but an unqualified write whose session default is rebound mid-batch is evaluated against the database it literally names, so qualify cross-database writes or run them as single statements.
+- A write target in a different project than the SQL-Editor session&#39;s database is denied: the per-target check evaluates the session project&#39;s IAM policy, so a cross-project write is failed closed (to write it, open the SQL Editor on a database in the target project).
+- Enforcement is on the statement&#39;s literal write target; writes routed elsewhere by a view/synonym, or into a temporary schema (e.g. pg_temp), are evaluated against what the statement names, not the ultimate base object.
+- Write-target gating uses an ALLOWLIST of statement types the resolver models. It does NOT cover every syntactically-identifiable cross-database write; statement types off the allowlist are authorized against the request database. The allowlist is:
+    - Modeled table/data writes (per-table/schema-scopable): INSERT/UPDATE/DELETE/TRUNCATE/MERGE, LOAD DATA, IMPORT INTO, CREATE TABLE AS / SELECT INTO, and table-level CREATE/DROP/ALTER/RENAME/index.
+    - Modeled non-table object DDL (gated at the DATABASE level by the object&#39;s own explicit database/schema qualifier; an unqualified name keeps the request-database check): CREATE/ALTER/DROP of view, procedure/function/routine, trigger, sequence, synonym, type, and (Oracle) package and cluster; plus Oracle ALTER/DROP MATERIALIZED VIEW (Oracle CREATE MATERIALIZED VIEW is not modeled — see below).
+  NOT modeled (these fall back to the request-database check, so a qualified cross-database one is authorized against the request database): MySQL CREATE TRIGGER and CREATE/ALTER/DROP EVENT (bare-string AST names); MSSQL ALTER of view/procedure/function/trigger (no ALTER node in the grammar); Oracle CREATE MATERIALIZED VIEW and the niche object DDL — dimension, attribute dimension, hierarchy, analytic view, JSON duality view, materialized zonemap, operator, in-memory join group, property graph, vector index, index type, domain; COPY ... FROM; and engine-specific bulk-load / deprecated text writes. A structural &#34;write-target object database&#34; extraction layer to remove this allowlist dependence is tracked as a follow-up.
+    - Out of scope (read sources / indirect effects): the tables a write READS (INSERT … SELECT, MERGE … USING, CREATE TABLE AS … SELECT) and objects reached indirectly via views/synonyms/function bodies/triggers are NOT gated.
+  Invariant: for a statement ON the modeled allowlist that explicitly names a different database as its write target, the ACL uses that target database, not the request database. Statement types OFF the allowlist are authorized against the request database.
 
 For example:
 resource.database == &#34;instances/local-pg/databases/postgres&#34; &amp;&amp; resource.schema_name in [&#34;public&#34;,&#34;another_schema&#34;]

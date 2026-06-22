@@ -1,5 +1,5 @@
 import { Code, ConnectError, type Interceptor } from "@connectrpc/connect";
-import { t } from "@/plugins/i18n";
+import i18n from "@/react/i18n";
 import { pushNotification } from "@/store";
 import { ignoredCodesContextKey, silentContextKey } from "../context-key";
 
@@ -41,6 +41,9 @@ export const errorNotificationInterceptor: Interceptor =
           ).includes(error.code)
         ) {
           // ignored
+        } else if (error.code === Code.PermissionDenied) {
+          // The auth interceptor navigates permission failures to /403, where
+          // the route-level guard displays the missing permission details.
         } else {
           const details = [error.message];
           maybePushNotification(
@@ -54,7 +57,7 @@ export const errorNotificationInterceptor: Interceptor =
         // or other frontend exception.
         // Expect not to be here.
         maybePushNotification(
-          `${t("common.error")}: ${req.service.name}/${req.method.name}`,
+          `${i18n.t("common.error")}: ${req.service.name}/${req.method.name}`,
           String(error)
         );
       }

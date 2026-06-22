@@ -6,6 +6,7 @@ import {
   ExternalLink,
   FolderTree,
   Loader2,
+  Pencil,
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -17,6 +18,7 @@ import {
 } from "@/connect";
 import { EngineIcon } from "@/react/components/EngineIcon";
 import { EnvironmentLabel } from "@/react/components/EnvironmentLabel";
+import { RouterLink } from "@/react/components/RouterLink";
 import { Alert } from "@/react/components/ui/alert";
 import {
   AlertDialog,
@@ -58,15 +60,15 @@ import {
 import { Switch } from "@/react/components/ui/switch";
 import { Tooltip } from "@/react/components/ui/tooltip";
 import { useCurrentUser } from "@/react/hooks/useAppState";
+import { useProjectByName } from "@/react/hooks/useProjectByName";
 import { useSessionPageSize } from "@/react/hooks/useSessionPageSize";
-import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
-import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
+import { router } from "@/react/router";
 import {
   PROJECT_V1_ROUTE_DATABASE_GROUP_DETAIL,
   PROJECT_V1_ROUTE_PLAN_DETAIL_SPEC_DETAIL,
-} from "@/router/dashboard/projectV1";
+} from "@/react/router/handles";
+import { useAppStore } from "@/react/stores/app";
 import { getProjectNameAndDatabaseGroupName, pushNotification } from "@/store";
 import {
   isValidDatabaseGroupName,
@@ -192,9 +194,7 @@ export function PlanDetailChangesBranch({
   // subscribe to re-render on project cache change
   const projectsByName = useAppStore((s) => s.projectsByName);
   void projectsByName;
-  const project = useVueState(() =>
-    useAppStore.getState().getProjectByName(`projects/${page.projectId}`)
-  );
+  const project = useProjectByName(`projects/${page.projectId}`);
   const [showAddSpecSheet, setShowAddSpecSheet] = useState(false);
   const [showTargetSelectorSheet, setShowTargetSelectorSheet] = useState(false);
   const [specPendingDelete, setSpecPendingDelete] = useState<Plan_Spec | null>(
@@ -714,9 +714,7 @@ function OptionsSection({
   // subscribe to re-render on project cache change
   const projectsByName = useAppStore((s) => s.projectsByName);
   void projectsByName;
-  const project = useVueState(() =>
-    useAppStore.getState().getProjectByName(`projects/${page.projectId}`)
-  );
+  const project = useProjectByName(`projects/${page.projectId}`);
   const databasesByName = useAppStore((s) => s.databasesByName);
   const [sheetStatement, setSheetStatementValue] = useState("");
   const [isSheetOversize, setIsSheetOversize] = useState(false);
@@ -728,23 +726,25 @@ function OptionsSection({
     }
     return [];
   }, [selectedSpec]);
-  const databases = useVueState(() =>
-    targets
-      .flatMap((target) => {
-        if (isValidDatabaseName(target)) {
-          return [databasesByName[target] ?? unknownDatabase()];
-        }
-        if (isValidDatabaseGroupName(target)) {
-          const dbGroup = useAppStore
-            .getState()
-            .getDBGroupByName(target, DatabaseGroupView.FULL);
-          return (dbGroup.matchedDatabases ?? []).map(
-            (database) => databasesByName[database.name] ?? unknownDatabase()
-          );
-        }
-        return [];
-      })
-      .filter((database) => isValidDatabaseName(database.name))
+  const databases = useMemo(
+    () =>
+      targets
+        .flatMap((target) => {
+          if (isValidDatabaseName(target)) {
+            return [databasesByName[target] ?? unknownDatabase()];
+          }
+          if (isValidDatabaseGroupName(target)) {
+            const dbGroup = useAppStore
+              .getState()
+              .getDBGroupByName(target, DatabaseGroupView.FULL);
+            return (dbGroup.matchedDatabases ?? []).map(
+              (database) => databasesByName[database.name] ?? unknownDatabase()
+            );
+          }
+          return [];
+        })
+        .filter((database) => isValidDatabaseName(database.name)),
+    [targets, databasesByName]
   );
   const firstDatabaseName = databases[0]?.name ?? "";
   const instanceName = firstDatabaseName
@@ -1301,21 +1301,25 @@ function TargetsSection({
   return (
     <>
       <div className="flex flex-col gap-y-1">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1">
-            <span className="textlabel uppercase">
-              {t("plan.targets.title")}
+        <div className="flex items-center gap-1">
+          <span className="textlabel uppercase">{t("plan.targets.title")}</span>
+          {targets.length > 1 && (
+            <span className="textlabel text-control-light">
+              ({targets.length})
             </span>
-            {targets.length > 1 && (
-              <span className="textlabel text-control-light">
-                ({targets.length})
-              </span>
-            )}
-          </div>
+          )}
           {allowEdit && (
-            <Button onClick={onEdit} size="xs" variant="outline">
-              {t("common.edit")}
-            </Button>
+            <Tooltip content={t("common.edit")}>
+              <Button
+                aria-label={t("common.edit")}
+                className="text-control-light hover:text-control"
+                onClick={onEdit}
+                size="xs"
+                variant="ghost"
+              >
+                <Pencil className="size-3.5" />
+              </Button>
+            </Tooltip>
           )}
         </div>
         {!isLoadingTargets && nonEnvDatabaseNames.length > 0 && (
@@ -1932,14 +1936,14 @@ export function DatabaseGroupTarget({
           {groupName}
         </span>
         {showExternalLink && (
-          <a
+          <RouterLink
+            to={route}
             className="flex items-center opacity-60 hover:opacity-100"
-            href={router.resolve(route).href}
             rel="noreferrer"
             target="_blank"
           >
             <ExternalLink className="h-4 w-4" />
-          </a>
+          </RouterLink>
         )}
       </div>
       {matchedDatabases.length > 0 && (

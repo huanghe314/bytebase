@@ -22,6 +22,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ProjectSwitchDialog } from "@/react/components/header/ProjectSwitchDialog";
+import { RouterLink } from "@/react/components/RouterLink";
 import { Checkbox } from "@/react/components/ui/checkbox";
 import {
   Sheet,
@@ -34,14 +35,15 @@ import {
   useOptionalCurrentUser,
   useServerState,
 } from "@/react/hooks/useAppState";
-import { useVueState } from "@/react/hooks/useVueState";
-import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
+import { useRecentVisit } from "@/react/hooks/useRecentVisit";
+import { router } from "@/react/router";
 import {
   DATABASE_ROUTE_DASHBOARD,
   ENVIRONMENT_V1_ROUTE_DASHBOARD,
   INSTANCE_ROUTE_DASHBOARD,
   PROJECT_V1_ROUTE_DASHBOARD,
+  SETTING_ROUTE_WORKSPACE_GENERAL,
+  SETTING_ROUTE_WORKSPACE_SUBSCRIPTION,
   WORKSPACE_ROUTE_AUDIT_LOG,
   WORKSPACE_ROUTE_CUSTOM_APPROVAL,
   WORKSPACE_ROUTE_DATA_CLASSIFICATION,
@@ -58,12 +60,8 @@ import {
   WORKSPACE_ROUTE_SQL_REVIEW,
   WORKSPACE_ROUTE_USERS,
   WORKSPACE_ROUTE_WORKLOAD_IDENTITIES,
-} from "@/router/dashboard/workspaceRoutes";
-import {
-  SETTING_ROUTE_WORKSPACE_GENERAL,
-  SETTING_ROUTE_WORKSPACE_SUBSCRIPTION,
-} from "@/router/dashboard/workspaceSetting";
-import { useRecentVisit } from "@/router/useRecentVisit";
+} from "@/react/router/handles";
+import { useAppStore } from "@/react/stores/app";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import { UNKNOWN_PROJECT_NAME } from "@/types";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
@@ -288,9 +286,7 @@ function useQuickAccessConfig(email: string) {
 // ---------------------------------------------------------------------------
 
 function useLastVisitedProject() {
-  const lastVisitProjectPath = useVueState(
-    () => useRecentVisit().lastVisitProjectPath.value
-  );
+  const { lastVisitProjectPath } = useRecentVisit();
   const [project, setProject] = useState<Project | undefined>();
 
   useEffect(() => {
@@ -486,12 +482,12 @@ export function LandingPage(_: Record<string, never> = {}) {
               </button>
             </div>
             {lastProject && lastVisitProjectPath && (
-              <a
+              <RouterLink
+                to={{ path: lastVisitProjectPath }}
                 className="underline normal-link cursor-pointer"
-                onClick={() => router.push({ path: lastVisitProjectPath })}
               >
                 {t("landing.last-visit")}: {lastProject.title}
-              </a>
+              </RouterLink>
             )}
           </div>
 
@@ -500,14 +496,15 @@ export function LandingPage(_: Record<string, never> = {}) {
               const tileClass =
                 "flex justify-center items-center gap-x-2 cursor-pointer border rounded-sm px-4 py-5 bg-white hover:bg-gray-100 no-underline text-main";
               if (link.route) {
-                const href = router.resolve({
-                  name: link.route,
-                }).href;
                 return (
-                  <a key={link.id} href={href} className={tileClass}>
+                  <RouterLink
+                    key={link.id}
+                    to={{ name: link.route }}
+                    className={tileClass}
+                  >
                     <link.icon className="w-5 h-5 text-gray-500" />
                     {link.title}
-                  </a>
+                  </RouterLink>
                 );
               }
               return (

@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -240,14 +242,14 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 				oldSetting.InactiveSessionTimeout = payload.InactiveSessionTimeout
 			case "value.workspace_profile.announcement":
 				oldSetting.Announcement = payload.Announcement
-			case "value.workspace_profile.maximum_role_expiration":
-				if payload.MaximumRoleExpiration != nil {
+			case "value.workspace_profile.maximum_request_expiration":
+				if payload.MaximumRequestExpiration != nil {
 					// If the value is less than or equal to 0, we will remove the setting. AKA no limit.
-					if payload.MaximumRoleExpiration.Seconds <= 0 {
-						payload.MaximumRoleExpiration = nil
+					if payload.MaximumRequestExpiration.Seconds <= 0 {
+						payload.MaximumRequestExpiration = nil
 					}
 				}
-				oldSetting.MaximumRoleExpiration = payload.MaximumRoleExpiration
+				oldSetting.MaximumRequestExpiration = payload.MaximumRequestExpiration
 			case "value.workspace_profile.domains":
 				if err := validateDomains(payload.Domains); err != nil {
 					return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("invalid domains, error %v", err))
@@ -309,6 +311,13 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *connect.Req
 				oldSetting.SqlResultSize = payload.SqlResultSize
 			case "value.workspace_profile.query_timeout":
 				oldSetting.QueryTimeout = payload.QueryTimeout
+			case "value.workspace_profile.sql_editor_theme_id":
+				oldSetting.SqlEditorThemeId = payload.SqlEditorThemeId
+			case "value.workspace_profile.sql_editor_custom_theme":
+				if err := validateSQLEditorCustomTheme(payload.SqlEditorCustomTheme); err != nil {
+					return nil, err
+				}
+				oldSetting.SqlEditorCustomTheme = payload.SqlEditorCustomTheme
 			default:
 				return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("invalid update mask path %v", path))
 			}
@@ -807,6 +816,53 @@ func validateDomains(domains []string) error {
 		}
 	}
 	return nil
+}
+
+// validateSQLEditorCustomTheme checks the SHAPE of a custom theme, not the
+// frontend's token vocabulary. The `--color-*` token keys are a frontend/CSS
+// concern owned by SQL_EDITOR_THEME_TOKENS; the server only ensures the stored
+// value isn't garbage (non-empty tokens, each an "r g b" triple). The frontend
+// derives the full token set and falls back to a built-in if one is missing, so
+// the backend stays theme-catalog-agnostic.
+func validateSQLEditorCustomTheme(t *storepb.SQLEditorThemeSetting) error {
+	if t == nil {
+		return nil // built-in reference or unset
+	}
+	if t.Id == "" {
+		return connect.NewError(connect.CodeInvalidArgument, errors.Errorf("sql_editor_custom_theme.id is required"))
+	}
+	if t.Name == "" {
+		return connect.NewError(connect.CodeInvalidArgument, errors.Errorf("sql_editor_custom_theme.name is required"))
+	}
+	// monaco_base is a registered VSCode color-theme id (e.g. "vs", "vs-dark",
+	// "Dark Modern"). The valid set is owned by the frontend theme service, so the
+	// server only requires it be non-empty rather than hardcoding the vocabulary.
+	if t.MonacoBase == "" {
+		return connect.NewError(connect.CodeInvalidArgument, errors.Errorf("sql_editor_custom_theme.monaco_base is required"))
+	}
+	if len(t.Tokens) == 0 {
+		return connect.NewError(connect.CodeInvalidArgument, errors.Errorf("sql_editor_custom_theme.tokens is required"))
+	}
+	for k, v := range t.Tokens {
+		if !isRGBTriple(v) {
+			return connect.NewError(connect.CodeInvalidArgument, errors.Errorf("sql_editor_custom_theme token %s invalid: %q", k, v))
+		}
+	}
+	return nil
+}
+
+func isRGBTriple(s string) bool {
+	parts := strings.Fields(s)
+	if len(parts) != 3 {
+		return false
+	}
+	for _, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 || n > 255 {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *SettingService) validateEnvironments(ctx context.Context, workspaceID string, envs []*v1pb.EnvironmentSetting_Environment) error {

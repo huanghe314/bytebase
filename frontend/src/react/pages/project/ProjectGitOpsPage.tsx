@@ -1,12 +1,14 @@
-import { Check, ChevronDown, ChevronRight, Copy, XCircle } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import gitopsWorkflowImage from "@/assets/gitops-workflow.svg";
 import { CreateWorkloadIdentitySheet } from "@/react/components/CreateWorkloadIdentitySheet";
 import { PermissionGuard } from "@/react/components/PermissionGuard";
+import { RouterLink } from "@/react/components/RouterLink";
 import { Alert } from "@/react/components/ui/alert";
-import { Button } from "@/react/components/ui/button";
+import { Button, buttonVariants } from "@/react/components/ui/button";
 import { Combobox, type ComboboxOption } from "@/react/components/ui/combobox";
+import { CopyButton } from "@/react/components/ui/copy-button";
 import { Switch } from "@/react/components/ui/switch";
 import {
   Tabs,
@@ -14,12 +16,11 @@ import {
   TabsPanel,
   TabsTrigger,
 } from "@/react/components/ui/tabs";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useProjectByName } from "@/react/hooks/useProjectByName";
 import { cn } from "@/react/lib/utils";
+import { SETTING_ROUTE_WORKSPACE_GENERAL } from "@/react/router/handles";
 import { useAppStore } from "@/react/stores/app";
 import { extractWorkloadIdentityId } from "@/react/stores/app/workloadIdentity";
-import { router } from "@/router";
-import { SETTING_ROUTE_WORKSPACE_GENERAL } from "@/router/dashboard/workspaceSetting";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import { DatabaseGroupView } from "@/types/proto-es/v1/database_group_service_pb";
 import type { WorkloadIdentity } from "@/types/proto-es/v1/workload_identity_service_pb";
@@ -47,9 +48,7 @@ export function ProjectGitOpsPage({ projectId }: { projectId: string }) {
   const projectName = `${projectNamePrefix}${projectId}`;
   // subscribe to re-render on project cache change
   void projectsByName;
-  const project = useVueState(() =>
-    useAppStore.getState().getProjectByName(projectName)
-  );
+  const project = useProjectByName(projectName);
 
   const [showCreateDrawer, setShowCreateDrawer] = useState(false);
   const [selectedIdentityName, setSelectedIdentityName] = useState("");
@@ -682,67 +681,15 @@ function MissingExternalURLAttention() {
     >
       {canConfigure && (
         <div className="mt-1">
-          <Button
-            size="sm"
-            className="w-fit"
-            onClick={() =>
-              router.push({ name: SETTING_ROUTE_WORKSPACE_GENERAL })
-            }
+          <RouterLink
+            to={{ name: SETTING_ROUTE_WORKSPACE_GENERAL }}
+            className={buttonVariants({ size: "sm", className: "w-fit" })}
           >
             {t("common.configure-now")}
-          </Button>
+          </RouterLink>
         </div>
       )}
     </Alert>
-  );
-}
-
-function execCommandCopy(text: string): boolean {
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
-  try {
-    return document.execCommand("copy");
-  } catch {
-    return false;
-  } finally {
-    document.body.removeChild(textarea);
-  }
-}
-
-async function copyToClipboard(text: string): Promise<boolean> {
-  if (navigator.clipboard) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      // Fall through to execCommand fallback
-    }
-  }
-  return execCommandCopy(text);
-}
-
-function CopyButton({ content }: { content: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    if (await copyToClipboard(content)) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  return (
-    <Button variant="ghost" size="sm" onClick={handleCopy}>
-      {copied ? (
-        <Check className="h-4 w-4 text-success" />
-      ) : (
-        <Copy className="h-4 w-4" />
-      )}
-    </Button>
   );
 }
 
@@ -750,7 +697,7 @@ function CodeBlock({ code }: { code: string }) {
   return (
     <div className="relative rounded-xs p-4 bg-gray-50">
       <div className="absolute top-2 right-2 p-2">
-        <CopyButton content={code} />
+        <CopyButton content={code} size="sm" />
       </div>
       <div className="overflow-x-auto pr-12">
         <pre className="text-sm font-mono whitespace-pre">{code}</pre>

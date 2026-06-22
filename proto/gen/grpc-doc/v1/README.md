@@ -232,6 +232,7 @@
     - [DiffMetadataResponse](#bytebase-v1-DiffMetadataResponse)
     - [ExportRequest](#bytebase-v1-ExportRequest)
     - [ExportResponse](#bytebase-v1-ExportResponse)
+    - [GetQueryHistoryRequest](#bytebase-v1-GetQueryHistoryRequest)
     - [MaskingReason](#bytebase-v1-MaskingReason)
     - [QueryHistory](#bytebase-v1-QueryHistory)
     - [QueryOption](#bytebase-v1-QueryOption)
@@ -332,6 +333,7 @@
     - [Algorithm.RangeMask](#bytebase-v1-Algorithm-RangeMask)
     - [Algorithm.RangeMask.Slice](#bytebase-v1-Algorithm-RangeMask-Slice)
     - [Announcement](#bytebase-v1-Announcement)
+    - [Announcement.AnnouncementTheme](#bytebase-v1-Announcement-AnnouncementTheme)
     - [AppIMSetting](#bytebase-v1-AppIMSetting)
     - [AppIMSetting.DingTalk](#bytebase-v1-AppIMSetting-DingTalk)
     - [AppIMSetting.Feishu](#bytebase-v1-AppIMSetting-Feishu)
@@ -354,6 +356,8 @@
     - [GetSettingResponse](#bytebase-v1-GetSettingResponse)
     - [ListSettingsRequest](#bytebase-v1-ListSettingsRequest)
     - [ListSettingsResponse](#bytebase-v1-ListSettingsResponse)
+    - [SQLEditorThemeSetting](#bytebase-v1-SQLEditorThemeSetting)
+    - [SQLEditorThemeSetting.TokensEntry](#bytebase-v1-SQLEditorThemeSetting-TokensEntry)
     - [SemanticTypeSetting](#bytebase-v1-SemanticTypeSetting)
     - [SemanticTypeSetting.SemanticType](#bytebase-v1-SemanticTypeSetting-SemanticType)
     - [Setting](#bytebase-v1-Setting)
@@ -368,7 +372,6 @@
   
     - [AISetting.Provider](#bytebase-v1-AISetting-Provider)
     - [Algorithm.InnerOuterMask.MaskType](#bytebase-v1-Algorithm-InnerOuterMask-MaskType)
-    - [Announcement.AlertLevel](#bytebase-v1-Announcement-AlertLevel)
     - [DatabaseChangeMode](#bytebase-v1-DatabaseChangeMode)
     - [EmailSetting.SMTPConfig.Authentication](#bytebase-v1-EmailSetting-SMTPConfig-Authentication)
     - [EmailSetting.SMTPConfig.Encryption](#bytebase-v1-EmailSetting-SMTPConfig-Encryption)
@@ -4495,6 +4498,21 @@ DatabaseService manages databases and their schemas.
 
 
 
+<a name="bytebase-v1-GetQueryHistoryRequest"></a>
+
+### GetQueryHistoryRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | The name of the query history to retrieve. Format: projects/{project}/queryHistories/{id} |
+
+
+
+
+
+
 <a name="bytebase-v1-MaskingReason"></a>
 
 ### MaskingReason
@@ -4924,6 +4942,7 @@ SQLService executes SQL queries and manages query operations.
 | Query | [QueryRequest](#bytebase-v1-QueryRequest) | [QueryResponse](#bytebase-v1-QueryResponse) | Executes a read-only SQL query against a database. Permissions required: bb.databases.get |
 | AdminExecute | [AdminExecuteRequest](#bytebase-v1-AdminExecuteRequest) stream | [AdminExecuteResponse](#bytebase-v1-AdminExecuteResponse) stream | Executes SQL with admin privileges via streaming connection. Permissions required: bb.sql.admin |
 | SearchQueryHistories | [SearchQueryHistoriesRequest](#bytebase-v1-SearchQueryHistoriesRequest) | [SearchQueryHistoriesResponse](#bytebase-v1-SearchQueryHistoriesResponse) | SearchQueryHistories searches query histories for the caller. Permissions required: None (only returns caller&#39;s own query histories) |
+| GetQueryHistory | [GetQueryHistoryRequest](#bytebase-v1-GetQueryHistoryRequest) | [QueryHistory](#bytebase-v1-QueryHistory) | GetQueryHistory gets a single query history for the caller. Permissions required: None (only returns the caller&#39;s own query history) |
 | Export | [ExportRequest](#bytebase-v1-ExportRequest) | [ExportResponse](#bytebase-v1-ExportResponse) | Exports query results to a file format. Permissions required: bb.databases.get |
 | DiffMetadata | [DiffMetadataRequest](#bytebase-v1-DiffMetadataRequest) | [DiffMetadataResponse](#bytebase-v1-DiffMetadataResponse) | Computes schema differences between two database metadata. Permissions required: None |
 | AICompletion | [AICompletionRequest](#bytebase-v1-AICompletionRequest) | [AICompletionResponse](#bytebase-v1-AICompletionResponse) | Provides AI-powered SQL completion and generation. Permissions required: None (authenticated users only, requires AI to be enabled) |
@@ -6065,9 +6084,25 @@ IssueService manages issues for tracking database changes and tasks.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| level | [Announcement.AlertLevel](#bytebase-v1-Announcement-AlertLevel) |  | The alert level of announcement |
 | text | [string](#string) |  | The text of announcement |
 | link | [string](#string) |  | The optional link, user can follow the link to check extra details |
+| theme | [Announcement.AnnouncementTheme](#bytebase-v1-Announcement-AnnouncementTheme) |  | Banner colors. Built-in presets (info/warning/critical) are a frontend-only concept that seeds these colors; the store only holds them. |
+
+
+
+
+
+
+<a name="bytebase-v1-Announcement-AnnouncementTheme"></a>
+
+### Announcement.AnnouncementTheme
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| background | [string](#string) |  | &#34;r g b&#34; |
+| text | [string](#string) |  | &#34;r g b&#34; |
 
 
 
@@ -6433,6 +6468,40 @@ The response message for getting a setting.
 
 
 
+<a name="bytebase-v1-SQLEditorThemeSetting"></a>
+
+### SQLEditorThemeSetting
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [string](#string) |  |  |
+| name | [string](#string) |  |  |
+| monaco_base | [string](#string) |  |  |
+| tokens | [SQLEditorThemeSetting.TokensEntry](#bytebase-v1-SQLEditorThemeSetting-TokensEntry) | repeated |  |
+
+
+
+
+
+
+<a name="bytebase-v1-SQLEditorThemeSetting-TokensEntry"></a>
+
+### SQLEditorThemeSetting.TokensEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
 <a name="bytebase-v1-SemanticTypeSetting"></a>
 
 ### SemanticTypeSetting
@@ -6586,7 +6655,7 @@ The `source` field filters which rules apply. The `condition` field then evaluat
 
 All supported variables: statement.affected_rows: affected row count in the DDL/DML, support &#34;==&#34;, &#34;!=&#34;, &#34;&lt;&#34;, &#34;&lt;=&#34;, &#34;&gt;&#34;, &#34;&gt;=&#34; operations. statement.table_rows: table row count number, support &#34;==&#34;, &#34;!=&#34;, &#34;&lt;&#34;, &#34;&lt;=&#34;, &#34;&gt;&#34;, &#34;&gt;=&#34; operations. resource.environment_id: the environment resource id, support &#34;==&#34;, &#34;!=&#34;, &#34;in [xx]&#34;, &#34;!(in [xx])&#34; operations. resource.project_id: the project resource id, support &#34;==&#34;, &#34;!=&#34;, &#34;in [xx]&#34;, &#34;!(in [xx])&#34;, &#34;contains()&#34;, &#34;matches()&#34;, &#34;startsWith()&#34;, &#34;endsWith()&#34; operations. resource.db_engine: the database engine type, support &#34;==&#34;, &#34;!=&#34;, &#34;in [xx]&#34;, &#34;!(in [xx])&#34; operations. Check the Engine enum for values. statement.sql_type: the SQL type, support &#34;==&#34;, &#34;!=&#34;, &#34;in [xx]&#34;, &#34;!(in [xx])&#34; operations. resource.database_name: the database name, support &#34;==&#34;, &#34;!=&#34;, &#34;in [xx]&#34;, &#34;!(in [xx])&#34;, &#34;contains()&#34;, &#34;matches()&#34;, &#34;startsWith()&#34;, &#34;endsWith()&#34; operations. resource.schema_name: the schema name, support &#34;==&#34;, &#34;!=&#34;, &#34;in [xx]&#34;, &#34;!(in [xx])&#34;, &#34;contains()&#34;, &#34;matches()&#34;, &#34;startsWith()&#34;, &#34;endsWith()&#34; operations. resource.table_name: the table name, support &#34;==&#34;, &#34;!=&#34;, &#34;in [xx]&#34;, &#34;!(in [xx])&#34;, &#34;contains()&#34;, &#34;matches()&#34;, &#34;startsWith()&#34;, &#34;endsWith()&#34; operations. statement.text: the SQL statement, support &#34;contains()&#34;, &#34;matches()&#34;, &#34;startsWith()&#34;, &#34;endsWith()&#34; operations. request.expiration_days: the role expiration days for the request, support &#34;==&#34;, &#34;!=&#34;, &#34;&lt;&#34;, &#34;&lt;=&#34;, &#34;&gt;&#34;, &#34;&gt;=&#34; operations. request.role: the request role full name, support &#34;==&#34;, &#34;!=&#34;, &#34;in [xx]&#34;, &#34;!(in [xx])&#34;, &#34;contains()&#34;, &#34;matches()&#34;, &#34;startsWith()&#34;, &#34;endsWith()&#34; operations.
 
-When source is CHANGE_DATABASE, support: statement.*, resource.* (excluding request.*) When source is CREATE_DATABASE, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name When source is EXPORT_DATA, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name, resource.schema_name, resource.table_name When source is REQUEST_ROLE, support: resource.project_id, request.expiration_days, request.role When source is REQUEST_ACCESS, support: resource.environment_id, resource.project_id, request.unmask, request.data_export
+When source is CHANGE_DATABASE, support: statement.*, resource.* (excluding request.*) When source is CREATE_DATABASE, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name When source is EXPORT_DATA, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name, resource.schema_name, resource.table_name When source is REQUEST_ROLE, support: resource.project_id, request.expiration_days, request.role When source is REQUEST_ACCESS, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name, resource.schema_name, resource.table_name, request.unmask, request.data_export
 
 For examples: resource.environment_id == &#34;prod&#34; &amp;&amp; statement.affected_rows &gt;= 100 resource.table_name.matches(&#34;sensitive_.*&#34;) &amp;&amp; resource.db_engine == &#34;MYSQL&#34; |
 | source | [WorkspaceApprovalSetting.Rule.Source](#bytebase-v1-WorkspaceApprovalSetting-Rule-Source) |  |  |
@@ -6609,7 +6678,7 @@ For examples: resource.environment_id == &#34;prod&#34; &amp;&amp; statement.aff
 | require_mfa | [bool](#bool) |  | Require MFA for all users. |
 | refresh_token_duration | [google.protobuf.Duration](#google-protobuf-Duration) |  | The duration for refresh token. Default is 7 days. |
 | announcement | [Announcement](#bytebase-v1-Announcement) |  | The setting of custom announcement |
-| maximum_role_expiration | [google.protobuf.Duration](#google-protobuf-Duration) |  | The max duration for role expired. |
+| maximum_request_expiration | [google.protobuf.Duration](#google-protobuf-Duration) |  | The max expiration duration for role grants and data access requests. |
 | domains | [string](#string) | repeated | The workspace domain, e.g., bytebase.com. |
 | enforce_identity_domain | [bool](#bool) |  | Only user and group from the domains can be created and login. |
 | database_change_mode | [DatabaseChangeMode](#bytebase-v1-DatabaseChangeMode) |  | The workspace database change mode. |
@@ -6625,6 +6694,8 @@ For examples: resource.environment_id == &#34;prod&#34; &amp;&amp; statement.aff
 | sql_result_size | [int64](#int64) |  | The maximum result size limit in bytes for query and export, works for the SQL Editor and Export Center. The default value is 100MB, we will use the default value if the setting not exists, or the limit &lt;= 0. |
 | query_timeout | [google.protobuf.Duration](#google-protobuf-Duration) |  | The query timeout duration for query and export, works for the SQL Editor and Export Center. |
 | allow_email_code_signin | [bool](#bool) |  | Allow signin/signup using email &#43; a 6-digit one-time verification code. Requires the EMAIL setting to be configured on the workspace. |
+| sql_editor_theme_id | [string](#string) |  | Enforced SQL Editor theme id: OPAQUE — a frontend-resolved built-in preset id OR a custom theme&#39;s uuid. Empty ⇒ default light. |
+| sql_editor_custom_theme | [SQLEditorThemeSetting](#bytebase-v1-SQLEditorThemeSetting) |  | The enforced CUSTOM theme&#39;s full definition — present ONLY when sql_editor_theme_id is a custom uuid. tokens is always complete. |
 
 
 
@@ -6679,20 +6750,6 @@ For examples: resource.environment_id == &#34;prod&#34; &amp;&amp; statement.aff
 | MASK_TYPE_UNSPECIFIED | 0 |  |
 | INNER | 1 |  |
 | OUTER | 2 |  |
-
-
-
-<a name="bytebase-v1-Announcement-AlertLevel"></a>
-
-### Announcement.AlertLevel
-We support three levels of AlertLevel: INFO, WARNING, and ERROR.
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| ALERT_LEVEL_UNSPECIFIED | 0 |  |
-| INFO | 1 |  |
-| WARNING | 2 |  |
-| CRITICAL | 3 |  |
 
 
 
@@ -7084,7 +7141,9 @@ Binding associates members with a role and optional conditions.
 | members | [string](#string) | repeated | Specifies the principals requesting access for a Bytebase resource. For users, the member should be: user:{email} For groups, the member should be: group:{email} For service accounts, the member should be: serviceAccount:{email} For workload identities, the member should be: workloadIdentity:{email} |
 | condition | [google.type.Expr](#google-type-Expr) |  | The condition that is associated with this binding, only used in the project IAM policy. If the condition evaluates to true, then this binding applies to the current request. If the condition evaluates to false, then this binding does not apply to the current request. However, a different role binding might grant the same role to one or more of the principals in this binding. The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
 
-Support variables: resource.database: the database full name in &#34;instances/{instance}/databases/{database}&#34; format, used by the &#34;roles/sqlEditorUser&#34; and &#34;roles/sqlEditorReadUser&#34; roles, support &#34;==&#34; operator. resource.schema_name: the schema name, used by the &#34;roles/sqlEditorUser&#34; and &#34;roles/sqlEditorReadUser&#34; roles, support &#34;==&#34; operator. resource.table_name: the table name, used by the &#34;roles/sqlEditorUser&#34; and &#34;roles/sqlEditorReadUser&#34; roles, support &#34;==&#34; operator. resource.environment_id: the environment to allow the DDL/DML operation in the SQL Editor, only works for the role with bb.sql.ddl or bb.sql.dml permissions. Support &#34;in&#34; operator. request.time: the expiration. Only support &#34;&lt;&#34; operation in `request.time &lt; timestamp(&#34;{ISO datetime string format}&#34;)`.
+Support variables: resource.database: the database full name in &#34;instances/{instance}/databases/{database}&#34; format, used by any role with SQL Editor read (e.g. &#34;roles/sqlEditorUser&#34;, &#34;roles/sqlEditorReadUser&#34;) or write (bb.sql.ddl / bb.sql.dml) access, support &#34;==&#34; operator. resource.schema_name: the schema name, used by any role with SQL Editor read or write (bb.sql.ddl / bb.sql.dml) access; for writes it is evaluated per write-target table, support &#34;==&#34; operator. resource.table_name: the table name, used by any role with SQL Editor read or write (bb.sql.ddl / bb.sql.dml) access; for writes it is evaluated per write-target table, support &#34;==&#34; operator. resource.environment_id: the environment to allow the DDL/DML operation in the SQL Editor, only works for the role with bb.sql.ddl or bb.sql.dml permissions. Support &#34;in&#34; operator. request.time: the expiration. Only support &#34;&lt;&#34; operation in `request.time &lt; timestamp(&#34;{ISO datetime string format}&#34;)`.
+
+Known limitations of table/schema-scoped DDL/DML grants: - The scope only gates the write target, not the read sources of a write: e.g. `INSERT INTO granted_table SELECT * FROM other_table` may read `other_table` without a grant on it, so a table-scoped write grant is not an exfiltration boundary. - It must be paired with a database/project-level read grant: a table-scoped grant alone does not satisfy the SQL Editor query method permission (bb.databases.get). - A resource.schema_name-scoped grant only authorizes a write whose schema is unambiguous — qualify the table (schema.table) or select the schema for the SQL Editor session. An unqualified write whose effective schema cannot be determined ahead of execution is denied (qualify it, or use a table-only grant). - Multi-statement batches are authorized at the database level: an earlier statement can rebind the session&#39;s default schema or database mid-batch, so per-table/schema scoping is dropped and a table/schema-scoped grant requires a database-level grant. The database-level check is still per target database — a qualified cross-database write is gated by a grant on its own database, not the request database — but an unqualified write whose session default is rebound mid-batch is evaluated against the database it literally names, so qualify cross-database writes or run them as single statements. - A write target in a different project than the SQL-Editor session&#39;s database is denied: the per-target check evaluates the session project&#39;s IAM policy, so a cross-project write is failed closed (to write it, open the SQL Editor on a database in the target project). - Enforcement is on the statement&#39;s literal write target; writes routed elsewhere by a view/synonym, or into a temporary schema (e.g. pg_temp), are evaluated against what the statement names, not the ultimate base object. - Write-target gating uses an ALLOWLIST of statement types the resolver models. It does NOT cover every syntactically-identifiable cross-database write; statement types off the allowlist are authorized against the request database. The allowlist is: - Modeled table/data writes (per-table/schema-scopable): INSERT/UPDATE/DELETE/TRUNCATE/MERGE, LOAD DATA, IMPORT INTO, CREATE TABLE AS / SELECT INTO, and table-level CREATE/DROP/ALTER/RENAME/index. - Modeled non-table object DDL (gated at the DATABASE level by the object&#39;s own explicit database/schema qualifier; an unqualified name keeps the request-database check): CREATE/ALTER/DROP of view, procedure/function/routine, trigger, sequence, synonym, type, and (Oracle) package and cluster; plus Oracle ALTER/DROP MATERIALIZED VIEW (Oracle CREATE MATERIALIZED VIEW is not modeled — see below). NOT modeled (these fall back to the request-database check, so a qualified cross-database one is authorized against the request database): MySQL CREATE TRIGGER and CREATE/ALTER/DROP EVENT (bare-string AST names); MSSQL ALTER of view/procedure/function/trigger (no ALTER node in the grammar); Oracle CREATE MATERIALIZED VIEW and the niche object DDL — dimension, attribute dimension, hierarchy, analytic view, JSON duality view, materialized zonemap, operator, in-memory join group, property graph, vector index, index type, domain; COPY ... FROM; and engine-specific bulk-load / deprecated text writes. A structural &#34;write-target object database&#34; extraction layer to remove this allowlist dependence is tracked as a follow-up. - Out of scope (read sources / indirect effects): the tables a write READS (INSERT … SELECT, MERGE … USING, CREATE TABLE AS … SELECT) and objects reached indirectly via views/synonyms/function bodies/triggers are NOT gated. Invariant: for a statement ON the modeled allowlist that explicitly names a different database as its write target, the ACL uses that target database, not the request database. Statement types OFF the allowlist are authorized against the request database.
 
 For example: resource.database == &#34;instances/local-pg/databases/postgres&#34; &amp;&amp; resource.schema_name in [&#34;public&#34;,&#34;another_schema&#34;] resource.database == &#34;instances/local-pg/databases/bytebase&#34; &amp;&amp; resource.schema_name == &#34;public&#34; &amp;&amp; resource.table_name in [&#34;audit_log&#34;] resource.database == &#34;instances/local-pg/databases/postgres&#34; &amp;&amp; resource.environment_id in [&#34;test&#34;] request.time &lt; timestamp(&#34;2025-04-26T11:24:48.655Z&#34;) |
 | parsed_expr | [google.api.expr.v1alpha1.Expr](#google-api-expr-v1alpha1-Expr) |  | The parsed expression of the condition. |

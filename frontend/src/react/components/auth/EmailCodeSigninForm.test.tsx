@@ -17,8 +17,15 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/store", () => ({
   pushNotification: mocks.pushNotification,
-  useAuthStore: () => ({
-    sendEmailLoginCode: mocks.sendEmailLoginCode,
+}));
+
+vi.mock("@/react/stores/app", () => ({
+  useAppStore: Object.assign(() => ({}), {
+    getState: () => ({
+      sendEmailLoginCode: mocks.sendEmailLoginCode,
+      // resolveWorkspaceName() (the 2nd send-code arg) reads this.
+      workspaceResourceName: () => "",
+    }),
   }),
 }));
 
@@ -51,6 +58,7 @@ vi.mock("react-i18next", () => ({
     t: (key: string, vars?: Record<string, unknown>) =>
       vars ? `${key}:${JSON.stringify(vars)}` : key,
   }),
+  initReactI18next: { type: "3rdParty", init: () => {} },
 }));
 
 let EmailCodeSigninForm: typeof import("./EmailCodeSigninForm").EmailCodeSigninForm;
@@ -106,11 +114,16 @@ describe("EmailCodeSigninForm", () => {
       'input[type="email"]'
     );
     expect(emailInput).toBeTruthy();
+    expect(emailInput?.placeholder).toBe("you@company.com");
+    // No internal-form required asterisks on the auth surface.
+    expect(container.textContent).not.toContain("*");
     setInputValue(emailInput!, "user@example.com");
 
     const sendCodeButton = Array.from(
       container.querySelectorAll<HTMLButtonElement>("button")
-    ).find((button) => button.textContent === "auth.sign-in.send-code");
+    ).find(
+      (button) => button.textContent === "auth.sign-in.continue-with-email"
+    );
     expect(sendCodeButton).toBeTruthy();
     act(() => {
       sendCodeButton?.click();

@@ -1,5 +1,5 @@
 import dayjs from "dayjs";
-import { t } from "@/plugins/i18n";
+import i18n from "@/react/i18n";
 import { getTimeForPbTimestampProtoEs } from "@/types";
 import {
   type AccessGrant,
@@ -41,10 +41,20 @@ export const getAccessGrantExpirationText = (
   | { type: "duration"; value: string }
   | { type: "never" } => {
   if (grant.expiration.case === "expireTime") {
+    // Active grants only carry `expireTime` — the originally-requested
+    // TTL is `Input only` on the proto and is gone after activation.
+    // We deliberately do NOT derive a "duration" from
+    // `expireTime - createTime`: `createTime` is when the request was
+    // opened, not when the grant was activated, so the subtraction
+    // double-counts the approval-wait time. A 4h grant approved a day
+    // later would render as "1d4h", which misleads reviewers about
+    // the actual granted window. Show the absolute expire datetime
+    // alone instead. Bot review #3370767734.
     const ms = getTimeForPbTimestampProtoEs(grant.expiration.value);
     return { type: "datetime", value: formatAbsoluteDateTime(ms) };
   }
   if (grant.expiration.case === "ttl") {
+    // Pending grants still carry the requested TTL — safe to format.
     const totalSeconds = Number(grant.expiration.value.seconds);
     const dur = dayjs.duration(totalSeconds, "seconds");
     const days = Math.floor(dur.asDays());
@@ -98,17 +108,17 @@ export const getAccessGrantDisplayStatusText = (
   const displayStatus = getAccessGrantDisplayStatus(grant, issue);
   switch (displayStatus) {
     case "ACTIVE":
-      return t("common.active");
+      return i18n.t("common.active");
     case "PENDING":
-      return t("common.pending");
+      return i18n.t("common.pending");
     case "EXPIRED":
-      return t("sql-editor.expired");
+      return i18n.t("sql-editor.expired");
     case "REVOKED":
-      return t("common.revoked");
+      return i18n.t("common.revoked");
     case "REJECTED":
-      return t("common.rejected");
+      return i18n.t("common.rejected");
     case "CANCELED":
-      return t("common.canceled");
+      return i18n.t("common.canceled");
     default:
       return displayStatus;
   }

@@ -6,13 +6,16 @@ import { useTranslation } from "react-i18next";
 import { ResourceIdField } from "@/react/components/ResourceIdField";
 import { Button } from "@/react/components/ui/button";
 import { Input } from "@/react/components/ui/input";
-import { getTemplateId } from "@/react/lib/sql-review/utils";
-import { useSQLReviewStore } from "@/react/stores/sqlReview";
-import { router } from "@/router";
+import {
+  getRuleMapValidationErrorTitle,
+  getTemplateId,
+} from "@/react/lib/sql-review/utils";
+import { router } from "@/react/router";
 import {
   WORKSPACE_ROUTE_SQL_REVIEW,
   WORKSPACE_ROUTE_SQL_REVIEW_DETAIL,
-} from "@/router/dashboard/workspaceRoutes";
+} from "@/react/router/handles";
+import { useSQLReviewStore } from "@/react/stores/sqlReview";
 import { pushNotification } from "@/store";
 import {
   getReviewConfigId,
@@ -28,6 +31,7 @@ import {
   convertRuleMapToPolicyRuleList,
   getRuleMapByEngine,
   isBuiltinRule,
+  validateRuleMapByEngine,
   withBuiltinRules,
 } from "@/types";
 import type { Engine } from "@/types/proto-es/v1/common_pb";
@@ -212,6 +216,16 @@ export function ReviewCreation({
         module: "bytebase",
         style: "CRITICAL",
         title: t("sql-review.no-permission"),
+      });
+      return;
+    }
+
+    const validationError = validateRuleMapByEngine(ruleMapByEngine);
+    if (validationError) {
+      pushNotification({
+        module: "bytebase",
+        style: "CRITICAL",
+        title: getRuleMapValidationErrorTitle(validationError),
       });
       return;
     }

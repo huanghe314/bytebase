@@ -7,7 +7,6 @@ import utc from "dayjs/plugin/utc";
 import DOMPurify from "dompurify";
 import { escape as escapeHtml, escapeRegExp, round } from "lodash-es";
 import semver from "semver";
-import { type Ref, watchEffect } from "vue";
 import {
   formatAbsoluteDate,
   formatRelativeTime,
@@ -217,10 +216,14 @@ export function getHighlightHTMLByRegExp(
     return escapedText;
   }
 
-  // Step 2: Build safe regex pattern and apply highlighting
+  // Step 2: Build safe regex pattern and apply highlighting.
+  // The keyword is HTML-escaped first so it matches `escapedText` (otherwise a
+  // keyword containing `"`, `'`, `<`, `>` or `&` — e.g. a quoted SQL identifier
+  // like `"public"` — would search for a literal char the escaped text no
+  // longer contains, and silently fail to highlight).
   pattern = Array.isArray(pattern)
-    ? pattern.map((kw) => escapeRegExp(kw)).join("|")
-    : escapeRegExp(pattern);
+    ? pattern.map((kw) => escapeRegExp(escapeHtml(kw))).join("|")
+    : escapeRegExp(escapeHtml(pattern));
   const flags = caseSensitive ? "g" : "gi";
   const re = new RegExp(pattern, flags);
   const highlighted = escapedText.replaceAll(
@@ -251,22 +254,6 @@ export function defer<T = unknown>() {
 
 export const sleep = (ms: number) => {
   return new Promise((resolve) => setTimeout(resolve, ms));
-};
-
-/**
- * Wrap a Ref as a Promise, will be resolved when the Ref turns to expectedValue
- * first time
- */
-export const wrapRefAsPromise = <T>(r: Ref<T>, expectedValue: T) => {
-  return new Promise<void>((resolve) => {
-    watchEffect(() => {
-      if (r.value === expectedValue) {
-        // Need not to care about resolving more than once
-        // Since `Promise` will handle this
-        resolve();
-      }
-    });
-  });
 };
 
 // emitStorageChangedEvent is used to notify the storage changed event

@@ -39,17 +39,10 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-vi.mock("@/plugins/i18n", () => ({
+vi.mock("@/react/i18n", () => ({
   default: {
-    global: {
-      t: (key: string) => key,
-    },
+    t: (key: string) => key,
   },
-  t: (key: string) => key,
-}));
-
-vi.mock("@/react/hooks/useVueState", () => ({
-  useVueState: (getter: () => unknown) => getter(),
 }));
 
 vi.mock("@/react/components/AdvancedSearch", () => ({

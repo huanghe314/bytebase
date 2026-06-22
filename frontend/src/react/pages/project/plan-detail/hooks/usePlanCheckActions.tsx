@@ -3,7 +3,7 @@ import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { planServiceClientConnect } from "@/connect";
 import { useCurrentUser } from "@/react/hooks/useAppState";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useProjectByName } from "@/react/hooks/useProjectByName";
 import { useAppStore } from "@/react/stores/app";
 import { projectNamePrefix, pushNotification } from "@/store";
 import { extractUserEmail } from "@/store/modules/v1/common";
@@ -27,15 +27,22 @@ export function usePlanCheckActions() {
   void projectsByName;
   const currentUser = useCurrentUser();
   const projectName = `${projectNamePrefix}${page.projectId}`;
-  const project = useVueState(() =>
-    useAppStore.getState().getProjectByName(projectName)
-  );
+  const project = useProjectByName(projectName);
 
   const allowRunChecks = useMemo(() => {
+    // A closed/done issue (or deleted plan) is read-only — running checks is
+    // rejected by the backend too, so hide the action.
+    if (page.readonly) return false;
     if (page.plan.hasRollout) return false;
     if (extractUserEmail(page.plan.creator) === currentUser.email) return true;
     return hasProjectPermissionV2(project, "bb.planCheckRuns.run");
-  }, [currentUser.email, page.plan.creator, page.plan.hasRollout, project]);
+  }, [
+    currentUser.email,
+    page.plan.creator,
+    page.plan.hasRollout,
+    page.readonly,
+    project,
+  ]);
 
   const refreshChecks = useCallback(async (): Promise<PlanCheckRun[]> => {
     const [nextPlan, runOrNull] = await Promise.all([

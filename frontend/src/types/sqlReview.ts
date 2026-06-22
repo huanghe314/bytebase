@@ -1,5 +1,5 @@
 import { create } from "@bufbuild/protobuf";
-import { t, te } from "@/plugins/i18n";
+import i18n from "@/react/i18n";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import type { SQLReviewRule } from "@/types/proto-es/v1/review_config_service_pb";
 import {
@@ -772,6 +772,58 @@ export const convertRuleMapToPolicyRuleList = (
   return resp;
 };
 
+export type RuleMapValidationError =
+  | { type: "EMPTY_RULE_LIST" }
+  | { type: "EMPTY_STRING_ARRAY"; rule: RuleTemplateV2 };
+
+const nonEmptyStringArrayRuleTypeList = new Set<SQLReviewRule_Type>([
+  SQLReviewRule_Type.COLUMN_REQUIRED,
+  SQLReviewRule_Type.COLUMN_TYPE_DISALLOW_LIST,
+  SQLReviewRule_Type.INDEX_PRIMARY_KEY_TYPE_ALLOWLIST,
+  SQLReviewRule_Type.INDEX_TYPE_ALLOW_LIST,
+  SQLReviewRule_Type.SYSTEM_CHARSET_ALLOWLIST,
+  SQLReviewRule_Type.SYSTEM_COLLATION_ALLOWLIST,
+  SQLReviewRule_Type.SYSTEM_FUNCTION_DISALLOWED_LIST,
+  SQLReviewRule_Type.TABLE_DISALLOW_DDL,
+  SQLReviewRule_Type.TABLE_DISALLOW_DML,
+]);
+
+export const validateRuleMapByEngine = (
+  ruleMapByEngine: Map<Engine, Map<SQLReviewRule_Type, RuleTemplateV2>>
+): RuleMapValidationError | undefined => {
+  let hasRule = false;
+
+  for (const mapByType of ruleMapByEngine.values()) {
+    for (const rule of mapByType.values()) {
+      hasRule = true;
+      if (hasEmptyRequiredStringArray(rule)) {
+        return { type: "EMPTY_STRING_ARRAY", rule };
+      }
+    }
+  }
+
+  if (!hasRule) {
+    return { type: "EMPTY_RULE_LIST" };
+  }
+
+  return undefined;
+};
+
+const hasEmptyRequiredStringArray = (rule: RuleTemplateV2): boolean => {
+  if (!nonEmptyStringArrayRuleTypeList.has(rule.type)) {
+    return false;
+  }
+
+  const stringArrayPayload = rule.componentList.find(
+    (c) => c.payload.type === "STRING_ARRAY"
+  )?.payload as StringArrayPayload | undefined;
+
+  return (
+    (stringArrayPayload?.value ?? stringArrayPayload?.default ?? []).length ===
+    0
+  );
+};
+
 // The convertRuleTemplateToPolicyRule will convert rule template to review policy rule for backend useage.
 // Will throw exception if we don't implement the payload handler for specific type of rule.
 const convertRuleTemplateToPolicyRule = (
@@ -801,16 +853,16 @@ export const getRuleLocalization = (
   engine?: Engine
 ): { title: string; description: string } => {
   const key = getRuleLocalizationKey(type);
-  let title = t(`sql-review.rule.${key}.title`);
-  let description = t(`sql-review.rule.${key}.description`);
+  let title = i18n.t(`sql-review.rule.${key}.title`);
+  let description = i18n.t(`sql-review.rule.${key}.description`);
 
   if (engine) {
     const engineSpecificKey = `${key}.${Engine[engine].toLowerCase()}`;
-    if (te(`sql-review.rule.${engineSpecificKey}.title`)) {
-      title = t(`sql-review.rule.${engineSpecificKey}.title`);
+    if (i18n.exists(`sql-review.rule.${engineSpecificKey}.title`)) {
+      title = i18n.t(`sql-review.rule.${engineSpecificKey}.title`);
     }
-    if (te(`sql-review.rule.${engineSpecificKey}.description`)) {
-      description = t(`sql-review.rule.${engineSpecificKey}.description`);
+    if (i18n.exists(`sql-review.rule.${engineSpecificKey}.description`)) {
+      description = i18n.t(`sql-review.rule.${engineSpecificKey}.description`);
     }
   }
 

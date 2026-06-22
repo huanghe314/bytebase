@@ -32,6 +32,7 @@ bytebase-build
 
 # Claude Code user-specific configuration
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # Git worktrees
 .worktrees/
@@ -52,3 +53,4 @@ scripts/azure-marketplace/*.backup
 
 # superpowers brainstorm sessions (visual companion mockups)
 .superpowers/
+.gocache/

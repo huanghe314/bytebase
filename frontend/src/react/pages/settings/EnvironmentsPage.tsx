@@ -32,6 +32,7 @@ import { FeatureAttention } from "@/react/components/FeatureAttention";
 import { FeatureBadge } from "@/react/components/FeatureBadge";
 import { PermissionGuard } from "@/react/components/PermissionGuard";
 import { ResourceIdField } from "@/react/components/ResourceIdField";
+import { RouterLink } from "@/react/components/RouterLink";
 import { Button } from "@/react/components/ui/button";
 import { Checkbox } from "@/react/components/ui/checkbox";
 import {
@@ -57,17 +58,16 @@ import {
 } from "@/react/components/ui/tabs";
 import { useEnvironmentList } from "@/react/hooks/useAppState";
 import { useUnsavedChangesGuard } from "@/react/hooks/useUnsavedChangesGuard";
-import { useVueState } from "@/react/hooks/useVueState";
 import { displayRoleTitleFromList } from "@/react/lib/role";
 import { cn } from "@/react/lib/utils";
-import { useAppStore } from "@/react/stores/app";
-import { getEmptyRolloutPolicy } from "@/react/stores/app/policy";
-import { useSQLReviewStore } from "@/react/stores/sqlReview";
-import { router } from "@/router";
+import { router } from "@/react/router";
 import {
   WORKSPACE_ROUTE_SQL_REVIEW_CREATE,
   WORKSPACE_ROUTE_SQL_REVIEW_DETAIL,
-} from "@/router/dashboard/workspaceRoutes";
+} from "@/react/router/handles";
+import { useAppStore } from "@/react/stores/app";
+import { getEmptyRolloutPolicy } from "@/react/stores/app/policy";
+import { useSQLReviewStore } from "@/react/stores/sqlReview";
 import { pushNotification } from "@/store";
 import { environmentNamePrefix } from "@/store/modules/v1/common";
 import {
@@ -135,17 +135,15 @@ function EnvironmentName({
 
   if (link) {
     return (
-      <a
-        href={`/${formatEnvironmentName(environment.id)}`}
+      <RouterLink
+        to={{ path: `/${formatEnvironmentName(environment.id)}` }}
         onClick={(e) => {
-          e.preventDefault();
           e.stopPropagation();
-          router.push({ path: `/${formatEnvironmentName(environment.id)}` });
         }}
         className="hover:underline"
       >
         {content}
-      </a>
+      </RouterLink>
     );
   }
 
@@ -340,7 +338,7 @@ function RolloutPolicyConfig({
               <div className="relative" ref={dropdownRef}>
                 <Button
                   variant="outline"
-                  size="xs"
+                  size="sm"
                   onClick={() => setShowRoleDropdown(!showRoleDropdown)}
                 >
                   <Plus className="w-3.5 h-3.5 mr-1" />
@@ -430,7 +428,7 @@ function SQLReviewSectionInner(
   );
   const canUpdatePolicy = hasWorkspacePermissionV2("bb.policies.update");
 
-  const reviewPolicyList = useVueState(() => [...reviewStore.reviewPolicyList]);
+  const reviewPolicyList = reviewStore.reviewPolicyList;
 
   const currentPolicy = useMemo(() => {
     return reviewPolicyList.find((p) => p.resources.includes(resourcePath));
@@ -533,19 +531,17 @@ function SQLReviewSectionInner(
               onChange={setEnforce}
             />
             <div className="flex items-center gap-x-1">
-              <span
-                className="textlabel normal-link text-accent! cursor-pointer"
-                onClick={() => {
-                  router.push({
-                    name: WORKSPACE_ROUTE_SQL_REVIEW_DETAIL,
-                    params: {
-                      sqlReviewPolicySlug: sqlReviewPolicySlug(pendingPolicy),
-                    },
-                  });
+              <RouterLink
+                to={{
+                  name: WORKSPACE_ROUTE_SQL_REVIEW_DETAIL,
+                  params: {
+                    sqlReviewPolicySlug: sqlReviewPolicySlug(pendingPolicy),
+                  },
                 }}
+                className="textlabel normal-link text-accent! cursor-pointer"
               >
                 {pendingPolicy.name}
-              </span>
+              </RouterLink>
               {canUpdatePolicy && (
                 <button
                   type="button"
@@ -1271,8 +1267,7 @@ function SortableEnvironmentRow({
 // `ReorderSheetInner` is keyed by an open counter so it remounts fresh
 // every time the Sheet opens (re-initializing its `list` state from the
 // snapshot), but does NOT reset mid-session when the parent's
-// `environments` prop gets a new reference on every render (which
-// `useVueState` does — it spreads the store's array). A naive
+// `environments` prop gets a new reference on every render. A naive
 // `useEffect([open, environments])` reset would clobber the user's drag
 // reorder the instant the parent re-renders, which was the previous bug.
 function ReorderSheet({
@@ -1352,7 +1347,7 @@ function ReorderSheetInner({
 
   // Compare against the initial order captured at mount, not against the
   // live `environments` prop (which may change reference on every parent
-  // render thanks to useVueState spreading the store array).
+  // render).
   const initialOrderRef = useRef(environments.map((e) => e.id));
   const orderChanged = useMemo(() => {
     if (list.length !== initialOrderRef.current.length) return true;

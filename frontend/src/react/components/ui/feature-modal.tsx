@@ -8,9 +8,9 @@ import {
   DialogTitle,
 } from "@/react/components/ui/dialog";
 import { useSubscriptionState } from "@/react/hooks/useAppState";
+import { router } from "@/react/router";
+import { INSTANCE_ROUTE_DASHBOARD } from "@/react/router/handles";
 import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
-import { INSTANCE_ROUTE_DASHBOARD } from "@/router/dashboard/workspaceRoutes";
 import { ENTERPRISE_INQUIRE_LINK } from "@/types";
 import type {
   Instance,
@@ -95,7 +95,7 @@ export function FeatureModal({ open, feature, instance, onOpenChange }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
-        <div className="p-6">
+        <div>
           <div className="flex items-center justify-between border-b pb-2 mb-4">
             <DialogTitle className="text-base font-medium">{title}</DialogTitle>
             {/* Vue's BBModal had a built-in X close affordance; the React

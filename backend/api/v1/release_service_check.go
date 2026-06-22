@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/bytebase/bytebase/backend/common"
+	"github.com/bytebase/bytebase/backend/component/parsercontext"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
@@ -367,7 +368,11 @@ loop:
 				}
 				if summaryReport != nil {
 					checkResult.AffectedRows = summaryReport.AffectedRows
+					checkResult.RiskLevel = getRiskLevelFromStatementTypes(summaryReport.StatementTypes)
 					resp.AffectedRows += summaryReport.AffectedRows
+					if checkResult.RiskLevel > resp.RiskLevel {
+						resp.RiskLevel = checkResult.RiskLevel
+					}
 				}
 				if common.EngineSupportSQLReview(engine) {
 					adviceStatus, sqlReviewAdvices, err := s.runSQLReviewCheckForFile(ctx, project, originMetadata, finalMetadata, instance, database, statement)
@@ -698,6 +703,23 @@ func (s *ReleaseService) checkReleaseDeclarative(ctx context.Context, files []*v
 	}, nil
 }
 
+func getRiskLevelFromStatementTypes(statementTypes []storepb.StatementType) v1pb.RiskLevel {
+	statementTypeStrings := make([]string, 0, len(statementTypes))
+	for _, statementType := range statementTypes {
+		statementTypeStrings = append(statementTypeStrings, statementType.String())
+	}
+	switch common.GetRiskLevelFromStatementTypes(statementTypeStrings) {
+	case storepb.RiskLevel_LOW:
+		return v1pb.RiskLevel_LOW
+	case storepb.RiskLevel_MODERATE:
+		return v1pb.RiskLevel_MODERATE
+	case storepb.RiskLevel_HIGH:
+		return v1pb.RiskLevel_HIGH
+	default:
+		return v1pb.RiskLevel_RISK_LEVEL_UNSPECIFIED
+	}
+}
+
 func (s *ReleaseService) runSQLReviewCheckForFile(
 	ctx context.Context,
 	project *store.ProjectMessage,
@@ -735,7 +757,7 @@ func (s *ReleaseService) runSQLReviewCheckForFile(
 		Driver:                connection,
 		CurrentDatabase:       database.DatabaseName,
 		TenantMode:            project.Setting.GetPostgresDatabaseTenantMode(),
-		ListDatabaseNamesFunc: BuildListDatabaseNamesFunc(s.store),
+		ListDatabaseNamesFunc: parsercontext.BuildListDatabaseNamesFunc(s.store),
 		InstanceID:            instance.ResourceID,
 		IsObjectCaseSensitive: store.IsObjectCaseSensitive(instance),
 	}

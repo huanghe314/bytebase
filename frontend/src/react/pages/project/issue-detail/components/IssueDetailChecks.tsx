@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { planServiceClientConnect } from "@/connect";
 import { PlanCheckSection } from "@/react/components/plan-check/PlanCheckSection";
 import { useCurrentUser } from "@/react/hooks/useAppState";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useProjectByName } from "@/react/hooks/useProjectByName";
 import { useAppStore } from "@/react/stores/app";
 import { pushNotification } from "@/store";
 import { extractUserEmail, projectNamePrefix } from "@/store/modules/v1/common";
@@ -26,9 +26,7 @@ export function IssueDetailChecks() {
   const currentUser = useCurrentUser();
   const [isRunningChecks, setIsRunningChecks] = useState(false);
   const projectName = `${projectNamePrefix}${page.projectId}`;
-  const project = useVueState(() =>
-    useAppStore.getState().getProjectByName(projectName)
-  );
+  const project = useProjectByName(projectName);
   void projectsByName;
 
   const summary = useMemo(
@@ -42,12 +40,15 @@ export function IssueDetailChecks() {
 
   const allowRunChecks = useMemo(() => {
     if (!page.plan) return false;
+    // A closed/done issue (or deleted plan) is read-only — running checks is
+    // rejected by the backend too, so hide the action.
+    if (page.readonly) return false;
     // Once a rollout exists the plan is frozen — re-running checks would only
     // produce the same results and misleads the user.
     if (page.plan.hasRollout) return false;
     if (extractUserEmail(page.plan.creator) === currentUser.email) return true;
     return hasProjectPermissionV2(project, "bb.planCheckRuns.run");
-  }, [currentUser.email, page.plan, project]);
+  }, [currentUser.email, page.plan, page.readonly, project]);
 
   const refreshChecks = useCallback(async (): Promise<PlanCheckRun[]> => {
     const planName = page.plan?.name;

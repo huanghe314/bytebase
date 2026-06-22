@@ -1,21 +1,22 @@
 import { create } from "@bufbuild/protobuf";
-import { ArrowUpRight, Check, Copy, LoaderCircle } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowUpRight, Check, LoaderCircle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { rolloutServiceClientConnect } from "@/connect";
 import { ReadonlyDiffMonaco, ReadonlyMonaco } from "@/react/components/monaco";
+import { RouterLink } from "@/react/components/RouterLink";
 import { TaskRunLogViewer } from "@/react/components/task-run-log";
 import { Button } from "@/react/components/ui/button";
+import { CopyButton } from "@/react/components/ui/copy-button";
 import { Switch } from "@/react/components/ui/switch";
-import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
+import { router } from "@/react/router";
 import {
   PROJECT_V1_ROUTE_DATABASE_CHANGELOG_DETAIL,
   PROJECT_V1_ROUTE_DATABASE_DETAIL,
   PROJECT_V1_ROUTE_DATABASES,
   PROJECT_V1_ROUTE_SYNC_SCHEMA,
-} from "@/router/dashboard/projectV1";
-import { pushNotification } from "@/store";
+} from "@/react/router/handles";
+import { useAppStore } from "@/react/stores/app";
 import { getTimeForPbTimestampProtoEs } from "@/types";
 import type { Changelog } from "@/types/proto-es/v1/database_service_pb";
 import {
@@ -33,47 +34,15 @@ import {
   formatAbsoluteDateTime,
   getInstanceResource,
 } from "@/utils";
-import {
-  extractInstanceResourceName,
-  instanceV1SupportsSchemaRollback,
-} from "@/utils/v1/instance";
-import { extractProjectResourceName } from "@/utils/v1/project";
+import { instanceV1SupportsSchemaRollback } from "@/utils/v1/instance";
 import { extractTaskLink } from "@/utils/v1/revision";
 import { useProjectDatabaseDetail } from "./database-detail/useProjectDatabaseDetail";
 
 export interface DatabaseChangelogDetailPageProps {
-  project: string;
-  instance: string;
-  database: string;
+  projectId: string;
+  instanceId: string;
+  databaseName: string;
   changelogId: string;
-}
-
-function execCommandCopy(text: string): boolean {
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
-  try {
-    return document.execCommand("copy");
-  } catch {
-    return false;
-  } finally {
-    document.body.removeChild(textarea);
-  }
-}
-
-async function copyToClipboard(text: string): Promise<boolean> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      // Fall through to execCommand fallback.
-    }
-  }
-  return execCommandCopy(text);
 }
 
 function ChangelogStatusIndicator({ status }: { status: Changelog_Status }) {
@@ -155,48 +124,10 @@ async function fetchHasSuccessfulDatabaseSync(
   }
 }
 
-function CopyButton({ content }: { content: string }) {
-  const { t } = useTranslation();
-
-  const handleCopy = useCallback(async () => {
-    if (!content) {
-      return;
-    }
-
-    if (await copyToClipboard(content)) {
-      pushNotification({
-        module: "bytebase",
-        style: "SUCCESS",
-        title: t("common.copied"),
-      });
-      return;
-    }
-
-    pushNotification({
-      module: "bytebase",
-      style: "CRITICAL",
-      title: t("common.copy-failed"),
-    });
-  }, [content, t]);
-
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      aria-label={t("common.copy")}
-      title={t("common.copy")}
-      disabled={!content}
-      onClick={handleCopy}
-    >
-      <Copy className="size-4" />
-    </Button>
-  );
-}
-
 export function DatabaseChangelogDetailPage({
-  project,
-  instance,
-  database,
+  projectId,
+  instanceId,
+  databaseName,
   changelogId,
 }: DatabaseChangelogDetailPageProps) {
   const { t } = useTranslation();
@@ -213,10 +144,6 @@ export function DatabaseChangelogDetailPage({
   const [hasTaskRunDatabaseSync, setHasTaskRunDatabaseSync] = useState<
     boolean | undefined
   >(undefined);
-
-  const projectId = extractProjectResourceName(project);
-  const instanceId = extractInstanceResourceName(instance);
-  const databaseName = extractDatabaseResourceName(database).databaseName;
 
   const detail = useProjectDatabaseDetail({
     projectId,
@@ -369,8 +296,8 @@ export function DatabaseChangelogDetailPage({
   ]);
 
   const databaseDisplayName =
-    extractDatabaseResourceName(detail.database?.name ?? database)
-      .databaseName || databaseName;
+    extractDatabaseResourceName(detail.database?.name ?? "").databaseName ||
+    databaseName;
   const formattedCreateTime = useMemo(() => {
     if (!resolvedChangelog?.createTime) {
       return "";
@@ -385,36 +312,6 @@ export function DatabaseChangelogDetailPage({
     }
     return bytesToString(Number(resolvedChangelog.schemaSize));
   }, [resolvedChangelog?.schemaSize]);
-
-  const handleProjectBreadcrumbClick = () => {
-    router.push({
-      name: PROJECT_V1_ROUTE_DATABASES,
-      params: { projectId },
-    });
-  };
-
-  const handleDatabaseBreadcrumbClick = () => {
-    router.push({
-      name: PROJECT_V1_ROUTE_DATABASE_DETAIL,
-      params: {
-        projectId,
-        instanceId,
-        databaseName,
-      },
-    });
-  };
-
-  const handleChangelogBreadcrumbClick = () => {
-    router.push({
-      name: PROJECT_V1_ROUTE_DATABASE_DETAIL,
-      params: {
-        projectId,
-        instanceId,
-        databaseName,
-      },
-      hash: "#changelog",
-    });
-  };
 
   const handleRollback = () => {
     if (!resolvedChangelog || !detail.database) {
@@ -451,33 +348,48 @@ export function DatabaseChangelogDetailPage({
       <nav aria-label="Breadcrumb" className="mb-4">
         <ol className="flex flex-wrap items-center gap-x-2 text-sm text-control-light">
           <li>
-            <button
-              type="button"
+            <RouterLink
+              to={{
+                name: PROJECT_V1_ROUTE_DATABASES,
+                params: { projectId },
+              }}
               className="transition-colors hover:text-accent"
-              onClick={handleProjectBreadcrumbClick}
             >
               {t("common.databases")}
-            </button>
+            </RouterLink>
           </li>
           <li aria-hidden="true">/</li>
           <li>
-            <button
-              type="button"
+            <RouterLink
+              to={{
+                name: PROJECT_V1_ROUTE_DATABASE_DETAIL,
+                params: {
+                  projectId,
+                  instanceId,
+                  databaseName,
+                },
+              }}
               className="transition-colors hover:text-accent"
-              onClick={handleDatabaseBreadcrumbClick}
             >
               {databaseDisplayName}
-            </button>
+            </RouterLink>
           </li>
           <li aria-hidden="true">/</li>
           <li>
-            <button
-              type="button"
+            <RouterLink
+              to={{
+                name: PROJECT_V1_ROUTE_DATABASE_DETAIL,
+                params: {
+                  projectId,
+                  instanceId,
+                  databaseName,
+                },
+                hash: "#changelog",
+              }}
               className="transition-colors hover:text-accent"
-              onClick={handleChangelogBreadcrumbClick}
             >
               {t("changelog.self")}
-            </button>
+            </RouterLink>
           </li>
           <li aria-hidden="true">/</li>
           <li className="text-main">{changelogId}</li>
@@ -507,17 +419,13 @@ export function DatabaseChangelogDetailPage({
             <div className="flex items-center justify-between">
               <p className="text-lg text-main">{t("issue.task-run.logs")}</p>
               {taskFullLink ? (
-                <a
-                  href={taskFullLink}
+                <RouterLink
+                  to={{ path: taskFullLink }}
                   className="flex items-center gap-x-1 text-sm text-control-light transition-colors hover:text-accent"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    router.push({ path: taskFullLink });
-                  }}
                 >
                   {t("common.show-more")}
                   <ArrowUpRight className="size-4" />
-                </a>
+                </RouterLink>
               ) : null}
             </div>
             {showTaskRunLogs ? (
@@ -541,7 +449,7 @@ export function DatabaseChangelogDetailPage({
                   ({formattedSchemaSize})
                 </span>
               ) : null}
-              <CopyButton content={resolvedChangelog.schema} />
+              <CopyButton content={resolvedChangelog.schema} size="sm" />
             </p>
 
             <div className="flex items-center justify-between gap-x-2">

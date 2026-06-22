@@ -33,10 +33,10 @@ import {
   useSessionPageSize,
 } from "@/react/hooks/useSessionPageSize";
 import { cn } from "@/react/lib/utils";
+import { router } from "@/react/router";
+import { PROJECT_V1_ROUTE_ISSUES } from "@/react/router/handles";
 import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
-import { PROJECT_V1_ROUTE_ISSUES } from "@/router/dashboard/projectV1";
-import { pushNotification, useAuthStore } from "@/store";
+import { pushNotification } from "@/store";
 import { getProjectName } from "@/store/modules/v1/common";
 import { State } from "@/types/proto-es/v1/common_pb";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
@@ -227,7 +227,7 @@ function ProjectActionDropdown({
 
 export function ProjectsPage() {
   const { t } = useTranslation();
-  const authStore = useAuthStore();
+  const isLoggedIn = useAppStore((s) => s.isLoggedIn());
 
   // Search state — managed as SearchParams (query + scopes)
   const [searchParams, setSearchParams] = useState<SearchParams>(() => {
@@ -367,7 +367,7 @@ export function ProjectsPage() {
 
   const fetchProjects = useCallback(
     async (isRefresh: boolean) => {
-      if (!authStore.isLoggedIn) return;
+      if (!isLoggedIn) return;
 
       abortRef.current?.abort();
       abortRef.current = new AbortController();
@@ -413,14 +413,7 @@ export function ProjectsPage() {
         }
       }
     },
-    [
-      authStore.isLoggedIn,
-      pageSize,
-      searchText,
-      selectedState,
-      selectedLabels,
-      orderBy,
-    ]
+    [isLoggedIn, pageSize, searchText, selectedState, selectedLabels, orderBy]
   );
 
   // Fetch on mount + re-fetch on filter/sort/pageSize changes (debounced after first load)
@@ -594,7 +587,7 @@ export function ProjectsPage() {
   }, []);
 
   const handleRowClick = useCallback(
-    (project: Project, e: React.MouseEvent) => {
+    (project: Project, e: React.MouseEvent<HTMLElement>) => {
       const route = router.resolve(projectIssuesRoute(project));
       if (e.ctrlKey || e.metaKey) {
         window.open(route.fullPath, "_blank");
@@ -604,6 +597,10 @@ export function ProjectsPage() {
     },
     []
   );
+
+  const getProjectHref = useCallback((project: Project) => {
+    return router.resolve(projectIssuesRoute(project)).fullPath;
+  }, []);
 
   const handleProjectAction = useCallback(() => {
     fetchProjects(true);
@@ -647,6 +644,7 @@ export function ProjectsPage() {
               onAction={handleProjectAction}
             />
           )}
+          getRowHref={getProjectHref}
           selectedProjectNames={Array.from(selectedNames)}
           onSelectedChange={(names) => setSelectedNames(new Set(names))}
           sortKey={sortKey}

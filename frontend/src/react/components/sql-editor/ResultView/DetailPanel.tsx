@@ -66,8 +66,7 @@ function useLocalStorageBoolean(
 
 export function DetailPanel({ rows, columns }: DetailPanelProps) {
   const { t } = useTranslation();
-  const { dark, detail, disallowCopyingData, setDetail } =
-    useSQLResultViewContext();
+  const { detail, disallowCopyingData, setDetail } = useSQLResultViewContext();
   const { getBinaryFormat, setBinaryFormat } = useBinaryFormatContext();
   const [copied, setCopied] = useState(false);
 
@@ -167,6 +166,12 @@ export function DetailPanel({ rows, columns }: DetailPanelProps) {
     if (!next) setDetail(undefined);
   };
 
+  const stopSelectionClickPropagation = (event: React.MouseEvent) => {
+    if (window.getSelection()?.toString()) {
+      event.stopPropagation();
+    }
+  };
+
   return (
     <Sheet open={isOpen} onOpenChange={handleOpenChange}>
       <SheetContent width="standard">
@@ -186,7 +191,7 @@ export function DetailPanel({ rows, columns }: DetailPanelProps) {
               // and the content code block don't bleed to the sheet's
               // raw edges.
               "flex-1 min-h-0 flex flex-col gap-y-2 px-6 py-4",
-              dark ? "text-white" : "text-main"
+              "text-main"
             )}
           >
             <div className="flex items-center justify-between gap-x-4">
@@ -271,11 +276,12 @@ export function DetailPanel({ rows, columns }: DetailPanelProps) {
             <div
               className={cn(
                 "flex-1 overflow-auto text-sm font-mono border p-2 relative",
-                disallowCopyingData && "select-none",
+                disallowCopyingData ? "select-none" : "select-text",
                 guessedIsJSON && format && !wrap
                   ? "whitespace-pre"
                   : "whitespace-pre-wrap"
               )}
+              onClick={stopSelectionClickPropagation}
             >
               {guessedIsJSON && format ? (
                 <>

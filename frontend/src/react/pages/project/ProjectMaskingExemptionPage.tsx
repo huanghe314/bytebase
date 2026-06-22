@@ -13,6 +13,7 @@ import {
 } from "@/react/components/AdvancedSearch";
 import { FeatureAttention } from "@/react/components/FeatureAttention";
 import { FeatureBadge } from "@/react/components/FeatureBadge";
+import { RouterLink } from "@/react/components/RouterLink";
 import { Button } from "@/react/components/ui/button";
 import {
   Dialog,
@@ -30,7 +31,7 @@ import {
 } from "@/react/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/react/components/ui/tabs";
 import { useCurrentUser } from "@/react/hooks/useAppState";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useProjectByName } from "@/react/hooks/useProjectByName";
 import {
   buildMemberSummary,
   generateGrantTitle,
@@ -45,10 +46,10 @@ import type {
   ExemptionMember,
 } from "@/react/lib/sensitive-data/types";
 import { cn } from "@/react/lib/utils";
+import { router } from "@/react/router";
+import { PROJECT_V1_ROUTE_MASKING_EXEMPTION_CREATE } from "@/react/router/handles";
 import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
-import { PROJECT_V1_ROUTE_MASKING_EXEMPTION_CREATE } from "@/router/dashboard/projectV1";
-import { extractUserEmail, hasFeature, pushNotification } from "@/store";
+import { extractUserEmail, pushNotification } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import type { DatabaseResource } from "@/types";
 import {
@@ -95,9 +96,7 @@ export function ProjectMaskingExemptionPage({
   const projectName = `${projectNamePrefix}${projectId}`;
   // subscribe to re-render on project cache change
   void projectsByName;
-  const project = useVueState(() =>
-    useAppStore.getState().getProjectByName(projectName)
-  );
+  const project = useProjectByName(projectName);
   const showDatabaseLink = useMemo(
     () =>
       project ? hasProjectPermissionV2(project, "bb.databases.get") : false,
@@ -129,8 +128,8 @@ export function ProjectMaskingExemptionPage({
         : false,
     [project]
   );
-  const hasSensitiveDataFeature = useVueState(() =>
-    hasFeature(PlanFeature.FEATURE_DATA_MASKING)
+  const hasSensitiveDataFeature = useAppStore((s) =>
+    s.hasFeature(PlanFeature.FEATURE_DATA_MASKING)
   );
 
   const membersFromVue = useExemptionDataReact(projectName);
@@ -1032,16 +1031,12 @@ function ExemptionDetailPanel({
             member.member.startsWith(workloadIdentityBindingPrefix) ? (
             <span className="font-medium">{userEmail}</span>
           ) : (
-            <a
+            <RouterLink
               className="normal-link font-medium"
-              href={`/users/${userEmail}`}
-              onClick={(e) => {
-                e.preventDefault();
-                router.push(`/users/${userEmail}`);
-              }}
+              to={`/users/${userEmail}`}
             >
               {userEmail}
-            </a>
+            </RouterLink>
           )}
         </div>
         <div className="mt-1 text-sm textinfolabel">
@@ -1209,13 +1204,6 @@ function ExemptionResourceTable({
 
   const isSentinel = (value: string): boolean => value === "" || value === "-1";
 
-  const handleDatabaseClick = (resource: DatabaseResource) => {
-    const path = resource.databaseFullName.startsWith("/")
-      ? resource.databaseFullName
-      : `/${resource.databaseFullName}`;
-    router.push(path);
-  };
-
   return (
     <div className="overflow-x-auto">
       <Table>
@@ -1257,12 +1245,16 @@ function ExemptionResourceTable({
                       {t("database.all")}
                     </span>
                   ) : showDatabaseLink ? (
-                    <span
+                    <RouterLink
+                      to={
+                        resource.databaseFullName.startsWith("/")
+                          ? resource.databaseFullName
+                          : `/${resource.databaseFullName}`
+                      }
                       className="normal-link cursor-pointer"
-                      onClick={() => handleDatabaseClick(resource)}
                     >
                       {databaseName}
-                    </span>
+                    </RouterLink>
                   ) : (
                     <span className="text-control-light">{databaseName}</span>
                   )}

@@ -115,6 +115,11 @@ type DeleteDialogState =
       worksheets: string[];
     }
   | {
+      type: "multi-delete";
+      folders: string[];
+      worksheets: string[];
+    }
+  | {
       type: "duplicate-folder-name";
       existingLabel: string;
       resolve: (merge: boolean) => void;
@@ -628,7 +633,7 @@ export function SheetTree({
 
   // ---- handleMultiDelete (exposed via ref) ---------------------------------
   const handleMultiDelete = useCallback(
-    async (nodes: WorksheetFolderNode[]) => {
+    (nodes: WorksheetFolderNode[]): Promise<void> => {
       const folders: string[] = [];
       const worksheets: string[] = [];
       for (const node of nodes) {
@@ -651,13 +656,24 @@ export function SheetTree({
         }
         folders.push(node.key);
       }
-      const removed = await handleDeleteFolders(folders, worksheets);
-      if (removed) {
-        onMultiSelectModeChange?.(false);
+      if (folders.length === 0 && worksheets.length === 0) {
+        return Promise.resolve();
       }
+      // Multi-select is explicit: delete exactly what was checked. Checking a
+      // folder already auto-includes its descendants, so the selection captures
+      // the user's full intent. We must NOT reuse the folder context-menu's
+      // "Non-empty folder → move to root vs delete" prompt here — that prompt
+      // exists for deleting a single folder whose worksheets weren't selected.
+      return new Promise<void>((resolve) => {
+        multiDeleteResolveRef.current = resolve;
+        setDeleteDialogState({ type: "multi-delete", folders, worksheets });
+      });
     },
-    [folderContext, handleDeleteFolders, onMultiSelectModeChange]
+    [folderContext]
   );
+
+  // Ref to hold the pending promise resolve for the multi-delete dialog.
+  const multiDeleteResolveRef = useRef<(() => void) | null>(null);
 
   // Expose handleMultiDelete via an imperative ref so WorksheetPane can call it
   useImperativeHandle(ref, () => ({ handleMultiDelete }), [handleMultiDelete]);
@@ -934,8 +950,10 @@ export function SheetTree({
           data-item-key={folderNode.key}
           className={cn(
             "flex items-center gap-x-1 w-full py-0.5 text-sm cursor-pointer select-none",
-            "hover:bg-control-bg rounded-xs",
-            isSelected && "bg-control-bg"
+            // Align with the connection-panel database tree: subtle neutral
+            // hover, accent-tinted selection (was a too-light gray fill).
+            "hover:bg-control-bg/70 rounded-xs",
+            isSelected && "bg-accent/10"
           )}
           onClick={(e) => {
             // Only handle clicks on text/prefix area, not suffix
@@ -1254,6 +1272,55 @@ export function SheetTree({
     );
   };
 
+  // ---- Multi-delete dialog -------------------------------------------------
+  const renderMultiDeleteDialog = () => {
+    const isOpen = deleteDialogState.type === "multi-delete";
+    const finish = () => {
+      setDeleteDialogState({ type: "none" });
+      const resolve = multiDeleteResolveRef.current;
+      multiDeleteResolveRef.current = null;
+      resolve?.();
+    };
+    return (
+      <AlertDialog open={isOpen}>
+        <AlertDialogContent>
+          <AlertDialogTitle>
+            {t("sheet.hint-tips.confirm-multi-delete-title")}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {t("sheet.hint-tips.confirm-multi-delete-content")}
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <Button variant="outline" size="sm" onClick={finish}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={async () => {
+                if (deleteDialogState.type !== "multi-delete") return;
+                const { folders, worksheets } = deleteDialogState;
+                setDeleteDialogState({ type: "none" });
+                if (worksheets.length > 0) {
+                  await doDeleteWorksheets(worksheets);
+                }
+                for (const folder of folders) {
+                  folderContext.removeFolder(folder);
+                }
+                onMultiSelectModeChange?.(false);
+                const resolve = multiDeleteResolveRef.current;
+                multiDeleteResolveRef.current = null;
+                resolve?.();
+              }}
+            >
+              {t("common.delete")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    );
+  };
+
   // ---- Duplicate folder name dialog ----------------------------------------
   const renderDuplicateFolderDialog = () => {
     const isOpen = deleteDialogState.type === "duplicate-folder-name";
@@ -1401,6 +1468,7 @@ export function SheetTree({
       {renderDeleteSheetDialog()}
       {renderDuplicateSheetDialog()}
       {renderDeleteFoldersDialog()}
+      {renderMultiDeleteDialog()}
       {renderDuplicateFolderDialog()}
     </div>
   );

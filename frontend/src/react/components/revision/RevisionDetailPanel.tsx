@@ -1,79 +1,16 @@
 import { ArrowUpRight, LoaderCircle } from "lucide-react";
-import { type MouseEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { sheetServiceClientConnect } from "@/connect";
 import { ReadonlyMonaco } from "@/react/components/monaco";
+import { RouterLink } from "@/react/components/RouterLink";
 import { TaskRunLogViewer } from "@/react/components/task-run-log";
+import { CopyButton } from "@/react/components/ui/copy-button";
 import { useRevisionByName } from "@/react/hooks/useAppState";
 import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
-import { pushNotification } from "@/store";
 import { getTimeForPbTimestampProtoEs } from "@/types";
 import { bytesToString, formatAbsoluteDateTime } from "@/utils";
 import { extractTaskLink, getRevisionType } from "@/utils/v1/revision";
-
-interface CopyButtonProps {
-  content: string;
-}
-
-function execCommandCopy(text: string): boolean {
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
-  try {
-    return document.execCommand("copy");
-  } catch {
-    return false;
-  } finally {
-    document.body.removeChild(textarea);
-  }
-}
-
-async function copyToClipboard(text: string): Promise<boolean> {
-  if (navigator.clipboard) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      // Fall through to execCommand fallback.
-    }
-  }
-  return execCommandCopy(text);
-}
-
-function CopyButton({ content }: CopyButtonProps) {
-  const { t } = useTranslation();
-
-  const handleCopy = async () => {
-    if (!content) {
-      return;
-    }
-
-    if (await copyToClipboard(content)) {
-      pushNotification({
-        module: "bytebase",
-        style: "SUCCESS",
-        title: t("common.copied"),
-      });
-    }
-  };
-
-  return (
-    <button
-      type="button"
-      className="text-sm text-control-light transition-colors hover:text-accent disabled:cursor-not-allowed disabled:text-control-light/40"
-      title={t("common.copy")}
-      aria-label={t("common.copy")}
-      disabled={!content}
-      onClick={handleCopy}
-    >
-      {t("common.copy")}
-    </button>
-  );
-}
 
 export interface RevisionDetailPanelProps {
   revisionName: string;
@@ -142,20 +79,6 @@ export function RevisionDetailPanel({
     ? bytesToString(new TextEncoder().encode(statement).length)
     : "";
 
-  const handleTaskFullLinkClick = (event: MouseEvent<HTMLAnchorElement>) => {
-    if (
-      event.button !== 0 ||
-      event.metaKey ||
-      event.altKey ||
-      event.ctrlKey ||
-      event.shiftKey
-    ) {
-      return;
-    }
-    event.preventDefault();
-    router.push({ path: taskFullLink });
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center py-2 text-sm text-gray-400">
@@ -188,14 +111,13 @@ export function RevisionDetailPanel({
               <div className="flex items-center justify-between">
                 <p className="text-lg text-main">{t("issue.task-run.logs")}</p>
                 {taskFullLink ? (
-                  <a
-                    href={taskFullLink}
+                  <RouterLink
+                    to={{ path: taskFullLink }}
                     className="flex items-center gap-x-1 text-sm text-control-light transition-colors hover:text-accent"
-                    onClick={handleTaskFullLinkClick}
                   >
                     {t("common.show-more")}
                     <ArrowUpRight className="h-4 w-4" />
-                  </a>
+                  </RouterLink>
                 ) : null}
               </div>
               <TaskRunLogViewer taskRunName={revision.taskRun} />

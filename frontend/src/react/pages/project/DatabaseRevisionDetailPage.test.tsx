@@ -39,7 +39,7 @@ const mocks = vi.hoisted(() => {
       <div data-testid="revision-detail-panel">{revisionName}</div>
     )),
     routeNames: {
-      databases: "workspace.project.databases",
+      databases: "workspace.project.database",
       databaseDetail: "workspace.project.database.detail",
       databaseRevisionDetail: "workspace.project.database.revision.detail",
     },
@@ -62,17 +62,12 @@ vi.mock("@/react/components/revision", () => ({
   RevisionDetailPanel: mocks.RevisionDetailPanel,
 }));
 
-vi.mock("@/router", () => ({
+vi.mock("@/react/router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/react/router")>()),
   router: {
     push: mocks.routerPush,
+    resolve: (to: unknown) => ({ href: String(to), fullPath: String(to) }),
   },
-}));
-
-vi.mock("@/router/dashboard/projectV1", () => ({
-  PROJECT_V1_ROUTE_DATABASES: mocks.routeNames.databases,
-  PROJECT_V1_ROUTE_DATABASE_DETAIL: mocks.routeNames.databaseDetail,
-  PROJECT_V1_ROUTE_DATABASE_REVISION_DETAIL:
-    mocks.routeNames.databaseRevisionDetail,
 }));
 
 vi.mock("./database-detail/useProjectDatabaseDetail", () => ({
@@ -162,9 +157,9 @@ describe("DatabaseRevisionDetailPage", () => {
     });
     const { container, render, unmount } = renderIntoContainer(
       createElement(DatabaseRevisionDetailPage, {
-        project: "projects/proj1",
-        instance: "instances/inst1",
-        database: "instances/inst1/databases/db-from-prop",
+        projectId: "proj1",
+        instanceId: "inst1",
+        databaseName: "db-from-prop",
         revisionId: "7",
       })
     );
@@ -196,9 +191,9 @@ describe("DatabaseRevisionDetailPage", () => {
     });
     const { container, render, unmount } = renderIntoContainer(
       createElement(DatabaseRevisionDetailPage, {
-        project: "projects/proj1",
-        instance: "instances/inst1",
-        database: "instances/inst1/databases/db-from-prop",
+        projectId: "proj1",
+        instanceId: "inst1",
+        databaseName: "db-from-prop",
         revisionId: "7",
       })
     );
@@ -226,17 +221,19 @@ describe("DatabaseRevisionDetailPage", () => {
       "instances/inst1/databases/db-from-hook/revisions/7"
     );
 
-    const clickButton = async (label: string) => {
-      const button = Array.from(container.querySelectorAll("button")).find(
+    const clickBreadcrumb = async (label: string) => {
+      const link = Array.from(container.querySelectorAll("a")).find(
         (candidate) => candidate.textContent === label
       );
 
       await act(async () => {
-        button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        link?.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true })
+        );
       });
     };
 
-    await clickButton("common.databases");
+    await clickBreadcrumb("common.databases");
     expect(mocks.routerPush).toHaveBeenCalledWith({
       name: mocks.routeNames.databases,
       params: {
@@ -244,7 +241,7 @@ describe("DatabaseRevisionDetailPage", () => {
       },
     });
 
-    await clickButton("db-from-prop");
+    await clickBreadcrumb("db-from-prop");
     expect(mocks.routerPush).toHaveBeenCalledWith({
       name: mocks.routeNames.databaseDetail,
       params: {
@@ -254,7 +251,7 @@ describe("DatabaseRevisionDetailPage", () => {
       },
     });
 
-    await clickButton("database.revision.self");
+    await clickBreadcrumb("database.revision.self");
     expect(mocks.routerPush).toHaveBeenCalledWith({
       name: mocks.routeNames.databaseDetail,
       params: {
@@ -265,9 +262,9 @@ describe("DatabaseRevisionDetailPage", () => {
       hash: "#revision",
     });
 
-    const databaseBreadcrumb = Array.from(
-      container.querySelectorAll("button")
-    ).find((button) => button.textContent === "db-from-prop");
+    const databaseBreadcrumb = Array.from(container.querySelectorAll("a")).find(
+      (link) => link.textContent === "db-from-prop"
+    );
 
     expect(databaseBreadcrumb).not.toBeNull();
 

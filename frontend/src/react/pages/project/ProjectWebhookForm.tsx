@@ -3,13 +3,16 @@ import { isEqual } from "lodash-es";
 import { EllipsisVertical, Info } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button } from "@/react/components/ui/button";
-import { Checkbox } from "@/react/components/ui/checkbox";
+import { RouterLink } from "@/react/components/RouterLink";
 import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@/react/components/ui/dialog";
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogTitle,
+} from "@/react/components/ui/alert-dialog";
+import { Button, buttonVariants } from "@/react/components/ui/button";
+import { Checkbox } from "@/react/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,14 +22,14 @@ import {
 import { Input } from "@/react/components/ui/input";
 import { Tooltip } from "@/react/components/ui/tooltip";
 import { WebhookTypeIcon } from "@/react/components/WebhookTypeIcon";
-import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
+import { router } from "@/react/router";
 import {
   PROJECT_V1_ROUTE_WEBHOOK_DETAIL,
   PROJECT_V1_ROUTE_WEBHOOKS,
-} from "@/router/dashboard/projectV1";
-import { WORKSPACE_ROUTE_IM } from "@/router/dashboard/workspaceRoutes";
-import { SETTING_ROUTE_WORKSPACE_GENERAL } from "@/router/dashboard/workspaceSetting";
+  SETTING_ROUTE_WORKSPACE_GENERAL,
+  WORKSPACE_ROUTE_IM,
+} from "@/react/router/handles";
+import { useAppStore } from "@/react/stores/app";
 import { pushNotification } from "@/store";
 import {
   projectWebhookV1ActivityItemList,
@@ -298,10 +301,6 @@ export function ProjectWebhookForm({
     });
   }, [project, state, testProjectWebhook, t, withLoading]);
 
-  const imSettingsUrl = useMemo(() => {
-    return router.resolve({ name: WORKSPACE_ROUTE_IM }).fullPath;
-  }, []);
-
   return (
     <div className="h-full flex flex-col">
       <div className="flex-1 mb-6 px-4">
@@ -341,15 +340,12 @@ export function ProjectWebhookForm({
               {t("settings.general.workspace.external-url.description")}
             </div>
             {hasWorkspacePermissionV2("bb.settings.setWorkspaceProfile") && (
-              <Button
-                size="sm"
-                className="mt-2"
-                onClick={() =>
-                  router.push({ name: SETTING_ROUTE_WORKSPACE_GENERAL })
-                }
+              <RouterLink
+                to={{ name: SETTING_ROUTE_WORKSPACE_GENERAL }}
+                className={buttonVariants({ size: "sm", className: "mt-2" })}
               >
                 {t("common.configure-now")}
-              </Button>
+              </RouterLink>
             )}
           </div>
         )}
@@ -487,14 +483,14 @@ export function ProjectWebhookForm({
                 ) : (
                   <span className="text-control-light">
                     {t("project.webhook.direct-messages-warning")}{" "}
-                    <a
-                      href={imSettingsUrl}
+                    <RouterLink
+                      to={{ name: WORKSPACE_ROUTE_IM }}
                       target="_blank"
                       rel="noreferrer"
                       className="normal-link"
                     >
                       {t("common.configure-now")}
-                    </a>
+                    </RouterLink>
                   </span>
                 )}
               </div>
@@ -578,26 +574,26 @@ export function ProjectWebhookForm({
       </div>
 
       {/* Delete confirmation dialog */}
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent>
-          <DialogTitle>
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogTitle>
             {t("project.webhook.deletion.confirm-title", {
               title: state.title,
             })}
-          </DialogTitle>
-          <p className="text-sm text-control-light">
+          </AlertDialogTitle>
+          <AlertDialogDescription>
             {t("common.cannot-undo-this-action")}
-          </p>
-          <div className="flex justify-end gap-x-2 mt-4">
+          </AlertDialogDescription>
+          <AlertDialogFooter>
             <Button variant="outline" onClick={() => setDeleteOpen(false)}>
               {t("common.cancel")}
             </Button>
             <Button variant="destructive" onClick={deleteWebhook}>
               {t("common.delete")}
             </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

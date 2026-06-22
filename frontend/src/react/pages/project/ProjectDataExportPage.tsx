@@ -1,6 +1,6 @@
 import { Download, Loader2, SquareTerminal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import {
   AdvancedSearch,
   type ScopeOption,
@@ -9,16 +9,22 @@ import {
   type ValueOption,
 } from "@/react/components/AdvancedSearch";
 import { HighlightLabelText } from "@/react/components/HighlightLabelText";
+import { RouterLink } from "@/react/components/RouterLink";
 import { Alert } from "@/react/components/ui/alert";
-import { Button } from "@/react/components/ui/button";
+import { Button, buttonVariants } from "@/react/components/ui/button";
 import { Tooltip } from "@/react/components/ui/tooltip";
 import { PagedTableFooter, usePagedData } from "@/react/hooks/usePagedData";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useProjectByName } from "@/react/hooks/useProjectByName";
+import { useSQLEditorQueryDataPolicy } from "@/react/hooks/useSQLEditorBridge";
 import { displayRoleTitleFromList } from "@/react/lib/role";
+import { router } from "@/react/router";
+import {
+  PROJECT_V1_ROUTE_SETTINGS,
+  SQL_EDITOR_HOME_MODULE,
+  WORKSPACE_ROUTE_CUSTOM_APPROVAL,
+  WORKSPACE_ROUTE_USER_PROFILE,
+} from "@/react/router/handles";
 import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
-import { WORKSPACE_ROUTE_USER_PROFILE } from "@/router/dashboard/workspaceRoutes";
-import { SQL_EDITOR_HOME_MODULE } from "@/router/sqlEditor";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import { getTimeForPbTimestampProtoEs, unknownUser } from "@/types";
 import { ApprovalStatus, RiskLevel } from "@/types/proto-es/v1/common_pb";
@@ -51,9 +57,19 @@ export function ProjectDataExportPage({ projectId }: { projectId: string }) {
   );
 
   const projectName = `${projectNamePrefix}${projectId}`;
-  const project = useVueState(() =>
-    useAppStore.getState().getProjectByName(projectName)
-  );
+  const project = useProjectByName(projectName);
+
+  // Drives the deprecation banner's conditional sentence. Mirrors the
+  // SQL editor's policy reader so the wording matches what users
+  // actually see in the editor (a banner that says "go to SQL Editor
+  // for export" would be misleading if export is in fact gated there).
+  const queryDataPolicy = useSQLEditorQueryDataPolicy(projectName);
+
+  // Workspace-level setting permission: gates the "configure your
+  // approval flow" sentence so non-admins don't see advice they can't
+  // act on. `bb.settings.set` is the same check the workspace settings
+  // page uses.
+  const canSetWorkspaceSettings = hasWorkspacePermissionV2("bb.settings.set");
 
   const [showDrawer, setShowDrawer] = useState(false);
 
@@ -220,17 +236,98 @@ export function ProjectDataExportPage({ projectId }: { projectId: string }) {
         <Alert
           variant="warning"
           title={t("export-center.deprecated.title")}
-          description={t("export-center.deprecated.description")}
+          description={
+            // Single paragraph: intro + one branch of line 2 (always
+            // present) + the optional approval-flow advice. Sentences
+            // flow inline separated by spaces, links are inline
+            // anchors styled with `text-accent-text underline` so they
+            // stand out on the warning-toned Alert background.
+            //
+            // Trans `values + components` shape matches the codebase
+            // convention (see `subscription.overuse-warning` in
+            // `BannersWrapper.tsx`): the locale embeds
+            // `<link>{{linkText}}</link>`, `values.linkText` provides
+            // the translated label, and `components.link` is the
+            // wrapping `<a>`. The text-inside-tag shorthand
+            // (`<link>label</link>` with no `values`) is harder to get
+            // right across `<Trans>` versions, so stick with what's
+            // proven.
+            <p>
+              {t("export-center.deprecated.intro")}{" "}
+              {!queryDataPolicy.disableExport
+                ? t("export-center.deprecated.go-to-sql-editor-for-export")
+                : project?.allowJustInTimeAccess
+                  ? t("export-center.deprecated.request-via-jit")
+                  : null}
+              {queryDataPolicy.disableExport &&
+                !project?.allowJustInTimeAccess && (
+                  <Trans
+                    t={t}
+                    i18nKey="export-center.deprecated.enable-jit-first"
+                    values={{
+                      linkText: t(
+                        "export-center.deprecated.project-jit-link-text"
+                      ),
+                    }}
+                    components={{
+                      // Tag name `lnk` (not `link`) — `<link>` is an
+                      // HTML void element, which the Trans HTML parser
+                      // self-closes, orphaning the inner text and the
+                      // closing tag so the wrapping `<a>` never gets
+                      // generated and the link silently vanishes.
+                      lnk: (
+                        <RouterLink
+                          to={{
+                            name: PROJECT_V1_ROUTE_SETTINGS,
+                            params: { projectId },
+                          }}
+                          className="text-accent underline hover:text-accent-hover"
+                        />
+                      ),
+                    }}
+                  />
+                )}
+              {/* Approval-flow advice only when the JIT path is in
+                  play (i.e. the policy disables direct export). When
+                  export is policy-allowed, no JIT request is needed,
+                  so the approval flow isn't part of the user's path
+                  and the line would be noise. */}
+              {canSetWorkspaceSettings && queryDataPolicy.disableExport && (
+                <>
+                  {" "}
+                  <Trans
+                    t={t}
+                    i18nKey="export-center.deprecated.configure-approval-flow"
+                    values={{
+                      linkText: t(
+                        "export-center.deprecated.approval-flow-link-text"
+                      ),
+                    }}
+                    components={{
+                      lnk: (
+                        <RouterLink
+                          to={{ name: WORKSPACE_ROUTE_CUSTOM_APPROVAL }}
+                          className="text-accent underline hover:text-accent-hover"
+                        />
+                      ),
+                    }}
+                  />
+                </>
+              )}
+            </p>
+          }
         >
           <div className="mt-3 flex justify-end">
-            <Button
-              size="sm"
-              className="shrink-0 whitespace-nowrap"
-              onClick={() => router.push({ name: SQL_EDITOR_HOME_MODULE })}
+            <RouterLink
+              to={{ name: SQL_EDITOR_HOME_MODULE }}
+              className={buttonVariants({
+                size: "sm",
+                className: "shrink-0 whitespace-nowrap",
+              })}
             >
               <SquareTerminal className="size-4 mr-1" />
               {t("export-center.deprecated.open-sql-editor")}
-            </Button>
+            </RouterLink>
           </div>
         </Alert>
       </div>
@@ -250,7 +347,11 @@ export function ProjectDataExportPage({ projectId }: { projectId: string }) {
               : undefined
           }
         >
-          <Button disabled={!canCreate} onClick={() => setShowDrawer(true)}>
+          <Button
+            variant="outline"
+            disabled={!canCreate}
+            onClick={() => setShowDrawer(true)}
+          >
             <Download className="size-4 mr-1" />
             {t("quick-action.request-export-data")}
           </Button>
@@ -476,12 +577,8 @@ function IssueListItem({
   );
   const creator = creatorUser || unknownUser(issue.creator);
 
-  const issueProject = useVueState(() =>
-    useAppStore
-      .getState()
-      .getProjectByName(
-        `${projectNamePrefix}${extractProjectResourceName(issue.name)}`
-      )
+  const issueProject = useProjectByName(
+    `${projectNamePrefix}${extractProjectResourceName(issue.name)}`
   );
 
   const createTimeTs = Math.floor(
@@ -546,8 +643,8 @@ function IssueListItem({
               <IssueStatusIcon status={issue.status} />
             </div>
             {issue.title ? (
-              <a
-                href={issueUrl}
+              <RouterLink
+                to={issueUrl}
                 className="font-medium text-main text-base truncate hover:underline"
                 onClick={(e) => e.stopPropagation()}
               >
@@ -555,15 +652,15 @@ function IssueListItem({
                   text={issue.title}
                   keyword={highlightWords}
                 />
-              </a>
+              </RouterLink>
             ) : (
-              <a
-                href={issueUrl}
+              <RouterLink
+                to={issueUrl}
                 className="font-medium text-base truncate hover:underline italic text-control-placeholder"
                 onClick={(e) => e.stopPropagation()}
               >
                 {t("common.untitled")}
-              </a>
+              </RouterLink>
             )}
             <RiskLevelIcon riskLevel={issue.riskLevel} />
             {validLabels.map((label: { value: string; color: string }) => (
@@ -588,20 +685,18 @@ function IssueListItem({
               <span>{humanizeTs(createTimeTs)}</span>
             </Tooltip>
             <span>&middot;</span>
-            <a
+            <RouterLink
               className="hover:underline"
-              href="#"
+              to={{
+                name: WORKSPACE_ROUTE_USER_PROFILE,
+                params: { principalEmail: creator.email },
+              }}
               onClick={(e) => {
-                e.preventDefault();
                 e.stopPropagation();
-                router.push({
-                  name: WORKSPACE_ROUTE_USER_PROFILE,
-                  params: { principalEmail: creator.email },
-                });
               }}
             >
               {creator.title}
-            </a>
+            </RouterLink>
           </div>
           {/* Expanded description for search highlights */}
           {expanded && (

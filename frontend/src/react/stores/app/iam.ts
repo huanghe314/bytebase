@@ -94,18 +94,28 @@ export const createIamSlice: AppSliceCreator<IamSlice> = (set, get) => ({
         )
         .then(async (workspacePolicy) => {
           set({ workspacePolicy, workspacePolicyRequest: undefined });
-          // Prefetch groups referenced by the policy so derived role/user
-          // maps (and any UI that resolves group display names) read from
-          // a populated cache. Without this every page that reads the
-          // policy had to hedge with its own fetchWorkspaceIamPolicy().
-          const groupMembers = workspacePolicy.bindings
-            .flatMap((binding) => binding.members)
-            .filter((member) => member.startsWith(groupBindingPrefix));
-          if (groupMembers.length > 0) {
-            await get()
-              .batchGetOrFetchGroups(groupMembers)
-              .catch(() => []);
+          // Prefetch the group / user members referenced by the policy so
+          // derived role maps and any UI that resolves member display names
+          // (e.g. the workspace members table's `getMemberBindings`) read
+          // from a populated cache. Without the user prefetch every member
+          // failed the `getUserByIdentifier` lookup and was flagged pending,
+          // rendering an "Invited" badge for everyone in SaaS mode. Mirrors
+          // the project IAM path in `loadProjectIamPolicy`.
+          const groupMembers: string[] = [];
+          const userMembers: string[] = [];
+          for (const binding of workspacePolicy.bindings) {
+            for (const member of binding.members) {
+              if (member.startsWith(groupBindingPrefix)) {
+                groupMembers.push(member);
+              } else {
+                userMembers.push(member);
+              }
+            }
           }
+          await Promise.allSettled([
+            get().batchGetOrFetchGroups(groupMembers),
+            get().batchGetOrFetchUsers(userMembers),
+          ]);
           return workspacePolicy;
         })
         .catch(() => {
@@ -162,21 +172,6 @@ export const createIamSlice: AppSliceCreator<IamSlice> = (set, get) => ({
           get().batchGetOrFetchGroups(groupMembers),
           get().batchGetOrFetchUsers(userMembers),
         ]);
-
-        // Bridge to the Pinia projectIamPolicy store so the legacy
-        // `usePermissionStore.currentPermissionsInProjectV1` chain sees
-        // the policy without a second fetch. Dynamic import to avoid a
-        // static module-load cycle (Pinia projectIamPolicy transitively
-        // imports `@/store` chains that would re-enter this app store).
-        try {
-          const { useProjectIamPolicyStore } = await import(
-            "@/store/modules/v1/projectIamPolicy"
-          );
-          useProjectIamPolicyStore().setProjectIamPolicy(project, policy);
-        } catch {
-          // Pinia not available (e.g. some isolated test). Safe to ignore —
-          // the app-store cache is already populated.
-        }
         return policy;
       })
       .catch(() => {
@@ -224,21 +219,24 @@ export const createIamSlice: AppSliceCreator<IamSlice> = (set, get) => ({
         [project]: updated,
       },
     }));
-    // Bridge to the Pinia projectIamPolicy store so the legacy
-    // permission chain sees the updated policy. setProjectIamPolicy also
-    // invalidates the Pinia permission cache by project. composePolicyBindings
-    // refreshes the Pinia user / group / service-account / workload-identity
-    // stores that getMemberBindings reads — without it the members table
-    // could render stale titles for newly granted members.
-    try {
-      const { useProjectIamPolicyStore, composePolicyBindings } = await import(
-        "@/store/modules/v1/projectIamPolicy"
-      );
-      useProjectIamPolicyStore().setProjectIamPolicy(project, updated);
-      await composePolicyBindings(updated.bindings);
-    } catch {
-      // Pinia not available — app-store cache is already populated.
+    // Prefetch the updated policy's members into the app-store group/user
+    // caches so the members table (getMemberBindings) resolves titles for
+    // newly granted members without a stale render.
+    const groupMembers: string[] = [];
+    const userMembers: string[] = [];
+    for (const binding of updated.bindings) {
+      for (const member of binding.members) {
+        if (member.startsWith(groupBindingPrefix)) {
+          groupMembers.push(member);
+        } else {
+          userMembers.push(member);
+        }
+      }
     }
+    await Promise.allSettled([
+      get().batchGetOrFetchGroups(groupMembers),
+      get().batchGetOrFetchUsers(userMembers),
+    ]);
     return updated;
   },
 

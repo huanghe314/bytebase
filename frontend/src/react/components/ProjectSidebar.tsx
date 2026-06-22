@@ -11,12 +11,11 @@ import {
 import type { ElementType } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { effectScope } from "vue";
 import logoFull from "@/assets/logo-full.svg";
+import { RouterLink } from "@/react/components/RouterLink";
 import { useWorkspace } from "@/react/hooks/useAppState";
-import { useVueState } from "@/react/hooks/useVueState";
-import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
+import { useRecentVisit } from "@/react/hooks/useRecentVisit";
+import { router, useCurrentRoute } from "@/react/router";
 import {
   PROJECT_V1_ROUTE_ACCESS_GRANTS,
   PROJECT_V1_ROUTE_AUDIT_LOGS,
@@ -35,8 +34,8 @@ import {
   PROJECT_V1_ROUTE_SYNC_SCHEMA,
   PROJECT_V1_ROUTE_WEBHOOKS,
   PROJECT_V1_ROUTE_WORKLOAD_IDENTITIES,
-} from "@/router/dashboard/projectV1";
-import { useRecentVisit } from "@/router/useRecentVisit";
+} from "@/react/router/handles";
+import { useAppStore } from "@/react/stores/app";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 
 // ---------------------------------------------------------------------------
@@ -75,12 +74,13 @@ function useSidebarItems(): SidebarItem[] {
   const { t } = useTranslation();
   const defaultProject = useAppStore((s) => s.serverInfo?.defaultProject ?? "");
 
-  const isDefault = useVueState(() => {
-    const projectId =
-      (router.currentRoute.value.params.projectId as string | undefined) ?? "";
-    const projectName = projectId ? `${projectNamePrefix}${projectId}` : "";
-    return !!defaultProject && projectName === defaultProject;
-  });
+  const sidebarRoute = useCurrentRoute();
+  const sidebarProjectId =
+    (sidebarRoute.params.projectId as string | undefined) ?? "";
+  const sidebarProjectName = sidebarProjectId
+    ? `${projectNamePrefix}${sidebarProjectId}`
+    : "";
+  const isDefault = !!defaultProject && sidebarProjectName === defaultProject;
 
   return useMemo(
     (): SidebarItem[] => [
@@ -238,29 +238,15 @@ export function ProjectSidebar() {
   const rawItems = useSidebarItems();
   const filteredItems = useMemo(() => filterSidebarList(rawItems), [rawItems]);
 
-  const currentRouteName = useVueState(
-    () => router.currentRoute.value.name?.toString() ?? ""
-  );
-
-  const projectId = useVueState(
-    () =>
-      (router.currentRoute.value.params.projectId as string | undefined) ?? ""
-  );
+  const route = useCurrentRoute();
+  const currentRouteName = route.name?.toString() ?? "";
+  const projectId = (route.params.projectId as string | undefined) ?? "";
 
   const customLogo = useWorkspace()?.logo ?? "";
 
-  // Create a Vue effectScope so we can call the Vue composable useRecentVisit.
-  const recordVisitRef = useRef<((path: string) => void) | null>(null);
-  useEffect(() => {
-    // TODO(steven): Replace this Vue composable bridge with a shared framework-agnostic
-    // recent-visit helper so React components don't need a Vue effect scope.
-    const scope = effectScope();
-    scope.run(() => {
-      const { record } = useRecentVisit();
-      recordVisitRef.current = record;
-    });
-    return () => scope.stop();
-  }, []);
+  const { record } = useRecentVisit();
+  const recordVisitRef = useRef(record);
+  recordVisitRef.current = record;
 
   // Ensure the project is fetched into the store cache.
   // ProjectRouteShell also fetches it, but this guards against race conditions.
@@ -343,56 +329,33 @@ export function ProjectSidebar() {
     }
   }, []);
 
-  const resolveHref = useCallback(
-    (path: string) =>
-      router.resolve({
-        name: path,
-        params: { projectId },
-      }).fullPath,
-    [projectId]
-  );
-
-  const handleItemClick = useCallback(
-    (e: React.MouseEvent, path: string) => {
+  const recordItemVisit = useCallback(
+    (path: string) => {
       const route = router.resolve({
         name: path,
         params: { projectId },
       });
       recordVisitRef.current?.(route.fullPath);
-      if (e.ctrlKey || e.metaKey) {
-        // Let the browser's native <a> Ctrl/Meta-click handle new-tab opening.
-        return;
-      }
-      e.preventDefault();
-      router.push(route);
     },
     [projectId]
   );
 
-  const resolveHomeRoute = useCallback(() => {
-    return router.resolve({
+  const homeRoute = useMemo(
+    () => ({
       name: PROJECT_V1_ROUTE_DETAIL,
       params: { projectId },
-    });
-  }, [projectId]);
-
-  const handleHomeClick = useCallback(
-    (e: React.MouseEvent<HTMLAnchorElement>) => {
-      const route = resolveHomeRoute();
-      recordVisitRef.current?.(route.fullPath);
-      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
-        return;
-      }
-      e.preventDefault();
-      router.push(route);
-    },
-    [resolveHomeRoute]
+    }),
+    [projectId]
   );
+
+  const handleHomeClick = useCallback(() => {
+    const route = router.resolve(homeRoute);
+    recordVisitRef.current?.(route.fullPath);
+  }, [homeRoute]);
 
   // -- Logo ------------------------------------------------------------------
 
   const logoSrc = customLogo || logoFull;
-  const homeHref = resolveHomeRoute().fullPath;
 
   // -- Render ----------------------------------------------------------------
 
@@ -403,14 +366,17 @@ export function ProjectSidebar() {
           const classes = getItemClass(child, currentRouteName);
           if (child.path) {
             return (
-              <a
+              <RouterLink
                 key={`${parentIndex}-${j}`}
-                href={resolveHref(child.path)}
+                to={{
+                  name: child.path,
+                  params: { projectId },
+                }}
                 className={`${childRouteClass} cursor-pointer no-underline text-inherit ${classes.join(" ")}`}
-                onClick={(e) => handleItemClick(e, child.path!)}
+                onClick={() => recordItemVisit(child.path!)}
               >
                 {child.title}
-              </a>
+              </RouterLink>
             );
           }
           return null;
@@ -429,15 +395,18 @@ export function ProjectSidebar() {
     if (!hasChildren && item.path) {
       const classes = getItemClass(item, currentRouteName);
       return (
-        <a
+        <RouterLink
           key={index}
-          href={resolveHref(item.path)}
+          to={{
+            name: item.path,
+            params: { projectId },
+          }}
           className={`${parentRouteClass} cursor-pointer no-underline text-inherit ${classes.join(" ")}`}
-          onClick={(e) => handleItemClick(e, item.path!)}
+          onClick={() => recordItemVisit(item.path!)}
         >
           {Icon && <Icon className="mr-2 w-5 h-5 text-gray-500" />}
           {item.title}
-        </a>
+        </RouterLink>
       );
     }
 
@@ -468,13 +437,13 @@ export function ProjectSidebar() {
 
   return (
     <nav className="flex-1 flex flex-col overflow-y-hidden border-r border-block-border">
-      <a
-        href={homeHref}
+      <RouterLink
+        to={homeRoute}
         className="p-2 shrink-0 m-auto cursor-pointer"
         onClick={handleHomeClick}
       >
         <img src={logoSrc} alt="Bytebase" className="max-w-44" />
-      </a>
+      </RouterLink>
       <div className="flex-1 overflow-y-auto px-2.5 pb-4 flex flex-col gap-y-1">
         {filteredItems.map((item, i) => renderItem(item, i))}
       </div>

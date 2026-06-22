@@ -25,7 +25,8 @@ import {
   rolloutServiceClientConnect,
 } from "@/connect";
 import { MarkdownEditor } from "@/react/components/MarkdownEditor";
-import { Button } from "@/react/components/ui/button";
+import { RouterLink } from "@/react/components/RouterLink";
+import { Button, buttonVariants } from "@/react/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -42,18 +43,18 @@ import {
 import { Tooltip } from "@/react/components/ui/tooltip";
 import { useCurrentUser } from "@/react/hooks/useAppState";
 import { useClickOutside } from "@/react/hooks/useClickOutside";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useProjectByName } from "@/react/hooks/useProjectByName";
 import { cn } from "@/react/lib/utils";
-import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
+import { router } from "@/react/router";
 import {
   PROJECT_V1_ROUTE_ISSUE_DETAIL,
   PROJECT_V1_ROUTE_PLAN_DETAIL,
-} from "@/router/dashboard/projectV1";
+} from "@/react/router/handles";
 import {
   buildPlanDeployRouteFromPlanName,
   buildPlanDeployRouteFromRolloutName,
-} from "@/router/dashboard/projectV1RouteHelpers";
+} from "@/react/router/routeHelpers";
+import { useAppStore } from "@/react/stores/app";
 import { pushNotification } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import {
@@ -108,9 +109,7 @@ export function IssueDetailActionBar() {
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const projectName = `${projectNamePrefix}${page.projectId}`;
-  const project = useVueState(() =>
-    useAppStore.getState().getProjectByName(projectName)
-  );
+  const project = useProjectByName(projectName);
   void projectsByName;
   const { isSpecEmpty } = useIssueDetailSpecValidation(page.plan?.specs ?? []);
 
@@ -445,17 +444,17 @@ export function IssueDetailActionBar() {
     <>
       <div className="flex items-center gap-x-2">
         {shouldShowPlanLink && planRoute && (
-          <Button
-            className="gap-x-1"
-            onClick={() => {
-              void router.push(planRoute);
-            }}
-            variant="outline"
+          <RouterLink
+            to={planRoute}
+            className={buttonVariants({
+              variant: "outline",
+              className: "gap-x-1",
+            })}
           >
             <span>#{extractPlanUID(page.plan.name)}</span>
             <span>{t("common.plan")}</span>
             <ExternalLink className="size-3.5" />
-          </Button>
+          </RouterLink>
         )}
 
         {primaryAction &&

@@ -1,14 +1,10 @@
-import {
-  AlertCircle,
-  ArrowRight,
-  ShoppingCart,
-  Sparkles,
-  Wrench,
-  X,
-} from "lucide-react";
+import { AlertCircle, ShoppingCart, Sparkles, Wrench, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
-import { Button } from "@/react/components/ui/button";
+import { AnnouncementBanner } from "@/react/components/AnnouncementBanner";
+import { resolveAnnouncementTheme } from "@/react/components/announcement-theme";
+import { RouterLink } from "@/react/components/RouterLink";
+import { Button, buttonVariants } from "@/react/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -24,13 +20,8 @@ import {
 import {
   SETTING_ROUTE_WORKSPACE_GENERAL,
   SETTING_ROUTE_WORKSPACE_SUBSCRIPTION,
-  useNavigate,
 } from "@/react/router";
 import { useAppStore } from "@/react/stores/app";
-import {
-  type Announcement,
-  Announcement_AlertLevel,
-} from "@/types/proto-es/v1/setting_service_pb";
 import {
   PlanFeature,
   PlanType,
@@ -79,7 +70,6 @@ function BannerDismissButton({
 
 function BannerExternalUrl() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const hasPermission = useWorkspacePermission(
     "bb.settings.setWorkspaceProfile"
   );
@@ -98,16 +88,16 @@ function BannerExternalUrl() {
           </div>
           {hasPermission ? (
             <div className="order-3 mt-2 w-full shrink-0 sm:order-2 sm:mt-0 sm:w-auto">
-              <Button
-                type="button"
-                className="h-auto rounded-md bg-white py-2 pr-2 pl-4 text-base font-medium text-accent shadow-xs hover:bg-indigo-50"
-                onClick={() => {
-                  void navigate.push({ name: SETTING_ROUTE_WORKSPACE_GENERAL });
-                }}
+              <RouterLink
+                to={{ name: SETTING_ROUTE_WORKSPACE_GENERAL }}
+                className={buttonVariants({
+                  className:
+                    "h-auto rounded-md bg-white py-2 pr-2 pl-4 text-base font-medium text-accent shadow-xs hover:bg-indigo-50",
+                })}
               >
                 {t("common.configure-now")}
                 <Wrench className="ml-1 size-5" />
-              </Button>
+              </RouterLink>
             </div>
           ) : null}
           <div className="order-2 -mr-1 shrink-0 sm:order-3 sm:ml-3">
@@ -124,7 +114,6 @@ function BannerExternalUrl() {
 
 function BannerSubscription() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const { currentPlan, daysBeforeExpire, expireAt, isExpired, isTrialing } =
     useSubscriptionState();
 
@@ -161,14 +150,9 @@ function BannerSubscription() {
           <p className="ml-3 truncate text-base font-medium text-white">
             {content}
           </p>
-          <button
-            type="button"
+          <RouterLink
+            to={{ name: SETTING_ROUTE_WORKSPACE_SUBSCRIPTION }}
             className="flex cursor-pointer items-center justify-center py-1 text-base font-medium text-white underline hover:opacity-80"
-            onClick={() => {
-              void navigate.push({
-                name: SETTING_ROUTE_WORKSPACE_SUBSCRIPTION,
-              });
-            }}
           >
             {t(
               isTrialing
@@ -176,22 +160,11 @@ function BannerSubscription() {
                 : "subscription.purchase.update"
             )}
             <ShoppingCart className="ml-1 size-5 text-white" />
-          </button>
+          </RouterLink>
         </div>
       </div>
     </div>
   );
-}
-
-function announcementColors(level: Announcement["level"] | undefined) {
-  switch (level) {
-    case Announcement_AlertLevel.WARNING:
-      return "bg-warning hover:bg-warning-hover";
-    case Announcement_AlertLevel.CRITICAL:
-      return "bg-error hover:bg-error-hover";
-    default:
-      return "bg-info hover:bg-info-hover";
-  }
 }
 
 function BannerAnnouncement() {
@@ -203,35 +176,23 @@ function BannerAnnouncement() {
   const text = announcement?.text ?? "";
   const rawLink = announcement?.link ?? "";
   const link = rawLink ? urlfy(rawLink) : "";
+  const { background, text: textColor } =
+    resolveAnnouncementTheme(announcement);
 
   if (!text || !hasAnnouncementFeature) return null;
 
   return (
-    <div
-      className={`mx-auto flex w-full flex-row flex-wrap justify-center px-3 py-1 text-center font-medium text-white ${announcementColors(
-        announcement?.level
-      )}`}
-    >
-      {link ? (
-        <a
-          href={link}
-          target="_blank"
-          rel="noreferrer"
-          className="flex flex-row items-center hover:underline"
-        >
-          <p className="px-1">{text}</p>
-          <ArrowRight className="mr-3 size-5" />
-        </a>
-      ) : (
-        <p>{text}</p>
-      )}
-    </div>
+    <AnnouncementBanner
+      text={text}
+      link={link}
+      background={background}
+      textColor={textColor}
+    />
   );
 }
 
 function BannerUpgradeSubscription() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const { serverInfo } = useServerState();
   const { currentPlan } = useSubscriptionState();
   const getMinimumRequiredPlan = useAppStore(
@@ -260,7 +221,6 @@ function BannerUpgradeSubscription() {
 
   const gotoSubscriptionPage = () => {
     setShowModal(false);
-    void navigate.push({ name: SETTING_ROUTE_WORKSPACE_SUBSCRIPTION });
   };
 
   if (!showBanner) return null;
@@ -293,10 +253,14 @@ function BannerUpgradeSubscription() {
               />
             </div>
             <div className="ml-2">
-              <Button size="sm" onClick={gotoSubscriptionPage}>
+              <RouterLink
+                to={{ name: SETTING_ROUTE_WORKSPACE_SUBSCRIPTION }}
+                className={buttonVariants({ size: "sm" })}
+                onClick={gotoSubscriptionPage}
+              >
                 <Sparkles className="h-auto w-4" />
                 {t("subscription.upgrade")}
-              </Button>
+              </RouterLink>
             </div>
           </div>
         </div>
@@ -304,7 +268,7 @@ function BannerUpgradeSubscription() {
 
       <Dialog open={showModal} onOpenChange={setShowModal}>
         <DialogContent className="max-w-lg">
-          <div className="p-6">
+          <div>
             <DialogTitle className="mb-4 text-base font-medium">
               {t("subscription.upgrade-now")}?
             </DialogTitle>
@@ -328,9 +292,13 @@ function BannerUpgradeSubscription() {
               </ul>
             </div>
             <div className="mt-3 mb-4 w-full">
-              <Button className="w-full" onClick={gotoSubscriptionPage}>
+              <RouterLink
+                to={{ name: SETTING_ROUTE_WORKSPACE_SUBSCRIPTION }}
+                className={buttonVariants({ className: "w-full" })}
+                onClick={gotoSubscriptionPage}
+              >
                 {t("subscription.upgrade-now")}
-              </Button>
+              </RouterLink>
             </div>
           </div>
         </DialogContent>

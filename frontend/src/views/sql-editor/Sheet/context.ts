@@ -5,7 +5,7 @@ import scrollIntoView from "scroll-into-view-if-needed";
 import { create, type StoreApi, type UseBoundStore } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { useShallow } from "zustand/react/shallow";
-import { t } from "@/plugins/i18n";
+import i18n from "@/react/i18n";
 import { extractWorksheetConnection } from "@/react/lib/sqlEditorConnection";
 import { useAppStore } from "@/react/stores/app";
 import {
@@ -32,6 +32,7 @@ import {
   storageKeySqlEditorWorksheetTree,
   workspaceCacheScope,
 } from "@/utils";
+import { isSubFolder } from "./folder";
 import { type SheetViewMode, SheetViewModeList } from "./types";
 
 // Worksheet caches, folder sets, and the sheet-tree contain Map / Set
@@ -404,11 +405,11 @@ const convertToWorksheetLikeItem = (
 const rootLabelFor = (view: SheetViewMode): string => {
   switch (view) {
     case "my":
-      return t("sheet.mine");
+      return i18n.t("sheet.mine");
     case "shared":
-      return t("sheet.shared");
+      return i18n.t("sheet.shared");
     case "draft":
-      return t("common.draft");
+      return i18n.t("common.draft");
     default:
       return "";
   }
@@ -421,21 +422,6 @@ const rootTreeNodeFor = (view: SheetViewMode): WorksheetFolderNode => ({
   label: rootLabelFor(view),
   editable: false,
 });
-
-const isSubFolder = ({
-  parent,
-  path,
-  dig,
-}: {
-  parent: string;
-  path: string;
-  dig: boolean;
-}) => {
-  const parentPrefix = `${parent}/`;
-  return path !== parentPrefix && path.startsWith(parentPrefix) && dig
-    ? true
-    : !path.replace(parentPrefix, "").includes("/");
-};
 
 const ensureFolderPath = (view: SheetViewMode, path: string): string => {
   const root = rootPathFor(view);
@@ -1139,7 +1125,7 @@ export const openWorksheetByName = async ({
     useAppStore.getState().notify({
       module: "bytebase",
       style: "CRITICAL",
-      title: t("common.access-denied"),
+      title: i18n.t("common.access-denied"),
     });
     return undefined;
   }

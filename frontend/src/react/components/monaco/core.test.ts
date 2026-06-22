@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { createMonacoDiffEditor, createMonacoEditor } from "./core";
+import {
+  createMonacoDiffEditor,
+  createMonacoEditor,
+  getResolvedTheme,
+} from "./core";
 
 const mocks = vi.hoisted(() => {
   const readOnlyContribution = { dispose: vi.fn() };
@@ -16,7 +20,6 @@ const mocks = vi.hoisted(() => {
     editor: {
       create: vi.fn(() => editor),
       createDiffEditor: vi.fn(() => diffEditor),
-      defineTheme: vi.fn(),
     },
   };
   return {
@@ -32,12 +35,13 @@ vi.mock("./services", () => ({
   initializeMonacoServices: vi.fn(async () => undefined),
 }));
 
-vi.mock("./themes/bb", () => ({
-  getBBTheme: vi.fn(() => ({})),
-}));
-
-vi.mock("./themes/bb-dark", () => ({
-  getBBDarkTheme: vi.fn(() => ({})),
+// The theme enumeration the editor registers on init.
+vi.mock("./editorThemes", () => ({
+  BUILTIN_EDITOR_THEMES: [{ id: "vs", label: "Light", type: "light" }],
+  getAvailableEditorThemes: vi.fn(async () => [
+    { id: "Dark Modern", label: "Dark Modern", type: "dark" },
+    { id: "Light Modern", label: "Light Modern", type: "light" },
+  ]),
 }));
 
 vi.mock("monaco-editor", () => mocks.monaco);
@@ -83,5 +87,18 @@ describe("monaco core", () => {
         editContext: false,
       })
     );
+  });
+
+  test("getResolvedTheme allows enumerated themes and falls back by type", async () => {
+    // Creating any editor runs registerEditorThemes, adding the enumerated
+    // themes to the allowlist + recording each one's light/dark fallback.
+    await createMonacoEditor({ container: document.createElement("div") });
+
+    // Enumerated + standalone built-ins are applied as-is.
+    expect(getResolvedTheme("Dark Modern")).toBe("Dark Modern");
+    expect(getResolvedTheme("vs-dark")).toBe("vs-dark");
+    // An unregistered id falls back to `vs` (the default).
+    expect(getResolvedTheme("Nonexistent")).toBe("vs");
+    expect(getResolvedTheme()).toBe("vs");
   });
 });

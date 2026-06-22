@@ -1,39 +1,31 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { ref } from "vue";
 
-const unauthenticatedOccurredRef = ref(false);
-const isLoggedInRef = ref(true);
-const fullPathRef = ref("/");
-const routeNameRef = ref("workspace.dashboard");
+const unauthenticatedOccurredRef = { value: false };
+const isLoggedInRef = { value: true };
+const fullPathRef = { value: "/" };
+const routeNameRef = { value: "workspace.dashboard" };
 
-vi.mock("@/react/hooks/useVueState", () => ({
-  // Passthrough — calls getter() synchronously on each render. Does NOT
-  // re-render when Vue state changes after mount; set state on the refs
-  // above BEFORE rendering in each test.
-  useVueState: <T,>(getter: () => T) => getter(),
+vi.mock("@/react/stores/app", () => ({
+  useAppStore: <T,>(selector: (s: unknown) => T) =>
+    selector({
+      isLoggedIn: () => isLoggedInRef.value,
+      unauthenticatedOccurred: unauthenticatedOccurredRef.value,
+    }),
 }));
 
-vi.mock("@/store", () => ({
-  useAuthStore: () => ({
-    get unauthenticatedOccurred() {
-      return unauthenticatedOccurredRef.value;
-    },
-    get isLoggedIn() {
-      return isLoggedInRef.value;
-    },
+vi.mock("@/react/router", () => ({
+  useCurrentRoute: () => ({
+    name: routeNameRef.value,
+    fullPath: fullPathRef.value,
+    hash: "",
+    params: {},
+    query: {},
+    requiredPermissions: [],
+    overrideDocumentTitle: false,
+    meta: {},
   }),
-}));
-
-vi.mock("@/router", () => ({
-  router: {
-    currentRoute: {
-      get value() {
-        return { fullPath: fullPathRef.value, name: routeNameRef.value };
-      },
-    },
-  },
 }));
 
 vi.mock("@/utils/auth", () => ({

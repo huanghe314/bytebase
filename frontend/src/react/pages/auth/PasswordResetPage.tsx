@@ -4,23 +4,24 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import logoFull from "@/assets/logo-full.svg";
 import { authServiceClientConnect } from "@/connect";
+import { AuthDivider } from "@/react/components/auth/AuthDivider";
 import { UserPasswordFields } from "@/react/components/auth/UserPasswordFields";
 import { computePasswordValidation } from "@/react/components/auth/userPasswordValidation";
+import { RouterLink } from "@/react/components/RouterLink";
 import { Button } from "@/react/components/ui/button";
 import { Input } from "@/react/components/ui/input";
 import { OtpInput } from "@/react/components/ui/otp-input";
 import { useCurrentUser } from "@/react/hooks/useAppState";
-import { useVueState } from "@/react/hooks/useVueState";
+import { resolveWorkspaceName } from "@/react/lib/workspace";
+import { router } from "@/react/router";
+import { AUTH_SIGNIN_MODULE } from "@/react/router/handles";
 import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
-import { AUTH_SIGNIN_MODULE } from "@/router/auth";
-import { pushNotification, useAuthStore } from "@/store";
+import { pushNotification } from "@/store";
 import {
   LoginRequestSchema,
   ResetPasswordRequestSchema,
 } from "@/types/proto-es/v1/auth_service_pb";
 import { UpdateUserRequestSchema } from "@/types/proto-es/v1/user_service_pb";
-import { resolveWorkspaceName } from "@/utils";
 
 export function PasswordResetPage() {
   const { t } = useTranslation();
@@ -38,9 +39,7 @@ export function PasswordResetPage() {
   const passwordRestriction = serverInfo?.restriction?.passwordRestriction;
   const disallowPasswordSignin =
     serverInfo?.restriction?.disallowPasswordSignin ?? false;
-  const requireResetPassword = useVueState(
-    () => useAuthStore().requireResetPassword
-  );
+  const requireResetPassword = useAppStore((s) => s.requireResetPassword());
   const currentUser = useCurrentUser();
 
   // This page renders outside any shell, so the workspace bootstrap hasn't
@@ -136,7 +135,7 @@ export function PasswordResetPage() {
           style: "SUCCESS",
           title: t("common.updated"),
         });
-        await useAuthStore().login({
+        await useAppStore.getState().login({
           request: create(LoginRequestSchema, {
             email,
             password,
@@ -167,7 +166,7 @@ export function PasswordResetPage() {
       style: "SUCCESS",
       title: t("common.updated"),
     });
-    useAuthStore().setRequireResetPassword(false);
+    useAppStore.getState().setRequireResetPassword(false);
     router.replace(redirectQuery());
   };
 
@@ -246,26 +245,14 @@ export function PasswordResetPage() {
       </div>
 
       {codeMode && (
-        <div className="mt-6 relative">
-          <div
-            aria-hidden="true"
-            className="absolute inset-0 flex items-center"
+        <AuthDivider className="mt-6">
+          <RouterLink
+            to={{ name: AUTH_SIGNIN_MODULE }}
+            className="accent-link bg-white px-2"
           >
-            <div className="w-full border-t border-control-border" />
-          </div>
-          <div className="relative flex justify-center text-sm">
-            <a
-              href="#"
-              className="accent-link bg-white px-2"
-              onClick={(e) => {
-                e.preventDefault();
-                router.push({ name: AUTH_SIGNIN_MODULE });
-              }}
-            >
-              {t("auth.password-forget.return-to-sign-in")}
-            </a>
-          </div>
-        </div>
+            {t("auth.password-forget.return-to-sign-in")}
+          </RouterLink>
+        </AuthDivider>
       )}
     </div>
   );

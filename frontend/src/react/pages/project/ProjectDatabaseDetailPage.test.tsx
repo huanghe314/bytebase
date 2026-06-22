@@ -173,6 +173,7 @@ const mocks = vi.hoisted(() => {
     },
     i18nPlugin: {
       install: vi.fn(),
+      t: (key: string) => key,
     },
     routeNames: {
       databaseDetail: "workspace.project.database.detail",
@@ -193,20 +194,18 @@ vi.mock("lucide-react", async (importOriginal) => {
 });
 
 vi.mock("react-i18next", () => ({
+  initReactI18next: { type: "3rdParty", init: () => {} },
   useTranslation: mocks.useTranslation,
 }));
 
-vi.mock("@/router", () => ({
+vi.mock("@/react/router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/react/router")>()),
   router: {
     replace: mocks.routerReplace,
     push: mocks.routerPush,
     resolve: mocks.routerResolve,
     currentRoute: { value: { name: mocks.routeNames.databaseDetail } },
   },
-}));
-
-vi.mock("@/router/dashboard/projectV1", () => ({
-  PROJECT_V1_ROUTE_DATABASE_DETAIL: mocks.routeNames.databaseDetail,
 }));
 
 vi.mock("@/react/components/ui/tabs", () => ({
@@ -310,7 +309,7 @@ vi.mock("@/plugins/highlight", () => ({
   default: mocks.highlightPlugin,
 }));
 
-vi.mock("@/plugins/i18n", () => ({
+vi.mock("@/react/i18n", () => ({
   default: mocks.i18nPlugin,
 }));
 

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { instanceRoleServiceClientConnect } from "@/connect";
 import { EngineIcon } from "@/react/components/EngineIcon";
+import { RouterLink } from "@/react/components/RouterLink";
 import { SearchInput } from "@/react/components/ui/search-input";
 import {
   Select,
@@ -21,15 +22,14 @@ import {
 } from "@/react/components/ui/sheet";
 import { Switch } from "@/react/components/ui/switch";
 import { Tooltip } from "@/react/components/ui/tooltip";
-import { useVueState } from "@/react/hooks/useVueState";
 import { cn } from "@/react/lib/utils";
-import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
+import { router } from "@/react/router";
 import {
   PROJECT_V1_ROUTE_DATABASE_GROUP_DETAIL,
   PROJECT_V1_ROUTE_PLAN_DETAIL_SPECS,
-} from "@/router/dashboard/projectV1";
-import { buildPlanDeployRouteFromPlanName } from "@/router/dashboard/projectV1RouteHelpers";
+} from "@/react/router/handles";
+import { buildPlanDeployRouteFromPlanName } from "@/react/router/routeHelpers";
+import { useAppStore } from "@/react/stores/app";
 import { getProjectNameAndDatabaseGroupName } from "@/store";
 import {
   isValidDatabaseGroupName,
@@ -140,12 +140,12 @@ export function IssueDetailDatabaseChangeView({
           </div>
 
           {page.plan && (
-            <a
+            <RouterLink
+              to={planHref}
               className="px-3 text-sm text-accent hover:underline"
-              href={planHref}
             >
               {t("plan.go-to-plan-page")} →
-            </a>
+            </RouterLink>
           )}
         </div>
 
@@ -185,10 +185,12 @@ function IssueDetailDatabaseChangeOptions({
     }
     return [];
   }, [selectedSpec]);
-  const databases = useVueState(() =>
-    targets
-      .map((target) => databasesByName[target] ?? unknownDatabase())
-      .filter((database) => isValidDatabaseName(database.name))
+  const databases = useMemo(
+    () =>
+      targets
+        .map((target) => databasesByName[target] ?? unknownDatabase())
+        .filter((database) => isValidDatabaseName(database.name)),
+    [targets, databasesByName]
   );
   const parsedStatement = useMemo(
     () => parseStatement(sheetStatement),
@@ -521,7 +523,7 @@ function IssueDetailDatabaseChangeTargets({
   const visibleTargets = useMemo(() => {
     return targets.slice(0, Math.min(DEFAULT_VISIBLE_TARGETS, targets.length));
   }, [targets]);
-  const nonEnvDatabaseNames = useVueState(() => {
+  const nonEnvDatabaseNames = useMemo(() => {
     if (isLoadingTargets) {
       return [];
     }
@@ -541,8 +543,8 @@ function IssueDetailDatabaseChangeTargets({
         (name) =>
           !(databasesByName[name] ?? unknownDatabase()).effectiveEnvironment
       );
-  });
-  const filteredTargets = useVueState(() => {
+  }, [isLoadingTargets, targets, databasesByName]);
+  const filteredTargets = useMemo(() => {
     if (!searchText) {
       return targets;
     }
@@ -557,7 +559,7 @@ function IssueDetailDatabaseChangeTargets({
       }
       return String(target).toLowerCase().includes(normalizedSearchText);
     });
-  });
+  }, [searchText, targets, databasesByName]);
   const nonEnvWarning =
     nonEnvDatabaseNames.length === 1
       ? t("plan.targets.non-env-warning.one", {
@@ -762,8 +764,9 @@ function IssueDetailDatabaseTarget({
   const { t } = useTranslation();
   const databasesByName = useAppStore((s) => s.databasesByName);
   const environmentList = useAppStore((s) => s.environmentList);
-  const database = useVueState(
-    () => databasesByName[target] ?? unknownDatabase()
+  const database = useMemo(
+    () => databasesByName[target] ?? unknownDatabase(),
+    [databasesByName, target]
   );
   const environmentName =
     database.effectiveEnvironment ??

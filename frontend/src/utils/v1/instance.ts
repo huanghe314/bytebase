@@ -1,12 +1,5 @@
-import { computed, unref } from "vue";
-import { t } from "@/plugins/i18n";
-import { useSubscriptionV1Store } from "@/store";
-import type { MaybeRef } from "@/types";
-import {
-  isValidInstanceName,
-  languageOfEngineV1,
-  unknownInstance,
-} from "@/types";
+import i18n from "@/react/i18n";
+import { isValidInstanceName, unknownInstance } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 // Using proto-es types directly, no conversions needed
 import type {
@@ -18,9 +11,10 @@ import {
   DataSourceType,
 } from "@/types/proto-es/v1/instance_service_pb";
 import { PlanType } from "@/types/proto-es/v1/subscription_service_pb";
+import { appStoreUtilBridge } from "@/utils/app-store-bridge";
 
 export function instanceV1Name(instance: Instance | InstanceResource) {
-  const store = useSubscriptionV1Store();
+  const currentPlan = appStoreUtilBridge()?.currentPlan() ?? PlanType.FREE;
   let name = instance.title;
   // For unknown instance, we will use the name as the title.
   if (instance.title === unknownInstance().title) {
@@ -29,9 +23,9 @@ export function instanceV1Name(instance: Instance | InstanceResource) {
   if (
     isValidInstanceName(instance.name) &&
     !instance.activation &&
-    store.currentPlan !== PlanType.FREE
+    currentPlan !== PlanType.FREE
   ) {
-    name += ` (${t("common.no-license")})`;
+    name += ` (${i18n.t("common.no-license")})`;
   }
   return name;
 }
@@ -44,9 +38,9 @@ export const extractInstanceResourceName = (name: string) => {
 
 export const readableDataSourceType = (type: DataSourceType): string => {
   if (type === DataSourceType.ADMIN) {
-    return t("data-source.admin");
+    return i18n.t("data-source.admin");
   } else if (type === DataSourceType.READ_ONLY) {
-    return t("data-source.read-only");
+    return i18n.t("data-source.read-only");
   } else {
     return "Unknown";
   }
@@ -406,14 +400,6 @@ export const hasIndexSizeProperty = (
 ) => {
   const engine = engineOfInstanceV1(instanceOrEngine);
   return ![Engine.CLICKHOUSE, Engine.SNOWFLAKE].includes(engine);
-};
-
-export const useInstanceV1EditorLanguage = (
-  instance: MaybeRef<Instance | InstanceResource | undefined>
-) => {
-  return computed(() => {
-    return languageOfEngineV1(unref(instance)?.engine);
-  });
 };
 
 export const isValidSpannerHost = (host: string) => {

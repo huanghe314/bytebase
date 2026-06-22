@@ -17,11 +17,13 @@ import {
   DialogTitle,
 } from "@/react/components/ui/dialog";
 import { Input } from "@/react/components/ui/input";
-import { useVueState } from "@/react/hooks/useVueState";
-import { rulesToTemplate } from "@/react/lib/sql-review/utils";
+import {
+  getRuleMapValidationErrorTitle,
+  rulesToTemplate,
+} from "@/react/lib/sql-review/utils";
+import { router } from "@/react/router";
+import { WORKSPACE_ROUTE_SQL_REVIEW } from "@/react/router/handles";
 import { useSQLReviewStore } from "@/react/stores/sqlReview";
-import { router } from "@/router";
-import { WORKSPACE_ROUTE_SQL_REVIEW } from "@/router/dashboard/workspaceRoutes";
 import { pushNotification } from "@/store";
 import type { RuleTemplateV2 } from "@/types";
 import {
@@ -29,6 +31,7 @@ import {
   getRuleMapByEngine,
   isBuiltinRule,
   UNKNOWN_ID,
+  validateRuleMapByEngine,
   withBuiltinRules,
 } from "@/types";
 import type { Engine } from "@/types/proto-es/v1/common_pb";
@@ -42,6 +45,16 @@ import {
 // ============================================================
 // SQLReviewDetailPage
 // ============================================================
+
+// Stable placeholder for an unresolved policy — a module constant so the
+// `?? UNKNOWN_REVIEW_POLICY` fallback keeps a stable reference across renders.
+const UNKNOWN_REVIEW_POLICY = {
+  id: `${UNKNOWN_ID}`,
+  enforce: false,
+  name: "",
+  ruleList: [],
+  resources: [],
+};
 
 export function SQLReviewDetailPage({
   sqlReviewPolicySlug,
@@ -63,16 +76,8 @@ export function SQLReviewDetailPage({
       .getOrFetchReviewPolicyByName(sqlReviewName, false);
   }, [sqlReviewName]);
 
-  const reviewPolicy = useVueState(
-    () =>
-      store.getReviewPolicyByName(sqlReviewName) ?? {
-        id: `${UNKNOWN_ID}`,
-        enforce: false,
-        name: "",
-        ruleList: [],
-        resources: [],
-      }
-  );
+  const reviewPolicy =
+    store.getReviewPolicyByName(sqlReviewName) ?? UNKNOWN_REVIEW_POLICY;
 
   // Set document title
   useEffect(() => {
@@ -175,6 +180,16 @@ export function SQLReviewDetailPage({
   }, [ruleListOfPolicy]);
 
   const onApplyChanges = useCallback(async () => {
+    const validationError = validateRuleMapByEngine(ruleMapByEngine);
+    if (validationError) {
+      pushNotification({
+        module: "bytebase",
+        style: "CRITICAL",
+        title: getRuleMapValidationErrorTitle(validationError),
+      });
+      return;
+    }
+
     await store.upsertReviewPolicy({
       id: reviewPolicy.id,
       title: reviewPolicy.name,

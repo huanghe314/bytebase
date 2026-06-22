@@ -9,8 +9,6 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   useTranslation: vi.fn(() => ({ t: (key: string) => key })),
-  // Pinia bridge — resolves the current user's email from the Pinia ref.
-  usePiniaBridge: vi.fn<(getter: () => unknown) => unknown>(),
   // Zustand editor store project read.
   project: "projects/proj1" as string,
   // Current tab connection database used to derive default targets.
@@ -30,10 +28,6 @@ vi.mock("react-i18next", () => ({
   useTranslation: mocks.useTranslation,
 }));
 
-vi.mock("@/react/hooks/usePiniaBridge", () => ({
-  usePiniaBridge: mocks.usePiniaBridge,
-}));
-
 vi.mock("@/react/hooks/useAppState", () => ({
   useCurrentUser: () => ({
     name: "users/me",
@@ -48,6 +42,10 @@ vi.mock("@/react/stores/app", () => {
   const state = () => ({
     fetchDatabases: mocks.fetchDatabases,
     notify: mocks.pushNotification,
+    // Consumed by useWorkspaceSQLEditorTheme (via useActiveSQLEditorTheme,
+    // which drives the drawer's Monaco theme). Empty profile resolves to the
+    // default theme.
+    getWorkspaceProfile: () => ({}),
   });
   return {
     useAppStore: Object.assign(
@@ -63,7 +61,9 @@ vi.mock("@/react/stores/sqlEditor/editor", () => ({
     selector({ project: mocks.project }),
 }));
 
-// Zustand tab store — imperative getter to derive default targets.
+// Zustand tab store — imperative getter to derive default targets, plus the
+// reactive hook consumed by useActiveSQLEditorTheme (drives the drawer's Monaco
+// theme). The tab has no mode, so the active theme resolves to the default.
 vi.mock("@/react/stores/sqlEditor/tab", () => ({
   getSQLEditorTabsState: () => ({
     currentTabId: "tab1",
@@ -71,6 +71,16 @@ vi.mock("@/react/stores/sqlEditor/tab", () => ({
       ["tab1", { connection: { database: mocks.currentTabDatabase } }],
     ]),
   }),
+  useSQLEditorTabState: (
+    selector: (s: {
+      currentTabId: string;
+      tabsById: Map<string, { mode?: string }>;
+    }) => unknown
+  ) =>
+    selector({
+      currentTabId: "tab1",
+      tabsById: new Map([["tab1", {}]]),
+    }),
 }));
 
 vi.mock("@/react/stores/sqlEditor", () => ({
@@ -92,14 +102,11 @@ vi.mock("@/connect", () => ({
   },
 }));
 
-vi.mock("@/router", () => ({
+vi.mock("@/react/router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/react/router")>()),
   router: {
     resolve: mocks.routerResolve,
   },
-}));
-
-vi.mock("@/router/dashboard/projectV1", () => ({
-  PROJECT_V1_ROUTE_ISSUE_DETAIL: "project.issue-detail",
 }));
 
 vi.mock("@/utils", () => ({
@@ -327,8 +334,6 @@ const setupMocks = () => {
   mocks.currentTabDatabase = "instances/inst1/databases/db1";
 
   mocks.fetchDatabases.mockResolvedValue({ databases: [], nextPageToken: "" });
-
-  mocks.usePiniaBridge.mockImplementation((getter: () => unknown) => getter());
 };
 
 beforeEach(async () => {

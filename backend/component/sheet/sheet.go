@@ -13,11 +13,13 @@ import (
 	// Import parsers to register their parse functions.
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/cockroachdb"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/doris"
+	_ "github.com/bytebase/bytebase/backend/plugin/parser/mariadb"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/partiql"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/plsql"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/redshift"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/snowflake"
+	_ "github.com/bytebase/bytebase/backend/plugin/parser/starrocks"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/tidb"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/tsql"
 )

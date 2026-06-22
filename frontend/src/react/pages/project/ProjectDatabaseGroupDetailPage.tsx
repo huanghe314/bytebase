@@ -4,24 +4,25 @@ import { useTranslation } from "react-i18next";
 import { DatabaseGroupForm } from "@/react/components/DatabaseGroupForm";
 import { FeatureAttention } from "@/react/components/FeatureAttention";
 import { PermissionGuard } from "@/react/components/PermissionGuard";
-import { Button } from "@/react/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@/react/components/ui/dialog";
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogTitle,
+} from "@/react/components/ui/alert-dialog";
+import { Button } from "@/react/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/react/components/ui/dropdown-menu";
-import { useVueState } from "@/react/hooks/useVueState";
+import { useProjectByName } from "@/react/hooks/useProjectByName";
 import { preCreateIssue } from "@/react/lib/plan/issue";
+import { router } from "@/react/router";
+import { PROJECT_V1_ROUTE_DATABASE_GROUPS } from "@/react/router/handles";
 import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
-import { PROJECT_V1_ROUTE_DATABASE_GROUPS } from "@/router/dashboard/projectV1";
-import { hasFeature } from "@/store";
 import {
   databaseGroupNamePrefix,
   projectNamePrefix,
@@ -47,9 +48,7 @@ export function ProjectDatabaseGroupDetailPage({
   void projectsByName;
 
   const projectName = `${projectNamePrefix}${projectId}`;
-  const project = useVueState(() =>
-    useAppStore.getState().getProjectByName(projectName)
-  );
+  const project = useProjectByName(projectName);
 
   const resourceName = `${projectName}/${databaseGroupNamePrefix}${databaseGroupName}`;
 
@@ -73,8 +72,8 @@ export function ProjectDatabaseGroupDetailPage({
     });
   }, [resourceName]);
 
-  const hasDatabaseGroupFeature = useVueState(() =>
-    hasFeature(PlanFeature.FEATURE_DATABASE_GROUPS)
+  const hasDatabaseGroupFeature = useAppStore((s) =>
+    s.hasFeature(PlanFeature.FEATURE_DATABASE_GROUPS)
   );
 
   const hasMatchedDatabases = useMemo(
@@ -176,20 +175,20 @@ export function ProjectDatabaseGroupDetailPage({
         onDismiss={() => setEditing(false)}
       />
 
-      <Dialog
+      <AlertDialog
         open={showDeleteDialog}
         onOpenChange={(open) => {
           if (!open) setShowDeleteDialog(false);
         }}
       >
-        <DialogContent>
-          <DialogTitle>
+        <AlertDialogContent>
+          <AlertDialogTitle>
             {t("database-group.delete-group", { name: databaseGroup.title })}
-          </DialogTitle>
-          <p className="text-sm text-control-light">
+          </AlertDialogTitle>
+          <AlertDialogDescription>
             {t("common.cannot-undo-this-action")}
-          </p>
-          <div className="flex justify-end gap-x-2 mt-4">
+          </AlertDialogDescription>
+          <AlertDialogFooter>
             <Button
               variant="outline"
               onClick={() => setShowDeleteDialog(false)}
@@ -199,9 +198,9 @@ export function ProjectDatabaseGroupDetailPage({
             <Button variant="destructive" onClick={handleDelete}>
               {t("common.delete")}
             </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

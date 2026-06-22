@@ -1,9 +1,8 @@
 import type * as MonacoType from "monaco-editor";
 import type { Language } from "@/types";
 import { defer } from "@/utils";
+import { getAvailableEditorThemes } from "./editorThemes";
 import { initializeMonacoServices } from "./services";
-import { getBBTheme } from "./themes/bb";
-import { getBBDarkTheme } from "./themes/bb-dark";
 
 let monacoModule: typeof MonacoType | undefined;
 const monacoLoadDefer = defer<typeof MonacoType>();
@@ -14,27 +13,28 @@ export const MonacoEditorReady = monacoEditorReadyDefer.promise;
 const state = {
   themeInitialized: false,
   registeredThemes: new Set<string>(["vs", "vs-dark", "hc-black", "hc-light"]),
+  // The light/dark fallback base for each known theme id. If `setTheme` is
+  // called with an id that isn't registered, `getResolvedTheme` falls back to
+  // the theme's OWN type (dark → `vs-dark`, not the light `vs`).
+  themeBase: new Map<string, "vs" | "vs-dark">(),
 };
 
-const initializeTheme = () => {
+// Add the color themes the VSCode theme service actually has registered to the
+// allowlist (so `getResolvedTheme` lets `setTheme` apply them) and record each
+// one's light/dark fallback. The standalone built-ins above are always present.
+const registerEditorThemes = async () => {
   if (state.themeInitialized) return;
   state.themeInitialized = true;
-  if (!monacoModule) return;
-  try {
-    monacoModule.editor.defineTheme("bb", getBBTheme());
-    state.registeredThemes.add("bb");
-    monacoModule.editor.defineTheme("bb-dark", getBBDarkTheme());
-    state.registeredThemes.add("bb-dark");
-  } catch {
-    // The VSCode theme service override owns themes in some runtime modes.
-    // Whichever theme failed stays out of `state.registeredThemes`, so
-    // `getResolvedTheme` will fall back to the built-in `vs` for it.
+  const themes = await getAvailableEditorThemes();
+  for (const theme of themes) {
+    state.registeredThemes.add(theme.id);
+    state.themeBase.set(theme.id, theme.type === "dark" ? "vs-dark" : "vs");
   }
 };
 
 /**
  * Returns the requested theme if it's known to be registered with
- * Monaco, otherwise falls back to the always-available built-in `vs`.
+ * Monaco, otherwise falls back to the theme's own light/dark base (or `vs`).
  *
  * Use this anywhere `monaco.editor.setTheme(...)` is called from
  * application code — calling `setTheme` with an unregistered theme
@@ -43,18 +43,15 @@ const initializeTheme = () => {
  * per-instance, so a stale `vs-dark` from a recently-disposed
  * terminal editor can bleed into a freshly-mounted worksheet editor).
  */
-export const getResolvedTheme = (requested?: string): string => {
-  const fallback = "vs";
-  if (!requested) {
-    return state.registeredThemes.has("bb") ? "bb" : fallback;
-  }
-  return state.registeredThemes.has(requested) ? requested : fallback;
+export const getResolvedTheme = (requested = "vs"): string => {
+  if (state.registeredThemes.has(requested)) return requested;
+  return state.themeBase.get(requested) ?? "vs";
 };
 
 const initialize = async () => {
   await initializeMonacoServices();
   await loadMonacoEditor();
-  initializeTheme();
+  await registerEditorThemes();
 };
 
 export const loadMonacoEditor = async (): Promise<typeof MonacoType> => {
@@ -135,7 +132,7 @@ export const defaultEditorOptions =
     return {
       renderValidationDecorations: "on",
       accessibilitySupport: "off",
-      theme: "bb",
+      theme: "vs",
       tabSize: 2,
       insertSpaces: true,
       autoClosingQuotes: "never",
@@ -176,7 +173,7 @@ export const defaultDiffEditorOptions =
       enableSplitViewResizing: false,
       accessibilitySupport: "off",
       renderValidationDecorations: "on",
-      theme: "bb",
+      theme: "vs",
       autoClosingQuotes: "never",
       folding: false,
       automaticLayout: true,

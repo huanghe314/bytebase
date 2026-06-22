@@ -71,6 +71,16 @@ func TestGetStatementWithResultLimit(t *testing.T) {
 			stmt:  "SELECT firstName, lastName FROM employees UNION SELECT contactFirstName, contactLastName FROM customers;",
 			count: 10,
 			want:  "SELECT firstName, lastName FROM employees UNION SELECT contactFirstName, contactLastName FROM customers LIMIT 10;",
+		},
+		{
+			stmt:  "(SELECT * FROM t LIMIT 100) LIMIT 20;",
+			count: 10,
+			want:  "(SELECT * FROM t LIMIT 100) LIMIT 10;",
+		},
+		{
+			stmt:  "(SELECT * FROM t) FOR UPDATE;",
+			count: 10,
+			want:  "(SELECT * FROM t) LIMIT 10 FOR UPDATE;",
 		}, {
 			stmt:  "SELECT customerNumber, checkNumber, amount FROM payments WHERE amount = (SELECT MAX(amount) FROM payments);",
 			count: 10,
@@ -94,6 +104,51 @@ func TestGetStatementWithResultLimit(t *testing.T) {
 			stmt:  "SELECT col1, col2 FROM table1 PROCEDURE ANALYSE(10, 2000);",
 			count: 10,
 			want:  "SELECT col1, col2 FROM table1 LIMIT 10 PROCEDURE ANALYSE(10, 2000);",
+		},
+		{
+			stmt:  "SELECT col1, col2 FROM table1 LIMIT 20 PROCEDURE ANALYSE(10, 2000);",
+			count: 10,
+			want:  "SELECT col1, col2 FROM table1 LIMIT 10 PROCEDURE ANALYSE(10, 2000);",
+		},
+		{
+			stmt:  "SELECT col1, col2 FROM table1 LIMIT 5 PROCEDURE ANALYSE(10, 2000);",
+			count: 10,
+			want:  "SELECT col1, col2 FROM table1 LIMIT 5 PROCEDURE ANALYSE(10, 2000);",
+		},
+		{
+			stmt:  "SELECT col1, col2 FROM table1 LIMIT 0 PROCEDURE ANALYSE(10, 2000);",
+			count: 10,
+			want:  "SELECT col1, col2 FROM table1 LIMIT 10 PROCEDURE ANALYSE(10, 2000);",
+		},
+		{
+			stmt:  "SELECT col1, col2 FROM table1 LIMIT row_count PROCEDURE ANALYSE(10, 2000);",
+			count: 10,
+			want:  "SELECT col1, col2 FROM table1 LIMIT 10 PROCEDURE ANALYSE(10, 2000);",
+		},
+		{
+			stmt:  "SELECT col1, col2 FROM table1 LIMIT row_count OFFSET 100 PROCEDURE ANALYSE(10, 2000);",
+			count: 10,
+			want:  "SELECT col1, col2 FROM table1 LIMIT 10 OFFSET 100 PROCEDURE ANALYSE(10, 2000);",
+		},
+		{
+			stmt:  "SELECT col1, col2 FROM table1 LIMIT 100,20 PROCEDURE ANALYSE(10, 2000);",
+			count: 10,
+			want:  "SELECT col1, col2 FROM table1 LIMIT 100,10 PROCEDURE ANALYSE(10, 2000);",
+		},
+		{
+			stmt:  "SELECT col1, col2 FROM table1 LIMIT 100,5 PROCEDURE ANALYSE(10, 2000);",
+			count: 10,
+			want:  "SELECT col1, col2 FROM table1 LIMIT 100,5 PROCEDURE ANALYSE(10, 2000);",
+		},
+		{
+			stmt:  "SELECT col1, col2 FROM table1 LIMIT 100,row_count PROCEDURE ANALYSE(10, 2000);",
+			count: 10,
+			want:  "SELECT col1, col2 FROM table1 LIMIT 100,10 PROCEDURE ANALYSE(10, 2000);",
+		},
+		{
+			stmt:  "SELECT * FROM (SELECT * FROM t LIMIT 100) s JOIN u PROCEDURE ANALYSE(10, 2000);",
+			count: 10,
+			want:  "SELECT * FROM (SELECT * FROM t LIMIT 100) s JOIN u LIMIT 10 PROCEDURE ANALYSE(10, 2000);",
 		},
 		{
 			stmt:  "SELECT col1, col2 FROM table1 ORDER BY col1;",

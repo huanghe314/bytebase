@@ -2,14 +2,20 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import logoFull from "@/assets/logo-full.svg";
 import { authServiceClientConnect } from "@/connect";
+import { AuthDivider } from "@/react/components/auth/AuthDivider";
+import { RouterLink } from "@/react/components/RouterLink";
 import { Alert } from "@/react/components/ui/alert";
 import { Button } from "@/react/components/ui/button";
 import { Input } from "@/react/components/ui/input";
+import { resolveWorkspaceName } from "@/react/lib/workspace";
+import { router } from "@/react/router";
+import {
+  AUTH_PASSWORD_RESET_MODULE,
+  AUTH_SIGNIN_MODULE,
+} from "@/react/router/handles";
 import { useAppStore } from "@/react/stores/app";
-import { router } from "@/router";
-import { AUTH_PASSWORD_RESET_MODULE, AUTH_SIGNIN_MODULE } from "@/router/auth";
 import { pushNotification } from "@/store";
-import { isValidEmail, resolveWorkspaceName } from "@/utils";
+import { isValidEmail } from "@/utils";
 
 export function PasswordForgotPage() {
   const { t } = useTranslation();
@@ -61,13 +67,6 @@ export function PasswordForgotPage() {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const goToSignin = () => {
-    router.push({
-      name: AUTH_SIGNIN_MODULE,
-      query: router.currentRoute.value.query,
-    });
   };
 
   return (
@@ -123,23 +122,17 @@ export function PasswordForgotPage() {
         </div>
       </div>
 
-      <div className="mt-6 relative">
-        <div aria-hidden="true" className="absolute inset-0 flex items-center">
-          <div className="w-full border-t border-control-border" />
-        </div>
-        <div className="relative flex justify-center text-sm">
-          <a
-            href="#"
-            className="accent-link bg-white px-2"
-            onClick={(e) => {
-              e.preventDefault();
-              goToSignin();
-            }}
-          >
-            {t("auth.password-forget.return-to-sign-in")}
-          </a>
-        </div>
-      </div>
+      <AuthDivider className="mt-6">
+        <RouterLink
+          to={{
+            name: AUTH_SIGNIN_MODULE,
+            query: router.currentRoute.value.query,
+          }}
+          className="accent-link bg-white px-2"
+        >
+          {t("auth.password-forget.return-to-sign-in")}
+        </RouterLink>
+      </AuthDivider>
     </div>
   );
 }

@@ -418,6 +418,37 @@ describe("useAppStore", () => {
     expect(state.removeRecentVisit).toBeTypeOf("function");
   });
 
+  test("keeps the signed-in identity when marking the session expired", () => {
+    const store = createAppStore();
+    store.setState({
+      currentUser: user,
+      currentUserName: user.name,
+    });
+
+    store.getState().setUnauthenticatedOccurred(true);
+
+    expect(store.getState().unauthenticatedOccurred).toBe(true);
+    expect(store.getState().currentUser).toBe(user);
+    expect(store.getState().currentUserName).toBe(user.name);
+    expect(store.getState().isLoggedIn()).toBe(true);
+  });
+
+  test("keeps the signed-in identity when current-user refresh has a transient failure", async () => {
+    mocks.getCurrentUser.mockRejectedValue(new Error("network unavailable"));
+    const store = createAppStore();
+    store.setState({
+      currentUser: user,
+      currentUserName: user.name,
+    });
+
+    const result = await store.getState().fetchCurrentUser();
+
+    expect(result).toBeUndefined();
+    expect(store.getState().currentUser).toBe(user);
+    expect(store.getState().currentUserName).toBe(user.name);
+    expect(store.getState().isLoggedIn()).toBe(true);
+  });
+
   test("lists groups and populates the group cache", async () => {
     mocks.listGroups.mockResolvedValue({
       groups: [groupA, groupB],
@@ -832,6 +863,35 @@ describe("useAppStore", () => {
     expect(store.getState().roleList).toEqual([roleA, roleB]);
   });
 
+  test("prefetches user members referenced by the workspace policy", async () => {
+    mocks.getCurrentUser.mockResolvedValue(user);
+    mocks.getActuatorInfo.mockResolvedValue({
+      workspace: "workspaces/default",
+    });
+    mocks.getWorkspace.mockResolvedValue({ name: "workspaces/default" });
+    mocks.listRoles.mockResolvedValue({ roles: [roleA] });
+    mocks.getIamPolicy.mockResolvedValue(
+      createProto(IamPolicySchema, {
+        bindings: [
+          createProto(BindingSchema, {
+            role: roleA.name,
+            members: [`user:${userA.email}`],
+          }),
+        ],
+      })
+    );
+    mocks.batchGetUsers.mockResolvedValue({ users: [userA] });
+    const store = createAppStore();
+
+    await store.getState().loadWorkspacePermissionState();
+
+    expect(mocks.batchGetUsers).toHaveBeenCalledWith(
+      expect.objectContaining({ names: [userA.name] }),
+      expect.anything()
+    );
+    expect(store.getState().usersByName[userA.name]).toBe(userA);
+  });
+
   test("lists releases and marks cached release deleted", async () => {
     mocks.listReleases.mockResolvedValue({
       releases: [releaseA, releaseB],
@@ -877,6 +937,41 @@ describe("useAppStore", () => {
     expect(
       store.getState().getReleaseByName("projects/a/releases/miss")
     ).toBeUndefined();
+  });
+
+  test("reuses stable fallback resources on cache misses", () => {
+    const store = createAppStore();
+
+    // These getters are tempting to use inside Zustand selectors. Returning a
+    // fresh proto on every cache miss makes the selector snapshot unstable in
+    // Zustand v5 / React useSyncExternalStore and can render-loop.
+    expect(store.getState().getProjectByName("projects/missing")).toBe(
+      store.getState().getProjectByName("projects/missing")
+    );
+    expect(store.getState().getProjectByName("projects/-")).toBe(
+      store.getState().getProjectByName("projects/-")
+    );
+    expect(
+      store.getState().getDatabaseByName("instances/i/databases/miss")
+    ).toBe(store.getState().getDatabaseByName("instances/i/databases/miss"));
+    expect(store.getState().getInstanceByName("instances/missing")).toBe(
+      store.getState().getInstanceByName("instances/missing")
+    );
+    expect(
+      store.getState().getDBGroupByName("projects/p/databaseGroups/miss")
+    ).toBe(store.getState().getDBGroupByName("projects/p/databaseGroups/miss"));
+    expect(store.getState().getRolloutByName("projects/p/rollouts/miss")).toBe(
+      store.getState().getRolloutByName("projects/p/rollouts/miss")
+    );
+    expect(store.getState().getEnvironmentByName("environments/missing")).toBe(
+      store.getState().getEnvironmentByName("environments/missing")
+    );
+    expect(
+      store.getState().getDatabaseCatalog("instances/i/databases/miss")
+    ).toBe(store.getState().getDatabaseCatalog("instances/i/databases/miss"));
+    expect(
+      store.getState().getDatabaseMetadata("instances/i/databases/miss")
+    ).toBe(store.getState().getDatabaseMetadata("instances/i/databases/miss"));
   });
 
   test("deduplicates release fetches and clears failed requests", async () => {

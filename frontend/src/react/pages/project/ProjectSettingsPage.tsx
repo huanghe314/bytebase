@@ -6,6 +6,8 @@ import { useTranslation } from "react-i18next";
 import { FeatureBadge } from "@/react/components/FeatureBadge";
 import { LabelListEditor } from "@/react/components/LabelListEditor";
 import { PermissionGuard } from "@/react/components/PermissionGuard";
+import { ResourceIdField } from "@/react/components/ResourceIdField";
+import { RouterLink } from "@/react/components/RouterLink";
 import { Button } from "@/react/components/ui/button";
 import {
   Dialog,
@@ -16,17 +18,17 @@ import { Input } from "@/react/components/ui/input";
 import { NumberInput } from "@/react/components/ui/number-input";
 import { Switch } from "@/react/components/ui/switch";
 import { Tooltip } from "@/react/components/ui/tooltip";
-import { useVueState } from "@/react/hooks/useVueState";
-import { useAppStore } from "@/react/stores/app";
-import { useSQLReviewStore } from "@/react/stores/sqlReview";
-import { useWorkspaceApprovalSettingStore } from "@/react/stores/workspaceApprovalSetting";
-import { router } from "@/router";
+import { useProjectByName } from "@/react/hooks/useProjectByName";
+import { router, useCurrentRoute } from "@/react/router";
 import {
   PROJECT_V1_ROUTE_DASHBOARD,
   WORKSPACE_ROUTE_CUSTOM_APPROVAL,
   WORKSPACE_ROUTE_SQL_REVIEW_CREATE,
   WORKSPACE_ROUTE_SQL_REVIEW_DETAIL,
-} from "@/router/dashboard/workspaceRoutes";
+} from "@/react/router/handles";
+import { useAppStore } from "@/react/stores/app";
+import { useSQLReviewStore } from "@/react/stores/sqlReview";
+import { useWorkspaceApprovalSettingStore } from "@/react/stores/workspaceApprovalSetting";
 import { pushNotification } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import type { Permission, SQLReviewPolicy } from "@/types";
@@ -100,15 +102,12 @@ function ApprovalFlowIndicator({
       content={
         <div className="flex flex-col gap-y-1">
           <span>{tooltipText}</span>
-          <button
-            type="button"
-            className="text-accent underline text-left"
-            onClick={() =>
-              router.push({ name: WORKSPACE_ROUTE_CUSTOM_APPROVAL })
-            }
+          <RouterLink
+            to={{ name: WORKSPACE_ROUTE_CUSTOM_APPROVAL }}
+            className="text-accent underline text-left hover:text-accent-hover"
           >
             {t("project.settings.issue-related.view-approval-flow")}
-          </button>
+          </RouterLink>
         </div>
       }
     >
@@ -129,15 +128,11 @@ export function ProjectSettingsPage() {
   const projectsByName = useAppStore((s) => s.projectsByName);
   const reviewStore = useSQLReviewStore();
 
-  const projectId = useVueState(
-    () => router.currentRoute.value.params.projectId as string
-  );
+  const projectId = useCurrentRoute().params.projectId as string;
   const projectName = `${projectNamePrefix}${projectId}`;
   // subscribe to re-render on project cache change
   void projectsByName;
-  const project = useVueState(() =>
-    useAppStore.getState().getProjectByName(projectName)
-  );
+  const project = useProjectByName(projectName);
   const isDefault = isDefaultProject(projectName);
 
   const hasPermission = useCallback(
@@ -169,12 +164,8 @@ export function ProjectSettingsPage() {
   // -----------------------------------------------------------------------
   // Security state
   // -----------------------------------------------------------------------
-  const reviewPolicyList = useVueState(
-    () => reviewStore.reviewPolicyList ?? []
-  );
-  const currentReviewPolicy = useVueState(() =>
-    reviewStore.getReviewPolicyByResouce(projectName)
-  );
+  const reviewPolicyList = reviewStore.reviewPolicyList;
+  const currentReviewPolicy = reviewStore.getReviewPolicyByResouce(projectName);
   const [pendingReviewPolicy, setPendingReviewPolicy] = useState<
     SQLReviewPolicy | undefined
   >(undefined);
@@ -681,8 +672,12 @@ export function ProjectSettingsPage() {
                     }
                     required
                   />
-                  <div className="mt-1 text-sm text-control-light">
-                    {t("common.id")}: {extractProjectResourceName(project.name)}
+                  <div className="mt-1">
+                    <ResourceIdField
+                      readonly
+                      value={extractProjectResourceName(project.name)}
+                      resourceName={t("common.project")}
+                    />
                   </div>
                 </div>
 

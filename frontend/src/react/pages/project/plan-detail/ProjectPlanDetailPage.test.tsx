@@ -76,8 +76,8 @@ vi.mock("./components/deploy/DeployTaskDetailPanel", () => ({
   DeployTaskDetailPanel: () => null,
 }));
 
-vi.mock("./components/PlanDetailApprovalFlow", () => ({
-  PlanDetailReviewApprovalFlow: () => null,
+vi.mock("./components/review/PlanReviewSection", () => ({
+  PlanReviewSection: () => null,
 }));
 
 vi.mock("./components/PlanDetailChangesBranch", () => ({
@@ -213,8 +213,11 @@ describe("ProjectPlanDetailPage", () => {
     expect(selectedSpecIdText()).toBe("spec-2");
   });
 
-  it("renders the review phase for sheet-backed plans", async () => {
-    mocks.usePlanDetailPage.mockReturnValue(buildPage());
+  it("renders the review phase for sheet-backed plans with an issue", async () => {
+    mocks.usePlanDetailPage.mockReturnValue({
+      ...buildPage(),
+      issue: { name: "projects/foo/issues/1" },
+    } as unknown as PlanDetailPageState);
 
     await act(async () => {
       root.render(
@@ -228,6 +231,26 @@ describe("ProjectPlanDetailPage", () => {
     });
 
     expect(container.textContent).toContain("plan.navigator.review");
+  });
+
+  it("shows the review phase for sheet-backed plans without an issue", async () => {
+    mocks.usePlanDetailPage.mockReturnValue(buildPage());
+
+    await act(async () => {
+      root.render(
+        <ProjectPlanDetailPage
+          planId="create"
+          projectId="foo"
+          specId="spec-1"
+        />
+      );
+      await Promise.resolve();
+    });
+
+    // CI/CD UI (sheet-backed) plans always surface the review phase, even
+    // before an issue exists — it renders as an upcoming "future" step.
+    expect(container.textContent).toContain("plan.navigator.review");
+    expect(container.textContent).toContain("plan.phase.review-description");
   });
 
   it("hides the review phase for GitOps plans with release-backed specs", async () => {
