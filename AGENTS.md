@@ -256,6 +256,8 @@ This is a fork of [bytebase/bytebase](https://github.com/bytebase/bytebase) with
 | License dev-mode switcher | "License" submenu in avatar dropdown (`ProfileMenuTrigger.tsx`) |
 | Plan badges | Header workspace segment + VersionMenuItem plan labels |
 | Telemetry | `InitGlobalReporter`, `sql_review_telemetry.go`, `ProductImprovementSection` |
+
+**🚫 ABSOLUTELY NO telemetry/analytics/usage-data reporting to bytebase.com or any external server.** This fork must never send data to `hub.bytebase.com`, `bytebase.com`, or any telemetry endpoint. Do not re-add `telemetry.InitGlobalReporter`, `ReportSQLReviewConfigSnapshot`, `ProductImprovementSection` ("参与改进计划"), or any similar data-collection mechanism.
 | Metric collection default | `EnableMetricCollection` set to `false` in `server.go` and `workspace.go` |
 
 When syncing from upstream, conflicts in these areas must be resolved by keeping the fork's version (no-license).
