@@ -20,7 +20,6 @@ import {
   WORKSPACE_ROUTE_LANDING,
   WORKSPACE_ROUTE_MY_ISSUES,
 } from "@/react/router";
-import { PlanType } from "@/types/proto-es/v1/subscription_service_pb";
 import { STORAGE_KEY_MY_ISSUES_TAB } from "@/utils/storage-keys";
 import { HeaderBreadcrumb } from "./HeaderBreadcrumb";
 import { ProfileMenuTrigger } from "./ProfileMenuTrigger";
@@ -47,10 +46,8 @@ export function DashboardHeader({
 }: DashboardHeaderProps) {
   const { t } = useTranslation();
   const { record } = useRecentVisit();
-  const { subscription } = useSubscription();
   const route = useCurrentRoute();
   const navigate = useNavigate();
-  const currentPlan = subscription?.plan ?? PlanType.FREE;
   const windowWidth = useSyncExternalStore(
     subscribeToViewport,
     getWindowWidth,
@@ -135,22 +132,20 @@ export function DashboardHeader({
           {isLargeLabelVisible ? <span>{t("agent.self")}</span> : null}
         </Button>
 
-        {currentPlan === PlanType.FREE ? (
-          <Button
-            size="sm"
-            variant="outline"
-            className="border-success text-success hover:bg-success/10"
-            onClick={() => {
-              window.open(
-                "https://docs.bytebase.com/faq#how-to-reach-us",
-                "_blank"
-              );
-            }}
-          >
-            <MessagesSquare className="h-4 w-4" />
-            {isLargeLabelVisible ? <span>{t("common.want-help")}</span> : null}
-          </Button>
-        ) : null}
+        <Button
+          size="sm"
+          variant="outline"
+          className="border-success text-success hover:bg-success/10"
+          onClick={() => {
+            window.open(
+              "https://docs.bytebase.com/faq#how-to-reach-us",
+              "_blank"
+            );
+          }}
+        >
+          <MessagesSquare className="h-4 w-4" />
+          {isLargeLabelVisible ? <span>{t("common.want-help")}</span> : null}
+        </Button>
 
         <Button
           size="sm"

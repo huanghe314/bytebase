@@ -17,7 +17,6 @@ import {
   useOptionalCurrentUser,
   useQuickstartReset,
   useServerInfo,
-  useSubscription,
   useWorkspace,
 } from "@/react/hooks/useAppState";
 import {
@@ -29,7 +28,6 @@ import {
   WORKSPACE_ROUTE_LANDING,
 } from "@/react/router";
 import { useAppStore } from "@/react/stores/app";
-import { PlanType } from "@/types/proto-es/v1/subscription_service_pb";
 import { isDev } from "@/utils/util";
 import { HEADER_LANGUAGE_OPTIONS, setAppLocale } from "./common";
 import { VersionMenuItem } from "./VersionMenuItem";
@@ -46,13 +44,11 @@ export function ProfileMenuTrigger({
   const { t, i18n } = useTranslation();
   const currentUser = useOptionalCurrentUser();
   const serverInfo = useServerInfo();
-  const { subscription, uploadLicense } = useSubscription();
   const workspace = useWorkspace();
   const route = useCurrentRoute();
   const navigate = useNavigate();
   const resetQuickstartProgress = useQuickstartReset();
   const hideQuickStart = useAppFeature("bb.feature.hide-quick-start");
-  const currentPlan = subscription?.plan ?? PlanType.FREE;
   const quickStartEnabled =
     !hideQuickStart &&
     Boolean(serverInfo?.enableSample) &&
@@ -89,11 +85,6 @@ export function ProfileMenuTrigger({
     });
     setOpen(false);
     window.open(target.fullPath, "_blank", "noopener,noreferrer");
-  };
-
-  const switchPlan = (license: string) => {
-    void uploadLicense(license);
-    setOpen(false);
   };
 
   return (
@@ -167,49 +158,6 @@ export function ProfileMenuTrigger({
               ))}
             </DropdownMenuSubmenuContent>
           </DropdownMenuSubmenu>
-
-          {isDev() ? (
-            <DropdownMenuSubmenu>
-              <DropdownMenuSubmenuTrigger className="justify-between">
-                {t("common.license")}
-                <ChevronRight className="h-4 w-4 text-control-light" />
-              </DropdownMenuSubmenuTrigger>
-              <DropdownMenuSubmenuContent className="w-48">
-                {[
-                  {
-                    label: t("subscription.plan.free.title"),
-                    value: "",
-                    plan: PlanType.FREE,
-                  },
-                  {
-                    label: t("subscription.plan.team.title"),
-                    value: import.meta.env.BB_DEV_TEAM_LICENSE as string,
-                    plan: PlanType.TEAM,
-                  },
-                  {
-                    label: t("subscription.plan.enterprise.title"),
-                    value: import.meta.env.BB_DEV_ENTERPRISE_LICENSE as string,
-                    plan: PlanType.ENTERPRISE,
-                  },
-                ].map((item) => (
-                  <DropdownMenuItem
-                    key={item.plan}
-                    className={item.plan === currentPlan ? "bg-control-bg" : ""}
-                    onClick={() => switchPlan(item.value)}
-                  >
-                    <span className="mr-2">
-                      <input
-                        type="radio"
-                        readOnly
-                        checked={item.plan === currentPlan}
-                      />
-                    </span>
-                    {item.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuSubmenuContent>
-            </DropdownMenuSubmenu>
-          ) : null}
 
           {quickStartEnabled ? (
             <DropdownMenuItem
