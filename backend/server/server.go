@@ -27,7 +27,6 @@ import (
 	"github.com/bytebase/bytebase/backend/component/iam"
 	"github.com/bytebase/bytebase/backend/component/sampleinstance"
 	"github.com/bytebase/bytebase/backend/component/sheet"
-	"github.com/bytebase/bytebase/backend/component/telemetry"
 	"github.com/bytebase/bytebase/backend/component/webhook"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/migrator"
@@ -140,7 +139,7 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 
 	logSetup := &storepb.WorkspaceProfileSetting{
 		EnableAuditLogStdout:   false,
-		EnableMetricCollection: true,
+		EnableMetricCollection: false,
 		EnableDebug:            profile.Debug,
 	}
 	var workspaceID string
@@ -167,17 +166,6 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 	profile.RuntimeDebug.Store(logSetup.EnableDebug)
 	if logSetup.EnableDebug {
 		log.LogLevel.Set(slog.LevelDebug)
-	}
-	telemetry.InitGlobalReporter(
-		profile.Version,
-		profile.GitCommit,
-		profile.Mode,
-		logSetup.GetEnableMetricCollection(),
-	)
-	if !s.profile.SaaS && profile.Mode == common.ReleaseModeProd && logSetup.GetEnableMetricCollection() && workspaceID != "" {
-		go func() {
-			reportSQLReviewConfigSnapshot(context.WithoutCancel(ctx), stores, workspaceID)
-		}()
 	}
 
 	s.bus, err = bus.New()

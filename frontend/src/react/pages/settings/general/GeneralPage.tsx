@@ -13,7 +13,6 @@ import { AuditLogSection } from "./AuditLogSection";
 import { BrandingSection } from "./BrandingSection";
 import { DangerZoneSection } from "./DangerZoneSection";
 import { GeneralSection } from "./GeneralSection";
-import { ProductImprovementSection } from "./ProductImprovementSection";
 import { SecuritySection } from "./SecuritySection";
 import { SQLEditorSection } from "./SQLEditorSection";
 import type { SectionHandle } from "./useSettingSection";
@@ -32,7 +31,6 @@ export function GeneralPage() {
   const sqlEditorRef = useRef<SectionHandle>(null);
   const aiRef = useRef<SectionHandle>(null);
   const announcementRef = useRef<SectionHandle>(null);
-  const productImprovementRef = useRef<SectionHandle>(null);
   const auditLogRef = useRef<SectionHandle>(null);
 
   // Dirty state: sections call onDirtyChange to trigger a re-render,
@@ -48,7 +46,6 @@ export function GeneralPage() {
     sqlEditorRef,
     aiRef,
     announcementRef,
-    productImprovementRef,
     auditLogRef,
   ];
 
@@ -86,12 +83,6 @@ export function GeneralPage() {
         handle: announcementRef.current!,
       },
     ];
-    if (productImprovementRef.current) {
-      sections.push({
-        name: t("settings.general.workspace.product-improvement.self"),
-        handle: productImprovementRef.current,
-      });
-    }
     if (auditLogRef.current) {
       sections.push({
         name: t("settings.general.workspace.log"),
@@ -179,18 +170,6 @@ export function GeneralPage() {
         title={t("settings.general.workspace.announcement.self")}
         onDirtyChange={onDirtyChange}
       />
-      {!isSaaSMode && (
-        <PermissionGuard
-          permissions={["bb.settings.setWorkspaceProfile"]}
-          display="block"
-        >
-          <ProductImprovementSection
-            ref={productImprovementRef}
-            allowEdit={canEditProfile}
-            onDirtyChange={onDirtyChange}
-          />
-        </PermissionGuard>
-      )}
       {!isSaaSMode && (
         <PermissionGuard
           permissions={["bb.settings.setWorkspaceProfile"]}
