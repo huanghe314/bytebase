@@ -18,6 +18,14 @@ import (
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 )
 
+func ptrString(s string) *string {
+	return &s
+}
+
+func ptrBool(b bool) *bool {
+	return &b
+}
+
 type IamPolicyMessage struct {
 	Policy *storepb.IamPolicy
 	Etag   string
@@ -35,8 +43,8 @@ func generateEtag(t time.Time) string {
 func (s *Store) GetWorkspaceIamPolicy(ctx context.Context, workspaceID string) (*IamPolicyMessage, error) {
 	return s.getIamPolicy(ctx, &FindPolicyMessage{
 		Workspace:    workspaceID,
-		ResourceType: new(storepb.Policy_WORKSPACE),
-		Resource:     new(common.FormatWorkspace(workspaceID)),
+		ResourceType: storepb.Policy_WORKSPACE.Enum(),
+		Resource:     ptrString(common.FormatWorkspace(workspaceID)),
 	})
 }
 
@@ -111,8 +119,8 @@ func (s *Store) PatchWorkspaceIamPolicy(ctx context.Context, patch *PatchIamPoli
 func (s *Store) GetProjectIamPolicy(ctx context.Context, workspaceID string, projectID string) (*IamPolicyMessage, error) {
 	return s.getIamPolicy(ctx, &FindPolicyMessage{
 		Workspace:    workspaceID,
-		ResourceType: new(storepb.Policy_PROJECT),
-		Resource:     new(common.FormatProject(projectID)),
+		ResourceType: storepb.Policy_PROJECT.Enum(),
+		Resource:     ptrString(common.FormatProject(projectID)),
 	})
 }
 
@@ -134,7 +142,7 @@ func (s *Store) GetProjectIamPolicySnapshot(ctx context.Context, workspaceID str
 }
 
 func (s *Store) getIamPolicy(ctx context.Context, find *FindPolicyMessage) (*IamPolicyMessage, error) {
-	find.Type = new(storepb.Policy_IAM)
+	find.Type = storepb.Policy_IAM.Enum()
 	policy, err := s.GetPolicy(ctx, find)
 	if err != nil {
 		return nil, err
@@ -173,9 +181,9 @@ func GetDefaultRolloutPolicy() *storepb.RolloutPolicy {
 func (s *Store) GetRolloutPolicy(ctx context.Context, workspaceID string, environment string) (*storepb.RolloutPolicy, error) {
 	policy, err := s.GetPolicy(ctx, &FindPolicyMessage{
 		Workspace:    workspaceID,
-		ResourceType: new(storepb.Policy_ENVIRONMENT),
-		Resource:     new(common.FormatEnvironment(environment)),
-		Type:         new(storepb.Policy_ROLLOUT),
+		ResourceType: storepb.Policy_ENVIRONMENT.Enum(),
+		Resource:     ptrString(common.FormatEnvironment(environment)),
+		Type:         storepb.Policy_ROLLOUT.Enum(),
 	})
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get policy")
@@ -258,7 +266,7 @@ func (s *Store) getQueryDataPolicy(ctx context.Context, workspaceID string, reso
 		Workspace:    workspaceID,
 		ResourceType: &resourceType,
 		Resource:     &resource,
-		Type:         new(storepb.Policy_QUERY_DATA),
+		Type:         storepb.Policy_QUERY_DATA.Enum(),
 	})
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get policy")
@@ -313,7 +321,7 @@ func (s *Store) getReviewConfigByResource(ctx context.Context, workspaceID strin
 		Workspace:    workspaceID,
 		ResourceType: &resourceType,
 		Resource:     &resource,
-		Type:         new(storepb.Policy_TAG),
+		Type:         storepb.Policy_TAG.Enum(),
 	})
 	if err != nil {
 		return nil, err
@@ -357,9 +365,9 @@ func (s *Store) getReviewConfigByResource(ctx context.Context, workspaceID strin
 func (s *Store) GetMaskingRulePolicy(ctx context.Context, workspaceID string) (*storepb.MaskingRulePolicy, error) {
 	policy, err := s.GetPolicy(ctx, &FindPolicyMessage{
 		Workspace:    workspaceID,
-		ResourceType: new(storepb.Policy_WORKSPACE),
-		Resource:     new(common.FormatWorkspace(workspaceID)),
-		Type:         new(storepb.Policy_MASKING_RULE),
+		ResourceType: storepb.Policy_WORKSPACE.Enum(),
+		Resource:     ptrString(common.FormatWorkspace(workspaceID)),
+		Type:         storepb.Policy_MASKING_RULE.Enum(),
 	})
 	if err != nil {
 		return nil, err
@@ -381,9 +389,9 @@ func (s *Store) GetMaskingRulePolicy(ctx context.Context, workspaceID string) (*
 func (s *Store) GetMaskingExemptionPolicyByProject(ctx context.Context, workspaceID string, projectID string) (*storepb.MaskingExemptionPolicy, error) {
 	policy, err := s.GetPolicy(ctx, &FindPolicyMessage{
 		Workspace:    workspaceID,
-		ResourceType: new(storepb.Policy_PROJECT),
-		Resource:     new(common.FormatProject(projectID)),
-		Type:         new(storepb.Policy_MASKING_EXEMPTION),
+		ResourceType: storepb.Policy_PROJECT.Enum(),
+		Resource:     ptrString(common.FormatProject(projectID)),
+		Type:         storepb.Policy_MASKING_EXEMPTION.Enum(),
 	})
 	if err != nil {
 		return nil, err

@@ -948,7 +948,7 @@ func (s *UserService) preUndeleteUserGuard(ctx context.Context, workspaceID stri
 	if len(utils.GetUserIAMPolicyBindings(ctx, s.store, workspaceID, user, p.Policy)) == 0 {
 		return nil
 	}
-	return userCountGuard(ctx, s.store, s.licenseService, workspaceID, p.Policy, s.profile.SaaS)
+	return userCountGuard(ctx, s.store, workspaceID, p.Policy, s.profile.SaaS)
 }
 
 func policyContainsAllUsers(policy *storepb.IamPolicy) bool {

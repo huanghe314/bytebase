@@ -348,7 +348,7 @@ func (s *Syncer) SyncInstance(ctx context.Context, instance *store.InstanceMessa
 			if _, err := s.store.UpdateDatabase(ctx, &store.UpdateDatabaseMessage{
 				InstanceID:   instance.ResourceID,
 				DatabaseName: database.DatabaseName,
-				Deleted:      new(true),
+				Deleted:      func() *bool { b := true; return &b }(),
 			}); err != nil {
 				return nil, nil, nil, errors.Errorf("failed to update database %q for instance %q", database.DatabaseName, instance.ResourceID)
 			}
@@ -418,7 +418,7 @@ func (s *Syncer) doSyncDatabaseSchema(ctx context.Context, database *store.Datab
 	if _, err := s.store.UpdateDatabase(ctx, &store.UpdateDatabaseMessage{
 		InstanceID:      database.InstanceID,
 		DatabaseName:    database.DatabaseName,
-		Deleted:         new(false),
+		Deleted:         func() *bool { b := false; return &b }(),
 		MetadataUpdates: metadataUpdates,
 	}); err != nil {
 		return "", errors.Wrapf(err, "failed to update database %q for instance %q", database.DatabaseName, database.InstanceID)

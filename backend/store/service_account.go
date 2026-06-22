@@ -255,11 +255,11 @@ func (s *Store) UpdateServiceAccount(ctx context.Context, sa *ServiceAccountMess
 
 // DeleteServiceAccount soft-deletes a service account.
 func (s *Store) DeleteServiceAccount(ctx context.Context, sa *ServiceAccountMessage) error {
-	_, err := s.UpdateServiceAccount(ctx, sa, &UpdateServiceAccountMessage{Delete: new(true)})
+	_, err := s.UpdateServiceAccount(ctx, sa, &UpdateServiceAccountMessage{Delete: ptrBool(true)})
 	return err
 }
 
 // UndeleteServiceAccount restores a soft-deleted service account.
 func (s *Store) UndeleteServiceAccount(ctx context.Context, sa *ServiceAccountMessage) (*ServiceAccountMessage, error) {
-	return s.UpdateServiceAccount(ctx, sa, &UpdateServiceAccountMessage{Delete: new(false)})
+	return s.UpdateServiceAccount(ctx, sa, &UpdateServiceAccountMessage{Delete: ptrBool(false)})
 }

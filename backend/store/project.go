@@ -60,7 +60,7 @@ type UpdateProjectMessage struct {
 // Checks for new format ("default-{workspaceID}") first, falls back to legacy ("default").
 func (s *Store) GetDefaultProjectID(ctx context.Context, workspace string) (string, error) {
 	newID := common.DefaultProjectID(workspace)
-	project, err := s.GetProject(ctx, &FindProjectMessage{Workspace: workspace, ResourceID: new(newID)})
+	project, err := s.GetProject(ctx, &FindProjectMessage{Workspace: workspace, ResourceID: &newID})
 	if err != nil {
 		return "", err
 	}
@@ -297,7 +297,8 @@ func (s *Store) UpdateProjects(ctx context.Context, patches ...*UpdateProjectMes
 			if err != nil {
 				return err
 			}
-			settings[i] = new(string(payload))
+		s := string(payload)
+			settings[i] = &s
 		}
 	}
 

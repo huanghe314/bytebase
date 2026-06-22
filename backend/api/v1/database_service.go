@@ -990,10 +990,12 @@ func (s *DatabaseService) convertToDatabase(ctx context.Context, database *store
 
 	var environment, effectiveEnvironment *string
 	if database.EnvironmentID != nil && *database.EnvironmentID != "" {
-		environment = new(common.FormatEnvironment(*database.EnvironmentID))
+		s := common.FormatEnvironment(*database.EnvironmentID)
+		environment = &s
 	}
 	if database.EffectiveEnvironmentID != nil && *database.EffectiveEnvironmentID != "" {
-		effectiveEnvironment = new(common.FormatEnvironment(*database.EffectiveEnvironmentID))
+		s := common.FormatEnvironment(*database.EffectiveEnvironmentID)
+		effectiveEnvironment = &s
 	}
 	instanceResource := convertToV1InstanceResource(
 		instance,

@@ -2,11 +2,14 @@ package tests
 
 import (
 	"context"
+	"reflect"
+	"unsafe"
 
 	"connectrpc.com/connect"
 	"github.com/pkg/errors"
 
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
+	"github.com/bytebase/bytebase/backend/store"
 )
 
 func (ctl *controller) setLicense(ctx context.Context) error {
@@ -16,6 +19,16 @@ func (ctl *controller) setLicense(ctx context.Context) error {
 		return errors.Wrap(err, "failed to set license")
 	}
 	return nil
+}
+
+func (ctl *controller) removeLicense(ctx context.Context) error {
+	field := reflect.ValueOf(ctl.server).Elem().FieldByName("store")
+	stores := reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Interface().(*store.Store)
+	workspaceID, err := stores.GetWorkspaceID(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to get workspace ID")
+	}
+	return stores.UpdateLicense(ctx, workspaceID, "")
 }
 
 func (ctl *controller) getSubscription(ctx context.Context) (*v1pb.Subscription, error) {

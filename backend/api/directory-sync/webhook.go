@@ -264,7 +264,7 @@ func (s *Service) RegisterDirectorySyncRoutes(g *echo.Group) {
 		}
 
 		if _, err := s.store.UpdateUser(ctx, user, &store.UpdateUserMessage{
-			Delete: new(true),
+			Delete: func() *bool { b := true; return &b }(),
 		}); err != nil {
 			return c.String(http.StatusInternalServerError, fmt.Sprintf("failed to delete user, error %v", err))
 		}
