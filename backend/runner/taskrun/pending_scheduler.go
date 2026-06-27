@@ -63,7 +63,9 @@ func (s *Scheduler) schedulePendingTaskRuns(ctx context.Context) (err error) {
 		return nil
 	}
 
-	taskRuns, err := s.store.ListTaskRunsByStatus(ctx, []storepb.TaskRun_Status{storepb.TaskRun_PENDING})
+	taskRuns, err := s.store.ListTaskRuns(ctx, &store.FindTaskRunMessage{
+		Status: new([]storepb.TaskRun_Status{storepb.TaskRun_PENDING}),
+	})
 	if err != nil {
 		return errors.Wrapf(err, "failed to list pending task runs")
 	}
@@ -209,7 +211,9 @@ type schedulingContext struct {
 }
 
 func newSchedulingContext(ctx context.Context, s *store.Store) (*schedulingContext, error) {
-	activeTaskRuns, err := s.ListTaskRunsByStatus(ctx, []storepb.TaskRun_Status{storepb.TaskRun_AVAILABLE, storepb.TaskRun_RUNNING})
+	activeTaskRuns, err := s.ListTaskRuns(ctx, &store.FindTaskRunMessage{
+		Status: new([]storepb.TaskRun_Status{storepb.TaskRun_AVAILABLE, storepb.TaskRun_RUNNING}),
+	})
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to list active task runs")
 	}

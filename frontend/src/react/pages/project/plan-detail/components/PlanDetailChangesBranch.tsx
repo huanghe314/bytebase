@@ -18,6 +18,7 @@ import {
 } from "@/connect";
 import { EngineIcon } from "@/react/components/EngineIcon";
 import { EnvironmentLabel } from "@/react/components/EnvironmentLabel";
+import { GhostFlagsButton } from "@/react/components/ghost/GhostFlagsButton";
 import { RouterLink } from "@/react/components/RouterLink";
 import { Alert } from "@/react/components/ui/alert";
 import {
@@ -62,6 +63,7 @@ import { Tooltip } from "@/react/components/ui/tooltip";
 import { useCurrentUser } from "@/react/hooks/useAppState";
 import { useProjectByName } from "@/react/hooks/useProjectByName";
 import { useSessionPageSize } from "@/react/hooks/useSessionPageSize";
+import { seedSheetStatement } from "@/react/hooks/useSheetStatement";
 import { cn } from "@/react/lib/utils";
 import { router } from "@/react/router";
 import {
@@ -612,7 +614,11 @@ export function PlanDetailChangesBranch({
       </PlanDetailTabStrip>
 
       <div className="flex flex-1 flex-col overflow-y-auto px-4 py-4">
-        <div className="flex flex-col gap-y-4">
+        {/* One key on the wrapper — not on each child — remounts the whole
+            spec-detail group when the selected spec changes (resetting each
+            section's internal state) without the sections colliding on a shared
+            key={selectedSpec.id}, which logged a duplicate-key warning. */}
+        <div key={selectedSpec.id} className="flex flex-col gap-y-4">
           <TargetsSection
             allowEdit={canModifySpecs}
             onEdit={() => setShowTargetSelectorSheet(true)}
@@ -631,7 +637,6 @@ export function PlanDetailChangesBranch({
             page.isCreating &&
             selectedSpec.config.case === "changeDatabaseConfig" && (
               <PlanDetailDraftChecks
-                key={selectedSpec.id}
                 checkResults={draftCheckResults}
                 onCheckResultsChange={handleDraftCheckResultsChange}
                 selectedSpec={selectedSpec}
@@ -716,9 +721,30 @@ function OptionsSection({
   void projectsByName;
   const project = useProjectByName(`projects/${page.projectId}`);
   const databasesByName = useAppStore((s) => s.databasesByName);
-  const [sheetStatement, setSheetStatementValue] = useState("");
-  const [isSheetOversize, setIsSheetOversize] = useState(false);
+  const sheetName = useMemo(
+    () => sheetNameOfSpec(selectedSpec),
+    [selectedSpec]
+  );
+  const [sheetStatement, setSheetStatementValue] = useState(
+    () => seedSheetStatement(sheetName, getLocalSheetByName).statement
+  );
+  const [isSheetOversize, setIsSheetOversize] = useState(
+    () => seedSheetStatement(sheetName, getLocalSheetByName).isTruncated
+  );
   const [instanceRoles, setInstanceRoles] = useState<string[]>([]);
+
+  // Draft (local) sheets are edited in place by the statement editor, so the
+  // `sheetStatement` state is only a seed that goes stale after each keystroke.
+  // Read the live content back for them so an option toggle rebases on the
+  // user's latest SQL instead of overwriting it (BYT-9781); persisted (server)
+  // sheets stay on the state seeded by the effect below.
+  const isDraftSheet =
+    sheetName !== "" && extractSheetUID(sheetName).startsWith("-");
+  const readStatement = (): string =>
+    isDraftSheet
+      ? getSheetStatement(getLocalSheetByName(sheetName))
+      : sheetStatement;
+  const currentStatement = readStatement();
 
   const targets = useMemo(() => {
     if (selectedSpec.config?.case === "changeDatabaseConfig") {
@@ -752,8 +778,8 @@ function OptionsSection({
     : "";
 
   const parsed = useMemo(
-    () => parseStatement(sheetStatement),
-    [sheetStatement]
+    () => parseStatement(currentStatement),
+    [currentStatement]
   );
   const selectedRole = parsed.role ?? "";
   const selectedIsolation = parsed.isolationLevel ?? "";
@@ -823,18 +849,25 @@ function OptionsSection({
   }, [targets]);
 
   useEffect(() => {
-    let canceled = false;
-    const sheetName = sheetNameOfSpec(selectedSpec);
     if (!sheetName) {
       setSheetStatementValue("");
       setIsSheetOversize(false);
       return;
     }
+    // Resolve in-memory sheets synchronously so switching specs shows the new
+    // statement's options immediately instead of the previous spec's; only an
+    // uncached remote sheet needs a fetch.
+    const seed = seedSheetStatement(sheetName, getLocalSheetByName);
+    if (!seed.isLoading) {
+      setSheetStatementValue(seed.statement);
+      setIsSheetOversize(seed.isTruncated);
+      return;
+    }
+    let canceled = false;
     const load = async () => {
-      const uid = extractSheetUID(sheetName);
-      const sheet = uid.startsWith("-")
-        ? getLocalSheetByName(sheetName)
-        : await useAppStore.getState().getOrFetchSheetByName(sheetName);
+      const sheet = await useAppStore
+        .getState()
+        .getOrFetchSheetByName(sheetName);
       if (!sheet || canceled) return;
       const statement = getSheetStatement(sheet);
       setSheetStatementValue(statement);
@@ -844,7 +877,7 @@ function OptionsSection({
     return () => {
       canceled = true;
     };
-  }, [selectedSpec]);
+  }, [sheetName]);
 
   useEffect(() => {
     let canceled = false;
@@ -932,7 +965,7 @@ function OptionsSection({
     patchState({ plan: response });
   };
 
-  const currentGhostConfig = getGhostConfigFromStatement(sheetStatement);
+  const currentGhostConfig = getGhostConfigFromStatement(currentStatement);
   const ghostIssueDatabases = useMemo(() => {
     return databases.filter((db) => {
       const instance = getInstanceResource(db);
@@ -997,7 +1030,7 @@ function OptionsSection({
                   onValueChange={(value) => {
                     void persistStatement(
                       updateRoleSetter(
-                        sheetStatement,
+                        readStatement(),
                         value && value !== EMPTY_SELECT_VALUE
                           ? value
                           : undefined
@@ -1044,7 +1077,7 @@ function OptionsSection({
                   onCheckedChange={(checked) => {
                     void persistStatement(
                       updateTransactionMode(
-                        sheetStatement,
+                        readStatement(),
                         checked ? "on" : "off"
                       )
                     );
@@ -1074,7 +1107,7 @@ function OptionsSection({
                   onValueChange={(value) => {
                     void persistStatement(
                       updateIsolationLevel(
-                        sheetStatement,
+                        readStatement(),
                         value === EMPTY_SELECT_VALUE
                           ? undefined
                           : (value as IsolationLevel) || undefined
@@ -1173,7 +1206,7 @@ function OptionsSection({
                   onCheckedChange={(checked) => {
                     void persistStatement(
                       updateGhostConfig(
-                        sheetStatement,
+                        readStatement(),
                         checked
                           ? (currentGhostConfig ?? getDefaultGhostConfig())
                           : undefined
@@ -1184,6 +1217,17 @@ function OptionsSection({
                 />
               </div>
             </Tooltip>
+            {ghostEnabled && (
+              <GhostFlagsButton
+                value={currentGhostConfig ?? {}}
+                disabled={!allowChange || isSheetOversize}
+                onChange={(next) =>
+                  void persistStatement(
+                    updateGhostConfig(readStatement(), next)
+                  )
+                }
+              />
+            )}
           </div>
         </div>
       ) : (
@@ -1206,17 +1250,20 @@ function TargetsSection({
 }) {
   const { t } = useTranslation();
   const databasesByName = useAppStore((s) => s.databasesByName);
-  const [showAllTargetsDialog, setShowAllTargetsDialog] = useState(false);
-  const [searchText, setSearchText] = useState("");
-  const [isLoadingTargets, setIsLoadingTargets] = useState(false);
-  const [isLoadingAllTargets, setIsLoadingAllTargets] = useState(false);
-
   const targets = useMemo(() => {
     if (selectedSpec.config?.case === "changeDatabaseConfig") {
       return selectedSpec.config.value.targets ?? [];
     }
     return [];
   }, [selectedSpec]);
+  const [showAllTargetsDialog, setShowAllTargetsDialog] = useState(false);
+  const [searchText, setSearchText] = useState("");
+  // Start loading when there are targets to resolve, so the first paint shows
+  // the spinner instead of blank (unknownDatabase) chips.
+  const [isLoadingTargets, setIsLoadingTargets] = useState(
+    () => targets.length > 0
+  );
+  const [isLoadingAllTargets, setIsLoadingAllTargets] = useState(false);
   const visibleTargets = useMemo(
     () => targets.slice(0, Math.min(DEFAULT_VISIBLE_TARGETS, targets.length)),
     [targets]
