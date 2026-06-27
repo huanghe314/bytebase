@@ -28,7 +28,6 @@ import {
   WORKSPACE_ROUTE_LANDING,
 } from "@/react/router";
 import { useAppStore } from "@/react/stores/app";
-import { isDev } from "@/utils/util";
 import { HEADER_LANGUAGE_OPTIONS, setAppLocale } from "./common";
 import { VersionMenuItem } from "./VersionMenuItem";
 
